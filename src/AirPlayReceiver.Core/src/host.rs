@@ -15,6 +15,11 @@ use std::sync::{Arc, Mutex, OnceLock};
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::sync::mpsc;
 
+/// Default AirPlay 2 minimum output latency: 88,200 frames = 2 s at 44.1 kHz,
+/// which is what genuine AirPlay receivers advertise. Hosts with a low-latency
+/// mode pass a smaller value via [`Settings::airplay_latency_frames`].
+pub const DEFAULT_AIRPLAY_LATENCY_FRAMES: u32 = 88_200;
+
 #[derive(Clone)]
 pub struct Settings {
     pub name: String,
@@ -27,6 +32,12 @@ pub struct Settings {
     /// video/HLS feature bits). fnOS sets this so iPhones stop offering video.
     /// Android/desktop keep the existing video-capable Apple TV profile.
     pub airplay_audio_only: bool,
+    /// Minimum output latency advertised to AirPlay 2 senders, in frames at
+    /// 44.1 kHz. Default: 88,200 (2 s). Lower values reduce end-to-end latency
+    /// (Windows low-latency mode) at the cost of tolerance for Wi-Fi jitter.
+    /// The AirPlay server clamps out-of-range values (valid: 11,025..=176,400
+    /// frames, i.e. 250 ms..4 s) back to 88,200. Classic AirPlay ignores this.
+    pub airplay_latency_frames: u32,
     /// Host-installed unified output (fnOS). `None` keeps cpal/Oboe output.
     pub audio_output: Option<std::sync::Arc<dyn PcmOutput>>,
 }
@@ -42,6 +53,7 @@ impl std::fmt::Debug for Settings {
             .field("airplay_enabled", &self.airplay_enabled)
             .field("dlna_enabled", &self.dlna_enabled)
             .field("airplay_audio_only", &self.airplay_audio_only)
+            .field("airplay_latency_frames", &self.airplay_latency_frames)
             .field("audio_output", &self.audio_output.as_ref().map(|_| "external"))
             .finish()
     }
@@ -257,6 +269,7 @@ pub async fn run_receiver_with_arbiter(
             .pairing_store(pairing_store)
             .output_sample_rate(audio.sample_rate)
             .output_max_channels(audio.channels.min(u8::MAX as u16) as u8)
+            .audio_latency_frames(settings.airplay_latency_frames)
             .audio_only(settings.airplay_audio_only)
             .hls_handler(video_bridge.clone());
         if let Some(pin) = &settings.pin {
@@ -621,6 +634,7 @@ pub fn parse_settings_from(arguments: impl IntoIterator<Item = String>) -> Resul
         airplay_enabled,
         dlna_enabled,
         airplay_audio_only: false,
+        airplay_latency_frames: DEFAULT_AIRPLAY_LATENCY_FRAMES,
         audio_output: None,
     })
 }
@@ -653,6 +667,17 @@ mod tests {
         .unwrap();
         assert_eq!(settings.name, "LivingRoom-PC");
         assert_eq!(settings.pin, None);
+    }
+
+    #[test]
+    fn airplay_latency_defaults_to_the_two_second_protocol_value() {
+        let settings =
+            parse_settings_from(["--name".to_owned(), "LivingRoom-PC".to_owned()]).unwrap();
+        assert_eq!(
+            settings.airplay_latency_frames, DEFAULT_AIRPLAY_LATENCY_FRAMES,
+            "hosts without a low-latency mode must keep advertising 88,200 frames"
+        );
+        assert_eq!(DEFAULT_AIRPLAY_LATENCY_FRAMES, 88_200);
     }
 
     #[test]

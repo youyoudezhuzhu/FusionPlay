@@ -2424,11 +2424,17 @@ impl AdtsFramer {
     }
 }
 
+/// Host-output latency assumed when a unified PCM sink cannot estimate it.
+#[cfg(not(target_os = "android"))]
+const MIPLAY_DEFAULT_HOST_OUTPUT_LATENCY_MILLIS: f64 = 25.0;
+
 #[cfg(not(target_os = "android"))]
 fn spawn_external_audio_output(
     queue: Arc<Mutex<PcmQueue>>,
     paused: Arc<AtomicBool>,
     volume_percent: Arc<AtomicU32>,
+    presentation_clock: Arc<MiPlayPresentationClock>,
+    latency_telemetry: Arc<MiPlayLatencyTelemetry>,
     sink: Arc<dyn crate::MiPlayPcmOutput>,
     events: EventEmitter,
 ) -> NativeAudioStream {
@@ -2438,32 +2444,175 @@ fn spawn_external_audio_output(
         .name("miplay-unified-output".to_owned())
         .spawn(move || {
             const CHANNELS: usize = 2;
-            // 10 ms per block; the host engine owns the real device clock and
-            // buffers this feed in per-device rings.
+            // 10 ms per block. The host engine owns the real device clock and
+            // buffers this feed in its own rings, but scheduling against the
+            // sender's presentation clock is this thread's job: playing
+            // whatever had already arrived (the previous behaviour) turned the
+            // phone's pre-buffer into multi-second latency and desynchronised
+            // audio from the sender clock.
             let frames_per_tick = (MIPLAY_SOURCE_SAMPLE_RATE / 100).max(CHANNELS);
             let mut scratch = vec![0.0f32; frames_per_tick * CHANNELS];
             let mut signal_reported = false;
+            let mut synchronization_reported = false;
+            let mut timed_playback_started = false;
+            // The host engine reports how long its own ring + device need
+            // (fnOS/Windows unified output). Fall back to a small constant.
+            let mut host_output_latency_millis = sink
+                .output_latency_millis()
+                .filter(|latency| latency.is_finite() && *latency >= 0.0)
+                .unwrap_or(MIPLAY_DEFAULT_HOST_OUTPUT_LATENCY_MILLIS)
+                .min(MIPLAY_MAX_OUTPUT_LATENCY_MILLIS);
+            let mut latency_refresh_countdown = 0_u32;
             while !stop_for_thread.load(Ordering::Acquire) {
-                std::thread::sleep(StdDuration::from_millis(10));
+                if latency_refresh_countdown == 0 {
+                    if let Some(measured) = sink
+                        .output_latency_millis()
+                        .filter(|latency| latency.is_finite() && *latency >= 0.0)
+                    {
+                        let measured = measured.min(MIPLAY_MAX_OUTPUT_LATENCY_MILLIS);
+                        host_output_latency_millis = host_output_latency_millis
+                            * (1.0 - MIPLAY_OUTPUT_LATENCY_SMOOTHING)
+                            + measured * MIPLAY_OUTPUT_LATENCY_SMOOTHING;
+                    }
+                    latency_refresh_countdown = MIPLAY_OUTPUT_LATENCY_REFRESH_CALLBACKS;
+                } else {
+                    latency_refresh_countdown -= 1;
+                }
+                latency_telemetry.update_output_latency(host_output_latency_millis);
+
                 let gain = volume_percent.load(Ordering::Acquire).min(100) as f32 / 100.0;
                 let mut non_silent = false;
                 if paused.load(Ordering::Acquire) {
+                    presentation_clock.observer.callback(Sample {
+                        event: "playback_gate_paused",
+                        ..Sample::default()
+                    });
+                    timed_playback_started = false;
                     if let Ok(mut queue) = queue.lock() {
                         queue.clear();
                     }
+                    latency_telemetry.update_buffered_frames(0);
                     scratch.fill(0.0);
-                } else if let Ok(mut queue) = queue.lock() {
-                    if queue.ready_to_play(frames_per_tick) {
-                        let playback_rate = queue.playback_rate(frames_per_tick, 1.0);
-                        for frame in scratch.chunks_mut(CHANNELS) {
+                } else if let Ok(mut queue) = queue.try_lock() {
+                    latency_telemetry.update_buffered_frames(queue.buffered_frames());
+                    let synchronized_frames = synchronized_buffer_frames(host_output_latency_millis);
+                    let mut leading_silence_frames = 0_usize;
+                    let mut render_tick = true;
+                    let mut synchronization_mode = "buffer_window";
+                    let playback_rate = if presentation_clock.synchronization_ready()
+                        && let Some(front_pts) = queue.front_pts_micros()
+                        && let Some(server_now) = presentation_clock.synchronized_server_now_micros()
+                        && let Some(mut schedule_error) = usable_presentation_schedule_error_micros(
+                            front_pts,
+                            presentation_clock
+                                .presentation_offset_micros
+                                .load(Ordering::Acquire),
+                            server_now,
+                            host_output_latency_millis,
+                        )
+                    {
+                        synchronization_mode = "sender_clock";
+                        if should_hard_drop_late_frames(timed_playback_started, schedule_error, true)
+                        {
+                            let late_frames = ((-schedule_error)
+                                * MIPLAY_SOURCE_SAMPLE_RATE as f64
+                                / 1_000_000.0)
+                                .floor() as usize;
+                            let dropped = queue.drop_frames(late_frames);
+                            observe_queue(
+                                &presentation_clock,
+                                &queue,
+                                host_output_latency_millis,
+                                synchronized_frames,
+                                "drop_late_frames",
+                                None,
+                                dropped,
+                            );
+                            schedule_error += dropped as f64 * 1_000_000.0
+                                / MIPLAY_SOURCE_SAMPLE_RATE as f64;
+                        }
+                        if schedule_error > 0.0 {
+                            leading_silence_frames = (schedule_error
+                                * MIPLAY_SOURCE_SAMPLE_RATE as f64
+                                / 1_000_000.0)
+                                .ceil() as usize;
+                            if leading_silence_frames >= frames_per_tick {
+                                observe_queue(
+                                    &presentation_clock,
+                                    &queue,
+                                    host_output_latency_millis,
+                                    synchronized_frames,
+                                    "wait_for_target",
+                                    None,
+                                    0,
+                                );
+                                render_tick = false;
+                            }
+                        }
+                        timed_playback_started = true;
+                        queue.scheduled_playback_rate(schedule_error, 1.0)
+                    } else {
+                        timed_playback_started = false;
+                        if !queue.ready_to_play(synchronized_frames) {
+                            observe_queue(
+                                &presentation_clock,
+                                &queue,
+                                host_output_latency_millis,
+                                synchronized_frames,
+                                "wait_for_buffer",
+                                None,
+                                0,
+                            );
+                            render_tick = false;
+                            1.0
+                        } else {
+                            queue.playback_rate(synchronized_frames, 1.0)
+                        }
+                    };
+                    if render_tick {
+                        if !synchronization_reported {
+                            synchronization_reported = true;
+                            let queue_delay_millis = synchronized_frames as f64 * 1_000.0
+                                / MIPLAY_SOURCE_SAMPLE_RATE as f64;
+                            events(json!({
+                                "event": "audio_synchronization_started",
+                                "protocol": "xiaomi_miplay",
+                                "group_target_delay_ms": MIPLAY_GROUP_PLAY_DELAY_MILLIS,
+                                "queue_delay_ms": queue_delay_millis,
+                                "output_latency_ms": host_output_latency_millis,
+                                "synchronization_mode": synchronization_mode,
+                                "device_id": "fusionplay-unified",
+                                "transport": "host_pcm_sink",
+                            }));
+                        }
+                        observe_queue(
+                            &presentation_clock,
+                            &queue,
+                            host_output_latency_millis,
+                            synchronized_frames,
+                            "render",
+                            Some(playback_rate),
+                            0,
+                        );
+                        for (frame_index, frame) in scratch.chunks_mut(CHANNELS).enumerate() {
+                            if frame_index < leading_silence_frames {
+                                frame[0] = 0.0;
+                                frame[1] = 0.0;
+                                continue;
+                            }
                             let (left, right) = queue.render_stereo(playback_rate);
-                            frame[0] = left * gain;
-                            frame[1] = right * gain;
+                            frame[0] = left;
+                            frame[1] = right;
                             non_silent |= left.abs() > 0.000_01 || right.abs() > 0.000_01;
                         }
                     } else {
                         scratch.fill(0.0);
                     }
+                    latency_telemetry.update_buffered_frames(queue.buffered_frames());
+                } else {
+                    // The decoder holds the queue briefly; emit silence instead
+                    // of blocking this realtime-paced thread.
+                    scratch.fill(0.0);
                 }
                 if non_silent && !signal_reported {
                     signal_reported = true;
@@ -2473,7 +2622,11 @@ fn spawn_external_audio_output(
                         "device_id": "fusionplay-unified",
                     }));
                 }
+                // `write` takes the sender gain explicitly and the host engine
+                // applies it; scaling the samples here as well would apply the
+                // volume twice (quadratic volume curve).
                 sink.write(gain, MIPLAY_SAMPLE_RATE_HZ, CHANNELS as u16, &scratch);
+                std::thread::sleep(StdDuration::from_millis(10));
             }
             sink.flush();
         })
@@ -2499,6 +2652,8 @@ fn open_native_audio_output(
             Arc::clone(&queue),
             paused,
             volume_percent,
+            Arc::clone(&presentation_clock),
+            Arc::clone(&latency_telemetry),
             sink,
             Arc::clone(&events),
         );

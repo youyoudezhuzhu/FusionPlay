@@ -59,6 +59,31 @@ const MAX_CALLBACK_INPUT_FRAMES: usize = 1_024;
 /// an artificial underrun.
 const CALLBACK_LOOKAHEAD_FRAMES: usize = 64;
 
+/// Requested output period: a fixed 10 ms device buffer (WASAPI shared mode
+/// otherwise picks 20-30 ms by itself, which is the dominant output latency).
+const OUTPUT_PERIOD_MS: f64 = 10.0;
+
+/// Conservative output period estimate when the device rejects the fixed
+/// buffer request and the stream runs on its default buffer.
+const FALLBACK_OUTPUT_PERIOD_MS: f64 = 20.0;
+
+/// Driver/OS scheduling overhead added on top of ring fill + device period
+/// when reporting this output stage's latency to the MiPlay scheduler.
+const OUTPUT_LATENCY_CONSTANT_MS: f64 = 5.0;
+
+/// Lower bound for the requested fixed buffer (hardware-friendly minimum).
+const MIN_FIXED_BUFFER_FRAMES: u32 = 64;
+
+/// Upper bound for the requested fixed buffer (5 frames at 48 kHz would be a
+/// 500 ms period, no backend accepts that as a "small" buffer).
+const MAX_FIXED_BUFFER_FRAMES: u32 = 4_800;
+
+/// Device frames for a nominal 10 ms fixed buffer at `sample_rate`, clamped to
+/// a range every output backend can plausibly serve.
+fn fixed_buffer_frames(sample_rate: u32) -> u32 {
+    (sample_rate / 100).clamp(MIN_FIXED_BUFFER_FRAMES, MAX_FIXED_BUFFER_FRAMES)
+}
+
 const SOURCE_COUNT: usize = 3;
 
 fn source_index(source: Source) -> usize {
@@ -166,6 +191,20 @@ impl AudioRing {
             .try_lock()
             .map(|inner| inner.samples.len() / self.channels)
             .unwrap_or(0)
+    }
+
+    /// Fill level of queued master audio in milliseconds.
+    ///
+    /// Read-only diagnostic/scheduling path, never the audio callback: a
+    /// blocking lock is fine here and avoids reporting a spurious 0 while a
+    /// producer is appending a block.
+    fn fill_millis(&self) -> f64 {
+        let frames = self
+            .inner
+            .lock()
+            .map(|inner| inner.samples.len() / self.channels)
+            .unwrap_or(0);
+        frames as f64 * 1_000.0 / TARGET_RATE as f64
     }
 
     fn last_push_age(&self) -> Option<Duration> {
@@ -526,6 +565,9 @@ struct OpenedDevice {
     sample_rate: u32,
     channels: u16,
     device_name: String,
+    /// Estimated device output period in milliseconds (10 ms when the fixed
+    /// buffer request was accepted, the fallback estimate otherwise).
+    output_period_millis: f64,
 }
 
 /// The unified audio engine. One instance owns the default output device (or
@@ -542,6 +584,8 @@ pub struct AudioEngine {
     underruns: Arc<AtomicU64>,
     info: RwLock<StatusInfo>,
     stream: Mutex<Option<cpal::Stream>>,
+    /// Device output period estimate in ms; 0 for the null backend.
+    output_period_millis: f64,
 }
 
 impl AudioEngine {
@@ -606,6 +650,7 @@ impl AudioEngine {
                 channels: TARGET_CHANNELS,
             }),
             stream: Mutex::new(None),
+            output_period_millis: 0.0,
         })
     }
 
@@ -630,6 +675,7 @@ impl AudioEngine {
             underruns: opened.underruns,
             info: RwLock::new(status),
             stream: Mutex::new(Some(opened.stream)),
+            output_period_millis: opened.output_period_millis,
         })
     }
 
@@ -643,6 +689,18 @@ impl AudioEngine {
             channels: info.channels,
             underruns: self.underruns.load(Ordering::Relaxed),
         }
+    }
+
+    /// Estimated latency of this output stage in milliseconds: the queued
+    /// master ring fill + one device output period + a driver/scheduling
+    /// margin. The MiPlay scheduler uses it to align PCM with the sender's
+    /// presentation clock; the null backend has no output stage and reports
+    /// `0.0`.
+    pub fn output_latency_millis(&self) -> f64 {
+        let Some(ring) = &self.ring else {
+            return 0.0;
+        };
+        ring.fill_millis() + self.output_period_millis + OUTPUT_LATENCY_CONSTANT_MS
     }
 
     /// Drop every queued sample for `source` (used on takeover/seek). The ring
@@ -822,6 +880,13 @@ impl fusionplay_miplay_sdk::MiPlayPcmOutput for AudioEngine {
     fn flush(&self) {
         self.flush_source(Source::MiPlay);
     }
+
+    /// Queue + device latency of this host output stage, so the SDK can
+    /// schedule PCM against the sender's presentation clock instead of
+    /// applying its conservative default. The null backend reports 0 ms.
+    fn output_latency_millis(&self) -> Option<f64> {
+        Some(AudioEngine::output_latency_millis(self))
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -844,23 +909,14 @@ fn open_device(config: &EngineConfig, warn: &WarnSink) -> Result<OpenedDevice> {
         TARGET_RATE as usize * RING_CAPACITY_MS / 1_000,
     ));
     let underruns = Arc::new(AtomicU64::new(0));
-    let state = CallbackState::new(
-        Arc::clone(&ring),
-        Arc::clone(&underruns),
-        sample_rate,
-        channels,
-    );
-    let error_warn = Arc::clone(warn);
-    let error_callback = move |error: cpal::StreamError| {
-        error_warn(&format!("音频输出流错误：{error}"));
-    };
     let stream_config = supported.config();
-    let stream = build_stream(
+    let (stream, output_period_millis) = build_stream(
         &device,
         &stream_config,
-        state,
+        Arc::clone(&ring),
+        Arc::clone(&underruns),
         supported.sample_format(),
-        error_callback,
+        warn,
     )?;
     stream.play().context("无法启动音频输出流")?;
     Ok(OpenedDevice {
@@ -870,6 +926,7 @@ fn open_device(config: &EngineConfig, warn: &WarnSink) -> Result<OpenedDevice> {
         sample_rate,
         channels,
         device_name,
+        output_period_millis,
     })
 }
 
@@ -961,13 +1018,59 @@ fn playable_format(format: SampleFormat) -> bool {
     )
 }
 
+/// Build the output stream, preferring a fixed 10 ms device buffer.
+///
+/// WASAPI shared mode otherwise picks its own 20-30 ms buffer, which dominates
+/// the output latency. If the backend rejects the fixed size the stream is
+/// rebuilt on the device default buffer and one Chinese warning is reported
+/// through `warn`. Returns the stream together with the output period estimate
+/// used for [`AudioEngine::output_latency_millis`].
 fn build_stream(
     device: &cpal::Device,
     config: &cpal::StreamConfig,
-    state: CallbackState,
+    ring: Arc<AudioRing>,
+    underruns: Arc<AtomicU64>,
     format: SampleFormat,
-    error_callback: impl FnMut(cpal::StreamError) + Send + 'static,
+    warn: &WarnSink,
+) -> Result<(cpal::Stream, f64)> {
+    let fixed_frames = fixed_buffer_frames(config.sample_rate);
+    let mut fixed_config = config.clone();
+    fixed_config.buffer_size = cpal::BufferSize::Fixed(fixed_frames);
+    match build_stream_with(
+        device,
+        &fixed_config,
+        Arc::clone(&ring),
+        Arc::clone(&underruns),
+        format,
+        Arc::clone(warn),
+    ) {
+        Ok(stream) => return Ok((stream, OUTPUT_PERIOD_MS)),
+        Err(error) => {
+            warn(&format!(
+                "音频输出不支持固定 {OUTPUT_PERIOD_MS:.0}ms 小缓冲（{fixed_frames} 帧），\
+                 已回退到设备默认缓冲：{error}"
+            ));
+        }
+    }
+    let stream = build_stream_with(device, config, ring, underruns, format, Arc::clone(warn))
+        .context("无法创建音频输出流")?;
+    Ok((stream, FALLBACK_OUTPUT_PERIOD_MS))
+}
+
+/// One stream-build attempt (the state and error callback are recreated per
+/// attempt so a rejected fixed buffer can be retried with the default buffer).
+fn build_stream_with(
+    device: &cpal::Device,
+    config: &cpal::StreamConfig,
+    ring: Arc<AudioRing>,
+    underruns: Arc<AtomicU64>,
+    format: SampleFormat,
+    warn: WarnSink,
 ) -> Result<cpal::Stream> {
+    let state = CallbackState::new(ring, underruns, config.sample_rate, config.channels);
+    let error_callback = move |error: cpal::StreamError| {
+        warn(&format!("音频输出流错误：{error}"));
+    };
     match format {
         SampleFormat::F32 => build_typed::<f32>(device, config, state, error_callback),
         SampleFormat::F64 => build_typed::<f64>(device, config, state, error_callback),
@@ -1207,5 +1310,97 @@ mod tests {
         assert!((surround[0] - 0.5).abs() < 1e-6);
         assert!((surround[1] - 0.75).abs() < 1e-6);
         assert_eq!(&surround[2..], &[0.0, 0.0, 0.0, 0.0]);
+    }
+
+    #[test]
+    fn fixed_buffer_frames_requests_ten_millis_and_clamps() {
+        // Nominal 10 ms at the common device rates.
+        assert_eq!(fixed_buffer_frames(TARGET_RATE), 480);
+        assert_eq!(fixed_buffer_frames(44_100), 441);
+        assert_eq!(fixed_buffer_frames(96_000), 960);
+        // Below 6.4 kHz the frame floor wins, so the period is longer than
+        // 10 ms; above 480 kHz the ceiling caps the request.
+        assert_eq!(fixed_buffer_frames(8_000), 80);
+        assert_eq!(fixed_buffer_frames(4_000), MIN_FIXED_BUFFER_FRAMES);
+        assert_eq!(fixed_buffer_frames(200_000), 2_000);
+        assert_eq!(fixed_buffer_frames(960_000), MAX_FIXED_BUFFER_FRAMES);
+    }
+
+    #[test]
+    fn null_engine_reports_zero_output_latency() {
+        let engine = capture_engine();
+        assert_eq!(engine.output_latency_millis(), 0.0);
+        assert_eq!(
+            fusionplay_miplay_sdk::MiPlayPcmOutput::output_latency_millis(engine.as_ref()),
+            Some(0.0)
+        );
+    }
+
+    #[test]
+    fn ring_fill_millis_reports_queued_audio() {
+        let ring = AudioRing::new(
+            TARGET_CHANNELS as usize,
+            TARGET_RATE as usize * RING_CAPACITY_MS / 1_000,
+        );
+        assert_eq!(ring.fill_millis(), 0.0);
+        // 480 stereo frames = 10 ms of master audio.
+        ring.push(&[0.5; 480 * TARGET_CHANNELS as usize]);
+        assert!((ring.fill_millis() - 10.0).abs() < 1e-6);
+        ring.clear();
+        assert_eq!(ring.fill_millis(), 0.0);
+    }
+
+    /// Engine with a real [`AudioRing`] but no device stream, mirroring the
+    /// state [`AudioEngine::with_device`] builds (unit tests cannot open a
+    /// sound card). `output_period_millis` is injected explicitly.
+    fn ring_engine(ring: Arc<AudioRing>, output_period_millis: f64) -> AudioEngine {
+        AudioEngine {
+            sink: Arc::new(DeviceSink {
+                ring: Arc::clone(&ring),
+            }),
+            ring: Some(ring),
+            null_sink: None,
+            ingest: new_ingest_array(),
+            active: AtomicU8::new(encode_source(Source::MiPlay)),
+            stopped: AtomicBool::new(false),
+            underruns: Arc::new(AtomicU64::new(0)),
+            info: RwLock::new(StatusInfo {
+                mode: "cpal".to_string(),
+                device_name: None,
+                sample_rate: TARGET_RATE,
+                channels: TARGET_CHANNELS,
+            }),
+            stream: Mutex::new(None),
+            output_period_millis,
+        }
+    }
+
+    #[test]
+    fn device_engine_output_latency_tracks_ring_fill() {
+        let ring = Arc::new(AudioRing::new(
+            TARGET_CHANNELS as usize,
+            TARGET_RATE as usize * RING_CAPACITY_MS / 1_000,
+        ));
+        let engine = ring_engine(Arc::clone(&ring), OUTPUT_PERIOD_MS);
+
+        // Empty ring: period + constant margin only.
+        let idle = engine.output_latency_millis();
+        assert!((idle - (OUTPUT_PERIOD_MS + OUTPUT_LATENCY_CONSTANT_MS)).abs() < 1e-6);
+
+        // 20 ms of 48 kHz stereo PCM lands in the ring unchanged, so the
+        // reported latency must grow by exactly that much.
+        engine.write_internal(Source::MiPlay, 0, 1.0, TARGET_RATE, 2, &[0.25; 960 * 2]);
+        assert!(ring.fill_millis() > 0.0);
+        let expected = 20.0 + OUTPUT_PERIOD_MS + OUTPUT_LATENCY_CONSTANT_MS;
+        let reported = engine.output_latency_millis();
+        assert!(
+            (reported - expected).abs() < 1e-6,
+            "expected {expected} ms, got {reported} ms"
+        );
+        // The MiPlay sink contract exposes the same estimate.
+        assert_eq!(
+            fusionplay_miplay_sdk::MiPlayPcmOutput::output_latency_millis(&engine),
+            Some(reported)
+        );
     }
 }

@@ -62,7 +62,27 @@ pub fn validate(settings: SettingsView) -> SettingsView {
         mi_play_device_identity: normalise_miplay_identity(&settings.mi_play_device_identity),
         air_play_enabled: settings.air_play_enabled,
         dlna_enabled: settings.dlna_enabled,
+        air_play_latency_ms: clamp_air_play_latency_ms(settings.air_play_latency_ms),
     }
+}
+
+/// AirPlay 2 `Audio-Latency` bounds. 2000 ms is the protocol default; 250 ms is
+/// the practical floor for a Wi-Fi sender, 4000 ms only makes sense for a very
+/// lossy link.
+pub const MIN_AIR_PLAY_LATENCY_MS: u32 = 250;
+pub const MAX_AIR_PLAY_LATENCY_MS: u32 = 4_000;
+pub const DEFAULT_AIR_PLAY_LATENCY_MS: u32 = 2_000;
+
+fn clamp_air_play_latency_ms(value: u32) -> u32 {
+    let clamped = value.clamp(MIN_AIR_PLAY_LATENCY_MS, MAX_AIR_PLAY_LATENCY_MS);
+    if clamped != value {
+        tracing::warn!(
+            "airPlayLatencyMs={value} 超出范围，已修正为 {clamped}（允许 {}..={}）",
+            MIN_AIR_PLAY_LATENCY_MS,
+            MAX_AIR_PLAY_LATENCY_MS
+        );
+    }
+    clamped
 }
 
 /// Whether an identity value is accepted from the UI (case-insensitive).

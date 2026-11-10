@@ -87,6 +87,9 @@ impl AndroidCoreProtocol {
             // FusionPlay is an audio receiver: advertise the audio-only
             // AirPlay profile so iPhones do not offer video/mirroring.
             airplay_audio_only: true,
+            // Android has no user-facing low-latency mode yet; keep the 2 s
+            // protocol default.
+            airplay_latency_frames: crate::DEFAULT_AIRPLAY_LATENCY_FRAMES,
             audio_output: None,
         }
     }

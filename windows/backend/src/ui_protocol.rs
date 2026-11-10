@@ -74,6 +74,11 @@ pub struct SettingsView {
     pub air_play_enabled: bool,
     #[serde(default = "default_true")]
     pub dlna_enabled: bool,
+    /// AirPlay 2 advertised output latency in milliseconds (the RTSP
+    /// `Audio-Latency` header, 44.1 kHz frames). 2000 ms is the AirPlay 2
+    /// default; lower values trade Wi-Fi robustness for lower latency.
+    #[serde(default = "default_air_play_latency_ms")]
+    pub air_play_latency_ms: u32,
 }
 
 const fn default_schema_version() -> u32 {
@@ -84,6 +89,9 @@ const fn default_true() -> bool {
 }
 fn default_miplay_identity() -> String {
     "television".to_owned()
+}
+const fn default_air_play_latency_ms() -> u32 {
+    2_000
 }
 
 impl Default for SettingsView {
@@ -98,6 +106,7 @@ impl Default for SettingsView {
             mi_play_device_identity: default_miplay_identity(),
             air_play_enabled: true,
             dlna_enabled: true,
+            air_play_latency_ms: default_air_play_latency_ms(),
         }
     }
 }
@@ -288,6 +297,7 @@ mod tests {
         assert!(json.get("activeMediaSource").is_some());
         assert_eq!(json["settings"]["schemaVersion"], 8);
         assert_eq!(json["settings"]["miPlayDeviceIdentity"], "television");
+        assert_eq!(json["settings"]["airPlayLatencyMs"], 2000);
         assert_eq!(json["playback"]["positionMs"], 0);
         assert_eq!(json["remoteControl"]["available"], false);
     }

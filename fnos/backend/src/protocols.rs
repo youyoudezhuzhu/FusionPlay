@@ -360,6 +360,8 @@ impl ProtocolHosts {
             // fnOS is an audio receiver: advertise the audio-only AirPlay
             // profile so iPhones do not offer video/AirPlay mirroring to it.
             airplay_audio_only: true,
+            // fnOS has no user-facing low-latency mode; keep the 2 s default.
+            airplay_latency_frames: fusionplay_core::DEFAULT_AIRPLAY_LATENCY_FRAMES,
             audio_output: Some(sink),
         };
         let state_for_thread = Arc::clone(&self.state);

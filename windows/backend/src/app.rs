@@ -35,6 +35,9 @@ pub struct RuntimeConfig {
     pub force_disable_dlna: bool,
     pub force_disable_miplay: bool,
     pub log_level: String,
+    /// One-shot AirPlay 2 latency override (`--airplay-latency-ms` / env).
+    /// `None` keeps the persisted setting (default 2000 ms).
+    pub airplay_latency_ms: Option<u32>,
 }
 
 /// Why the runtime could not start. `AlreadyRunning` maps to exit code 2.
@@ -237,6 +240,12 @@ impl AppRuntime {
             "setMiPlayDeviceIdentity" => {
                 self.set_miplay_identity(&command.value_string())
             }
+            "setAirPlayLatencyMs" => {
+                let Some(value) = command.value.as_ref().and_then(serde_json::Value::as_u64) else {
+                    return CommandOutcome::error("setAirPlayLatencyMs 缺少整数毫秒值");
+                };
+                self.set_air_play_latency_ms(value.min(u64::from(u32::MAX)) as u32)
+            }
             "playback" => {
                 let action = command.value_string();
                 let outcome = self.with_hosts(|hosts| hosts.playback(&action));
@@ -380,6 +389,24 @@ impl AppRuntime {
         }
         self.state.apply_settings(settings.clone());
         let receiver_name = resolve_receiver_name(&settings);
+        self.restart_hosts(&settings, &receiver_name)
+    }
+
+    fn set_air_play_latency_ms(&self, milliseconds: u32) -> CommandOutcome {
+        let mut settings = self.settings();
+        settings.air_play_latency_ms = milliseconds;
+        if let Err(error) = self.store.save(&settings) {
+            let message = format!("保存设置失败：{error:#}");
+            self.ui.log(LogLevel::Error, "host", &message);
+            return CommandOutcome::error(message);
+        }
+        self.state.apply_settings(settings.clone());
+        let receiver_name = resolve_receiver_name(&settings);
+        self.ui.log(
+            LogLevel::Info,
+            "host",
+            &format!("AirPlay 2 广告延迟已设为 {milliseconds} ms"),
+        );
         self.restart_hosts(&settings, &receiver_name)
     }
 

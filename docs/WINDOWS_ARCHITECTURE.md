@@ -65,6 +65,7 @@ FusionPlayCore.exe [--data-dir <dir>] [--null-audio] [--output-device <name-or-i
   - AirPlay：`fusionplay_core` 的 `PcmOutput` 钩子（`start_audio_external`，48k/2）
   - DLNA：`dlna_player`（HTTP 拉流 + symphonia 解码 + 重采样到 48k）
   - MiPlay：`fusionplay_miplay_sdk::MiPlayPcmOutput` 进程级 sink
+- 妙播 PCM：SDK 的统一输出线程按发送端 presentation clock（timer-server 时钟 + TimeOffset）排程，队列目标约 `MIPLAY_GROUP_PLAY_DELAY_MILLIS(800ms) - 主机输出延迟`，迟到帧会丢弃、提前帧会等待；主机通过 `MiPlayPcmOutput::output_latency_millis()` 上报引擎 ring 填充 + 设备周期，SDK 据此补偿输出延迟并每 250ms 向发送端反馈。
 - **同一时刻只有一个活动音源**（`session::Arbiter`）：新音源 claim 后旧音源 flush 且其 PCM
   被丢弃；MiPlay 被接管时调用 `ReceiverController::suspend_output()`（恢复时 `resume_output()`）。
   AirPlay ↔ DLNA 的接管由核心内部 `PlaybackArbiter` 完成；MiPlay 通过向核心发送
@@ -118,7 +119,8 @@ FusionPlayCore.exe [--data-dir <dir>] [--null-audio] [--output-device <name-or-i
     "miPlayEnabled": true,
     "miPlayDeviceIdentity": "television",   // vehicle|television|tablet|speaker
     "airPlayEnabled": true,
-    "dlnaEnabled": true
+    "dlnaEnabled": true,
+    "airPlayLatencyMs": 2000
   },
   "playback": {
     "title": null, "artist": null, "album": null,
@@ -200,6 +202,7 @@ FusionPlayCore.exe [--data-dir <dir>] [--null-audio] [--output-device <name-or-i
 | `setAdvancedEffectsEnabled` | `value: bool` | 仅持久化（Windows 无 DSP） |
 | `setProtocolEnabled` | `protocol: "airplay"\|"dlna"\|"miplay"`, `value: bool` | 持久化并只重启受影响的协议 |
 | `setMiPlayDeviceIdentity` | `value: "vehicle"\|"television"\|"tablet"\|"speaker"` | 重启 MiPlay 广播 |
+| `setAirPlayLatencyMs` | `value: int`（250–4000） | 更新 AirPlay 2 广告延迟并重启 AirPlay 接收器（UI 暂未接入，可经 settings.json 配置） |
 | `playback` | `value: "playPause"\|"previous"\|"next"`（Dart 枚举名，兼容 `play`/`pause`/`play_pause`/`previous_track`/`next_track`） | 转发给当前音源；`command` 键已被信封占用，动作放在 `value` |
 | `seek` | `positionMs: int` | 转发给当前音源 |
 | `volume` | `percent: 0..100` | 回写发送端音量 |

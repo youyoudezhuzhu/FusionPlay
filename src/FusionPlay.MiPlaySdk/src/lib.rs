@@ -26,6 +26,18 @@ use protocol::{ControlHub, start_control_server};
 pub trait MiPlayPcmOutput: Send + Sync {
     fn write(&self, sender_gain: f32, sample_rate: u32, channels: u16, samples: &[f32]);
     fn flush(&self);
+
+    /// End-to-end latency of the host output stage in milliseconds (engine ring
+    /// fill + device period + driver latency).
+    ///
+    /// The SDK schedules PCM against the sender's presentation clock and needs
+    /// to know when a sample will actually reach the speaker. Hosts that cannot
+    /// estimate it return `None` and the SDK falls back to a conservative
+    /// default. fnOS/Windows unified engines should report their measured ring
+    /// fill here so 妙播 stays aligned instead of drifting behind the sender.
+    fn output_latency_millis(&self) -> Option<f64> {
+        None
+    }
 }
 
 static PROCESS_PCM_OUTPUT: std::sync::OnceLock<

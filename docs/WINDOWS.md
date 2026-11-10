@@ -45,10 +45,18 @@ Windows 10/11（x64）上的 FusionPlay 接收端：把电脑变成支持 **AirP
 
 只建议在**可信的私有局域网**使用；Windows 版默认不做跨网段、公网端口映射或鉴权网关。
 
-### 已知限制（1.3.0）
+### 延迟与音画同步
+
+- **妙播（MiPlay）**：1.3.1 起接收端按手机的发送端时钟（timer-server 同步 + TimeOffset）排程播放，并按主机输出延迟做补偿；正常约 0.8–1 秒（与手机系统播放器同步），不再是"到达即播"造成的数秒延迟。
+- **AirPlay 2**：默认广告 2 秒缓冲（`Audio-Latency: 88200`，AirPlay 2 协议默认）。想要更低延迟可把 `%LOCALAPPDATA%\FusionPlay\settings.json` 里的 `airPlayLatencyMs` 改成 `500`～`1000`，或用环境变量 `FUSIONPLAY_AIRPLAY_LATENCY_MS=800` 启动侧车；越低越省延迟，但 Wi-Fi 抖动时更容易断音。修改后重启 FusionPlay 生效。
+- 输出设备自身延迟另计：蓝牙耳机/音箱通常 +100–300ms，HDMI 电视/显示器 +50–150ms；内置/有线扬声器基本可忽略。
+- 诊断：`docs/WINDOWS_ARCHITECTURE.md` 的日志字段里会打印 `audio_synchronization_started`（含 `synchronization_mode=sender_clock`、`queue_delay_ms`、`output_latency_ms`），可用于确认妙播是否进入发送端时钟同步；设置 `FUSIONPLAY_MIPLAY_CLOCK_OBSERVER=1` 会额外写出时钟观测 JSONL 到数据目录。
+
+### 已知限制（1.3.1）
 
 - 仅音频接收：不支持 AirPlay 镜像/视频、DLNA 视频、HLS、DRM 内容；不会向发送端广告视频能力。
 - 不支持 Windows 系统媒体控制中心（SMTC）/媒体键，后续版本补充。
+- AirPlay 低延迟目前通过 settings.json 字段/环境变量配置，暂未做进设置界面。
 - 不支持 DLNA HTTPS 媒体源；本地网络建议使用 HTTP 媒体服务器。
 - 数据目录固定为当前用户的 `%LOCALAPPDATA%`，不支持多用户共享一套接收器。
 - 同一时间只支持一个活动的音频输出设备（系统默认设备；多设备 fan-out 是 fnOS 版特性）。

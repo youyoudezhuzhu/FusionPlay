@@ -68,6 +68,8 @@ pub struct RaopServerBuilder {
     mode: AirPlayMode,
     output_sample_rate: Option<u32>,
     output_max_channels: Option<u8>,
+    /// Minimum output latency advertised to AP2 senders, in frames at 44.1 kHz.
+    audio_latency_frames: u32,
     #[cfg(feature = "ap2")]
     pin: Option<String>,
     #[cfg(feature = "video")]
@@ -100,6 +102,7 @@ impl RaopServerBuilder {
             mode: AirPlayMode::default(),
             output_sample_rate: None,
             output_max_channels: None,
+            audio_latency_frames: super::config::DEFAULT_AUDIO_LATENCY_FRAMES,
             #[cfg(feature = "ap2")]
             pin: None,
             #[cfg(feature = "video")]
@@ -210,6 +213,20 @@ impl RaopServerBuilder {
         self
     }
 
+    /// Set the minimum output latency advertised to AirPlay 2 senders, in
+    /// frames at the 44.1 kHz AirPlay clock. Default: 88,200 (2 s).
+    ///
+    /// The sender buffers at least this much audio before playout, so lowering
+    /// it reduces end-to-end latency (e.g. a Windows "low latency" mode) at the
+    /// cost of tolerance for Wi-Fi jitter. Values outside the supported
+    /// 11,025..=176,400 frame range (250 ms..4 s) fall back to the default.
+    /// Classic AirPlay (AP1) ignores this setting and keeps its 11,025-frame
+    /// (250 ms) minimum.
+    pub fn audio_latency_frames(mut self, frames: u32) -> Self {
+        self.audio_latency_frames = super::config::sanitize_audio_latency_frames(frames);
+        self
+    }
+
     /// Build the server with the given audio handler.
     pub fn build(self, handler: Arc<dyn AudioHandler>) -> Result<RaopServer, ShairplayError> {
         if self.max_clients == 0 {
@@ -263,6 +280,7 @@ impl RaopServerBuilder {
             identity_seed,
             output_sample_rate: self.output_sample_rate,
             output_max_channels: self.output_max_channels,
+            audio_latency_frames: self.audio_latency_frames,
             #[cfg(feature = "ap2")]
             pin: self.pin,
             #[cfg(feature = "video")]
@@ -467,6 +485,32 @@ mod media_control_tests {
 
     impl AudioSession for NoopSession {
         fn audio_process(&mut self, _samples: &[f32]) {}
+    }
+
+    #[test]
+    fn audio_latency_defaults_to_two_seconds_and_accepts_low_latency() {
+        let default = RaopServer::builder().build(Arc::new(NoopHandler)).expect("test server");
+        assert_eq!(default.shared.audio_latency_frames, 88_200);
+
+        let low_latency = RaopServer::builder()
+            .audio_latency_frames(22_050)
+            .build(Arc::new(NoopHandler))
+            .expect("test server");
+        assert_eq!(low_latency.shared.audio_latency_frames, 22_050);
+    }
+
+    #[test]
+    fn invalid_audio_latency_falls_back_to_the_two_second_default() {
+        for invalid in [0u32, 1, 11_024, 176_401, u32::MAX] {
+            let server = RaopServer::builder()
+                .audio_latency_frames(invalid)
+                .build(Arc::new(NoopHandler))
+                .expect("test server");
+            assert_eq!(
+                server.shared.audio_latency_frames, 88_200,
+                "{invalid} frames must fall back to the default"
+            );
+        }
     }
 
     #[test]

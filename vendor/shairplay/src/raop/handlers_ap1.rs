@@ -386,8 +386,10 @@ pub(crate) fn handle_record(
 ) -> Option<Vec<u8>> {
     // Classic AirPlay interprets this as the receiver's minimum output
     // latency. 11,025 frames equals 250 ms at its 44.1 kHz clock and is the
-    // value used by mature synchronized RAOP receivers.
-    response.add_header("Audio-Latency", "11025");
+    // value used by mature synchronized RAOP receivers. AP1 deliberately keeps
+    // its fixed floor: only the AP2 handler honours a configured latency.
+    let audio_latency = super::config::AP1_AUDIO_LATENCY_FRAMES.to_string();
+    response.add_header("Audio-Latency", &audio_latency);
     if let Some(rtp) = conn.raop_rtp.as_ref() {
         rtp.resume();
     }
@@ -502,7 +504,7 @@ pub(crate) fn handle_set_parameter(
 
 // Verifies handler-facing notifications and RTSP transport state transitions.
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use crate::crypto::pairing::Pairing;
     use crate::crypto::rsa::RsaKey;
@@ -531,7 +533,15 @@ mod tests {
         }
     }
 
-    fn test_connection(handler: Arc<RecordingHandler>) -> RaopConnection {
+    pub(crate) fn test_connection(handler: Arc<dyn AudioHandler>) -> RaopConnection {
+        test_connection_with_latency(handler, crate::raop::config::DEFAULT_AUDIO_LATENCY_FRAMES)
+    }
+
+    /// Build a test connection whose shared config advertises `audio_latency_frames`.
+    pub(crate) fn test_connection_with_latency(
+        handler: Arc<dyn AudioHandler>,
+        audio_latency_frames: u32,
+    ) -> RaopConnection {
         let shared = Arc::new(RaopShared {
             rsakey: Arc::new(RsaKey::from_pem(include_str!("../../airport.key")).unwrap()),
             pairing: Arc::new(Pairing::generate().unwrap()),
@@ -544,6 +554,7 @@ mod tests {
             identity_seed: [0u8; 32],
             output_sample_rate: None,
             output_max_channels: None,
+            audio_latency_frames,
             #[cfg(feature = "ap2")]
             pin: None,
             #[cfg(feature = "video")]

@@ -54,13 +54,18 @@ struct MiPlayHandle {
 }
 
 /// Fingerprint of the settings that require protocol hosts to restart.
-fn fingerprint(settings: &SettingsView, receiver_name: &str) -> Value {
+fn fingerprint(
+    settings: &SettingsView,
+    receiver_name: &str,
+    latency_override_ms: Option<u32>,
+) -> Value {
     json!({
         "name": receiver_name,
         "airplay": settings.air_play_enabled,
         "dlna": settings.dlna_enabled,
         "miplay": settings.mi_play_enabled,
         "miplay_identity": settings.mi_play_device_identity,
+        "airplay_latency": effective_air_play_latency_frames(settings, latency_override_ms),
     })
 }
 
@@ -214,7 +219,7 @@ impl ProtocolHosts {
     }
 
     pub fn restart(&self, settings: &SettingsView, receiver_name: &str) -> Result<()> {
-        let next = fingerprint(settings, receiver_name);
+        let next = fingerprint(settings, receiver_name, self.config.airplay_latency_ms);
         if self
             .applied
             .lock()
@@ -244,7 +249,7 @@ impl ProtocolHosts {
             self.ui.log(LogLevel::Info, "miplay", "小米妙播已在设置中关闭");
         }
         if let Ok(mut slot) = self.applied.lock() {
-            *slot = Some(fingerprint(settings, receiver_name));
+            *slot = Some(fingerprint(settings, receiver_name, self.config.airplay_latency_ms));
         }
         Ok(())
     }
@@ -292,6 +297,7 @@ impl ProtocolHosts {
             // Windows 1.3.0 is an audio receiver: advertise the audio-only
             // profile so iPhones do not offer mirroring/video we cannot show.
             airplay_audio_only: true,
+            airplay_latency_frames: effective_air_play_latency_frames(settings, self.config.airplay_latency_ms),
             audio_output: Some(output),
         };
         let thread_state = Arc::clone(&self.state);
@@ -350,6 +356,11 @@ impl ProtocolHosts {
         let interface = crate::windows_api::pick_lan_interface()
             .context("没有可用的局域网 IPv4 接口，无法启动小米妙播")?;
         let identity = load_miplay_identity(&data_dir)?;
+        if std::env::var_os("FUSIONPLAY_MIPLAY_CLOCK_OBSERVER").is_some() {
+            let identity_dir = data_dir.join("Identity");
+            let _ = std::fs::create_dir_all(&identity_dir);
+            let _ = fusionplay_miplay_sdk::clock_observer::enable(&identity_dir.join("miplay-clock.jsonl"));
+        }
         let retired = receiver_name_history(&data_dir, receiver_name);
         let state = Arc::clone(&self.state);
         let ui = Arc::clone(&self.ui);
@@ -658,6 +669,19 @@ pub fn normalize_playback_action(action: &str) -> Option<&'static str> {
     }
 }
 
+/// Convert the configured AirPlay 2 latency (ms) to the RTSP `Audio-Latency`
+/// frame count (44.1 kHz clock). `override_ms` comes from
+/// `--airplay-latency-ms` / `FUSIONPLAY_AIRPLAY_LATENCY_MS`.
+fn effective_air_play_latency_frames(
+    settings: &SettingsView,
+    override_ms: Option<u32>,
+) -> u32 {
+    let milliseconds = override_ms
+        .unwrap_or(settings.air_play_latency_ms)
+        .clamp(crate::settings::MIN_AIR_PLAY_LATENCY_MS, crate::settings::MAX_AIR_PLAY_LATENCY_MS);
+    (u64::from(milliseconds) * 441 / 10) as u32
+}
+
 fn string_field(value: &Value, key: &str) -> Option<String> {
     value
         .get(key)
@@ -768,4 +792,41 @@ fn receiver_name_history(data_dir: &Path, current: &str) -> Vec<String> {
         let _ = std::fs::write(&path, text);
     }
     retired
+}
+
+#[cfg(test)]
+mod latency_tests {
+    use super::*;
+    use crate::ui_protocol::SettingsView;
+
+    #[test]
+    fn air_play_latency_millis_map_to_44k1_frames() {
+        let settings = SettingsView::default();
+        assert_eq!(effective_air_play_latency_frames(&settings, None), 88_200);
+        assert_eq!(
+            effective_air_play_latency_frames(&settings, Some(500)),
+            22_050
+        );
+        assert_eq!(
+            effective_air_play_latency_frames(&settings, Some(250)),
+            11_025
+        );
+        // Out-of-range overrides are clamped instead of being advertised.
+        assert_eq!(
+            effective_air_play_latency_frames(&settings, Some(10)),
+            11_025
+        );
+        assert_eq!(
+            effective_air_play_latency_frames(&settings, Some(99_999)),
+            176_400
+        );
+    }
+
+    #[test]
+    fn latency_change_invalidates_the_restart_fingerprint() {
+        let settings = SettingsView::default();
+        let default = fingerprint(&settings, "客厅", None);
+        let low = fingerprint(&settings, "客厅", Some(1_000));
+        assert_ne!(default, low);
+    }
 }

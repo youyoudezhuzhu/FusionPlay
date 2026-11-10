@@ -901,10 +901,15 @@ pub(crate) fn handle_record(
 ) -> Option<Vec<u8>> {
     tracing::debug!("RECORD");
     // AirPlay 2 interprets this as the receiver's minimum output latency.
-    // 88,200 frames equals 2 s at its 44.1 kHz clock and is the value used by
-    // genuine AirPlay receivers. Advertising 0 drops the sender-side buffer,
-    // which causes stutter and breaks multi-room sync with genuine receivers.
-    response.add_header("Audio-Latency", "88200");
+    // Default 88,200 frames equals 2 s at the 44.1 kHz clock and is the value
+    // used by genuine AirPlay receivers. Advertising 0 drops the sender-side
+    // buffer, which causes stutter and breaks multi-room sync with genuine
+    // receivers. Hosts that need lower latency (e.g. the Windows low-latency
+    // mode) configure a smaller value through
+    // `RaopServerBuilder::audio_latency_frames`; the builder clamps it to a
+    // sender-safe range.
+    let audio_latency = conn.shared.audio_latency_frames.to_string();
+    response.add_header("Audio-Latency", &audio_latency);
     let should_apply = conn
         .ap2_remote_control
         .as_ref()
@@ -1390,4 +1395,64 @@ pub(crate) fn handle_audio_mode(
         tracing::debug!(mode, "POST /audioMode");
     }
     None
+}
+
+/// Verifies the AP2 RECORD `Audio-Latency` header follows the configured value.
+#[cfg(all(test, feature = "ap2"))]
+mod record_latency_tests {
+    use super::handle_record;
+    use crate::proto::http::{HttpRequest, HttpResponse};
+    use crate::raop::handlers_ap1::tests::test_connection_with_latency;
+    use crate::raop::{AudioFormat, AudioHandler, AudioSession, config::DEFAULT_AUDIO_LATENCY_FRAMES};
+    use std::sync::Arc;
+
+    struct NoopSession;
+
+    impl AudioSession for NoopSession {
+        fn audio_process(&mut self, _samples: &[f32]) {}
+    }
+
+    struct NoopHandler;
+
+    impl AudioHandler for NoopHandler {
+        fn audio_init(&self, _format: AudioFormat) -> Box<dyn AudioSession> {
+            Box::new(NoopSession)
+        }
+    }
+
+    /// Run AP2 RECORD on a connection configured with `latency_frames` and
+    /// return the raw response headers.
+    fn record_headers(latency_frames: u32) -> String {
+        let mut conn = test_connection_with_latency(Arc::new(NoopHandler), latency_frames);
+        conn.is_ap2 = true;
+        let request = HttpRequest::new();
+        let mut response = HttpResponse::new("RTSP/1.0", 200, "OK");
+
+        assert!(
+            handle_record(&mut conn, &request, &mut response).is_none(),
+            "AP2 RECORD must not return a body"
+        );
+        String::from_utf8(response.get_data().to_vec()).expect("RTSP headers are UTF-8")
+    }
+
+    #[test]
+    fn record_defaults_to_the_2s_protocol_latency() {
+        let headers = record_headers(DEFAULT_AUDIO_LATENCY_FRAMES);
+        assert!(
+            headers.contains("Audio-Latency: 88200\r\n"),
+            "default RECORD must advertise 88,200 frames, got: {headers}"
+        );
+    }
+
+    #[test]
+    fn record_advertises_the_configured_low_latency() {
+        for frames in [11_025u32, 22_050, 44_100] {
+            let headers = record_headers(frames);
+            let expected = format!("Audio-Latency: {frames}\r\n");
+            assert!(
+                headers.contains(&expected),
+                "configured {frames} frames missing from RECORD: {headers}"
+            );
+        }
+    }
 }

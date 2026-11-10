@@ -21,6 +21,7 @@ struct CliArgs {
     force_disable_airplay: bool,
     force_disable_dlna: bool,
     force_disable_miplay: bool,
+    airplay_latency_ms: Option<u32>,
     log_level: String,
     show_version: bool,
     show_help: bool,
@@ -34,6 +35,9 @@ fn parse_args() -> Result<CliArgs, String> {
         force_disable_airplay: false,
         force_disable_dlna: false,
         force_disable_miplay: false,
+        airplay_latency_ms: std::env::var("FUSIONPLAY_AIRPLAY_LATENCY_MS")
+            .ok()
+            .and_then(|value| value.trim().parse::<u32>().ok()),
         log_level: "info".to_owned(),
         show_version: false,
         show_help: false,
@@ -53,6 +57,15 @@ fn parse_args() -> Result<CliArgs, String> {
             "--no-airplay" => args.force_disable_airplay = true,
             "--no-dlna" => args.force_disable_dlna = true,
             "--no-miplay" => args.force_disable_miplay = true,
+            "--airplay-latency-ms" => {
+                let value = iterator.next().ok_or("--airplay-latency-ms 缺少值")?;
+                args.airplay_latency_ms = Some(
+                    value
+                        .trim()
+                        .parse::<u32>()
+                        .map_err(|_| format!("--airplay-latency-ms 不是合法整数：{value}"))?,
+                );
+            }
             "--log-level" => {
                 args.log_level = iterator.next().ok_or("--log-level 缺少值")?;
             }
@@ -75,6 +88,7 @@ fn print_help() {
            --no-airplay              本次启动禁用 AirPlay\n\
            --no-dlna                 本次启动禁用 DLNA\n\
            --no-miplay               本次启动禁用小米妙播\n\
+           --airplay-latency-ms <ms>  AirPlay 2 广告延迟（默认 2000，低延迟可试 500–1000）\n\
            --log-level <level>       trace|debug|info|warn|error（默认 info）\n\
            --version                 打印版本号\n\
            --help                    显示本帮助\n\n\
@@ -131,6 +145,7 @@ fn main() {
         force_disable_dlna: args.force_disable_dlna,
         force_disable_miplay: args.force_disable_miplay,
         log_level: args.log_level.clone(),
+        airplay_latency_ms: args.airplay_latency_ms,
     };
 
     let runtime = match AppRuntime::start(config, Arc::clone(&ui) as Arc<dyn UiSink>) {
