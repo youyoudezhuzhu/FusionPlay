@@ -787,7 +787,8 @@ fn open_source(uri: &str, timeout: Duration, abort: &Abort) -> Result<OpenedMedi
     }
 }
 
-fn file_path_from_uri(uri: &str) -> Result<String> {
+/// Extracts the part after `file://`, accepting `file://localhost/...`.
+fn file_uri_rest(uri: &str) -> Result<&str> {
     let scheme_end = uri
         .find("://")
         .ok_or_else(|| anyhow!("非法 file:// 地址：{uri}"))?;
@@ -801,31 +802,17 @@ fn file_path_from_uri(uri: &str) -> Result<String> {
     if rest.is_empty() {
         bail!("file:// 地址缺少路径：{uri}");
     }
-    let path = percent_decode(rest)?;
+    Ok(rest)
+}
+
+fn file_path_from_uri(uri: &str) -> Result<String> {
     #[cfg(windows)]
     {
-        // DLNA control points and local tools emit several Windows spellings:
-        //   file://C:\Media\song.mp3
-        //   file://C:/Media/song.mp3
-        //   file:///C:/Media/song.mp3
-        //   file://server/share/song.mp3   (UNC)
-        let mut path = path.replace('\\', "/");
-        if let Some(stripped) = path.strip_prefix("//") {
-            // UNC path: \\server\share\...
-            return Ok(format!("\\\\{stripped}").replace('/', "\\"));
-        }
-        if let Some(stripped) = path.strip_prefix('/') {
-            if is_windows_drive_path(stripped) {
-                path = stripped.to_owned();
-            }
-        }
-        if !is_windows_drive_path(&path) {
-            bail!("file:// 必须是绝对路径：{uri}");
-        }
-        Ok(path.replace('/', "\\"))
+        file_path_from_uri_windows(uri)
     }
     #[cfg(not(windows))]
     {
+        let path = percent_decode(file_uri_rest(uri)?)?;
         if !path.starts_with('/') {
             bail!("file:// 必须是绝对路径：{uri}");
         }
@@ -833,8 +820,46 @@ fn file_path_from_uri(uri: &str) -> Result<String> {
     }
 }
 
+/// Windows spelling normalisation, kept platform-independent so it is unit
+/// tested on every host (the windows-latest CI runs the same cases).
+///
+/// Accepted forms (all percent-decoded before this step):
+///   `file://C:\\Media\\song.mp3`
+///   `file://C:/Media/song.mp3`
+///   `file:///C:/Media/song.mp3`
+///   `file://server/share/song.mp3`   (UNC)
+#[cfg_attr(not(windows), allow(dead_code))]
+fn file_path_from_uri_windows(uri: &str) -> Result<String> {
+    let mut path = percent_decode(file_uri_rest(uri)?)?.replace('\\', "/");
+    // `file:////server/share` (double slash authority) is already UNC-shaped.
+    if let Some(unc) = path.strip_prefix("//") {
+        if unc.is_empty() {
+            bail!("file:// 地址缺少服务器名：{uri}");
+        }
+        return Ok(format!("\\\\{}", unc.replace('/', "\\")));
+    }
+    let rooted_uri_path = path.starts_with('/');
+    if rooted_uri_path {
+        let stripped = path.trim_start_matches('/');
+        if is_windows_drive_path(stripped) {
+            path = stripped.to_owned();
+            return Ok(path.replace('/', "\\"));
+        }
+        // `file:///song.mp3` is a POSIX path without a drive: not addressable.
+        bail!("file:// 必须是绝对路径：{uri}");
+    }
+    if is_windows_drive_path(&path) {
+        return Ok(path.replace('/', "\\"));
+    }
+    // `file://server/share/song.mp3`: the authority is a UNC server name.
+    if path.contains('/') {
+        return Ok(format!("\\\\{}", path.replace('/', "\\")));
+    }
+    bail!("file:// 必须是绝对路径：{uri}")
+}
+
 /// `C:/...` or `C:\\...` — a Windows drive-letter rooted path.
-#[cfg(windows)]
+#[cfg_attr(not(windows), allow(dead_code))]
 fn is_windows_drive_path(path: &str) -> bool {
     let mut chars = path.chars();
     matches!(chars.next(), Some(letter) if letter.is_ascii_alphabetic())
@@ -2024,38 +2049,46 @@ mod tests {
     }
 }
 
-#[cfg(all(test, windows))]
+#[cfg(test)]
 mod windows_file_uri_tests {
-    use super::file_path_from_uri;
+    use super::file_path_from_uri_windows;
 
     #[test]
     fn accepts_windows_file_uri_spellings() {
         assert_eq!(
-            file_path_from_uri("file://C:\\Media\\song.mp3").unwrap(),
+            file_path_from_uri_windows("file://C:\\Media\\song.mp3").unwrap(),
             "C:\\Media\\song.mp3"
         );
         assert_eq!(
-            file_path_from_uri("file://C:/Media/song.mp3").unwrap(),
+            file_path_from_uri_windows("file://C:/Media/song.mp3").unwrap(),
             "C:\\Media\\song.mp3"
         );
         assert_eq!(
-            file_path_from_uri("file:///C:/Media/song.mp3").unwrap(),
+            file_path_from_uri_windows("file:///C:/Media/song.mp3").unwrap(),
             "C:\\Media\\song.mp3"
         );
         assert_eq!(
-            file_path_from_uri("file://localhost/C:/Media/song.mp3").unwrap(),
+            file_path_from_uri_windows("file://localhost/C:/Media/song.mp3").unwrap(),
             "C:\\Media\\song.mp3"
         );
         assert_eq!(
-            file_path_from_uri("file://server/share/song.mp3").unwrap(),
+            file_path_from_uri_windows("file://server/share/song.mp3").unwrap(),
             "\\\\server\\share\\song.mp3"
         );
     }
 
     #[test]
+    fn decodes_percent_escapes_in_windows_paths() {
+        assert_eq!(
+            file_path_from_uri_windows("file:///C:/Media/%E6%AD%8C.mp3").unwrap(),
+            "C:\\Media\\歌.mp3"
+        );
+    }
+
+    #[test]
     fn rejects_relative_and_empty_windows_file_uris() {
-        assert!(file_path_from_uri("file://").is_err());
-        assert!(file_path_from_uri("file://song.mp3").is_err());
-        assert!(file_path_from_uri("file:///song.mp3").is_err());
+        assert!(file_path_from_uri_windows("file://").is_err());
+        assert!(file_path_from_uri_windows("file://song.mp3").is_err());
+        assert!(file_path_from_uri_windows("file:///song.mp3").is_err());
     }
 }
