@@ -10,6 +10,7 @@
 use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use anyhow::{Context, Result};
@@ -26,6 +27,11 @@ pub const OLDEST_SUPPORTED_SCHEMA_VERSION: u32 = 1;
 pub const MAX_RECEIVER_NAME_LENGTH: usize = 63;
 /// Persisted MiPlay device identity values accepted by the UI.
 pub const MIPLAY_DEVICE_IDENTITIES: [&str; 4] = ["vehicle", "television", "tablet", "speaker"];
+
+/// Monotonic suffix for temp files. Windows' clock resolution is coarse enough
+/// that two concurrent `save()` calls can otherwise pick the same
+/// `subsec_nanos` value, making `create_new` fail (and the save abort).
+static TEMP_FILE_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
 /// Normalise user-controlled settings into their canonical persisted form.
 ///
@@ -216,15 +222,21 @@ impl SettingsStore {
     }
 
     fn temporary_path(&self) -> PathBuf {
+        Self::temporary_path_in(&self.data_dir)
+    }
+
+    fn temporary_path_in(data_dir: &Path) -> PathBuf {
         let nanos = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .map(|duration| duration.subsec_nanos())
             .unwrap_or_default();
-        self.data_dir.join(format!(
-            ".{}.{}.{}.tmp",
+        let sequence = TEMP_FILE_SEQUENCE.fetch_add(1, Ordering::Relaxed);
+        data_dir.join(format!(
+            ".{}.{}.{}.{}.tmp",
             SETTINGS_FILE_NAME,
             std::process::id(),
-            nanos
+            nanos,
+            sequence
         ))
     }
 
