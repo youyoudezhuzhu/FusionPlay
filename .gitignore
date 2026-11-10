@@ -38,3 +38,7 @@ app.*.map.json
 /src/AirPlayReceiver.Core/airplay-state.json
 hs_err_pid*.log
 replay_pid*.log
+
+# Windows desktop build outputs
+/dist/
+/installer/output/

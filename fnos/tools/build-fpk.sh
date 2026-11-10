@@ -118,7 +118,7 @@ else
 fi
 cat > "$STAGE/app/licenses/SOURCE.txt" <<TXT
 FusionPlay fnOS FPK — 本包内二进制由仓库源码构建：
-https://github.com/youyoudezhuzhu/FusionPlay-Android （AGPL-3.0-only）
+https://github.com/youyoudezhuzhu/FusionPlay （AGPL-3.0-only）
 对应源码 tag/commit 见本包 app/BUILD-INFO，完整对应源码可从上述仓库获取。
 TXT
 printf 'version=%s\ncommit=%s\nbuilt=%s\n' \

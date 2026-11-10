@@ -246,4 +246,4 @@ sudo rm -rf /vol1/@apphome/fusionplay-fnos /vol1/@appdata/fusionplay-fnos \
 
 本应用以 **AGPL-3.0-only** 分发，包内包含完整许可证 `app/licenses/LICENSE` 与源码地址
 `app/licenses/SOURCE.txt`、`app/BUILD-INFO`（版本/commit/构建时间）。
-对应源码：<https://github.com/youyoudezhuzhu/FusionPlay-Android>（tag/commit 见 BUILD-INFO）。
+对应源码：<https://github.com/youyoudezhuzhu/FusionPlay>（tag/commit 见 BUILD-INFO）。

@@ -1,0 +1,522 @@
+name: Build Windows
+
+# 触发：
+#   - workflow_dispatch：手动出包，可选输入 version（默认读仓库根目录 VERSION）
+#   - push tags `windows-v*`：打 tag 时出包并附到 GitHub Release
+#
+# 产物（dist/）：
+#   - FusionPlay-Windows-<ver>-x64.zip（zip 根目录直接是 FusionPlay.exe /
+#     FusionPlayCore.exe / data\ / flutter_windows.dll，没有多余包装目录）
+#   - FusionPlay-Windows-<ver>-x64.zip.sha256
+#   - FusionPlay-Setup-<ver>-x64.exe（Inno Setup 6）
+#   - FusionPlay-Setup-<ver>-x64.exe.sha256
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to build (MAJOR.MINOR.PATCH); empty = repository VERSION'
+        required: false
+        type: string
+  push:
+    tags:
+      - 'windows-v*'
+
+# softprops/action-gh-release 需要写权限；默认 GITHUB_TOKEN 只读，不加会 403。
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    timeout-minutes: 150
+    defaults:
+      run:
+        shell: pwsh
+    env:
+      # src/AirPlayReceiver.Core/rust-toolchain.toml pin 了 Windows gnullvm 工具链；
+      # Windows 侧车用默认 host（x86_64-pc-windows-msvc），这里统一覆盖为 stable。
+      RUSTUP_TOOLCHAIN: stable
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # ---------------------------------------------------------------------
+      # Versions: repository VERSION is the display version, INSTALLER_VERSION
+      # is the 4-part numeric version embedded in VERSIONINFO / Inno Setup.
+      # ---------------------------------------------------------------------
+      - name: Resolve version
+        id: version
+        run: |
+          $version = '${{ inputs.version }}'.Trim()
+          $repoVersion = (Get-Content -LiteralPath VERSION -Raw).Trim()
+          if ([string]::IsNullOrWhiteSpace($version)) {
+            $version = $repoVersion
+          }
+          if ($version -notmatch '^\d+\.\d+\.\d+$') {
+            throw "Version must be MAJOR.MINOR.PATCH, got '$version'."
+          }
+          $installerVersion = "$version.0"
+          if ($version -eq $repoVersion -and (Test-Path -LiteralPath INSTALLER_VERSION)) {
+            $installerVersion = (Get-Content -LiteralPath INSTALLER_VERSION -Raw).Trim()
+          }
+          if ($installerVersion -notmatch '^\d+\.\d+\.\d+\.\d+$') {
+            throw "INSTALLER_VERSION must be a 4-part numeric version, got '$installerVersion'."
+          }
+          # A workflow_dispatch version override must also drive the VERSIONINFO
+          # resources (flutter/windows reads the repository root files at CMake
+          # configure time), so mirror the requested version into the checkout
+          # instead of silently mixing versions. Tag builds must match VERSION and
+          # are checked by the next step.
+          if ($version -ne $repoVersion) {
+            Write-Host "Overriding repository VERSION/INSTALLER_VERSION for this build: $version / $installerVersion"
+            Set-Content -LiteralPath VERSION -Value $version -Encoding utf8 -NoNewline
+            Set-Content -LiteralPath INSTALLER_VERSION -Value $installerVersion -Encoding utf8 -NoNewline
+          }
+          Add-Content -Path $env:GITHUB_OUTPUT -Value "version=$version"
+          Add-Content -Path $env:GITHUB_OUTPUT -Value "installerVersion=$installerVersion"
+          Write-Host "Building FusionPlay $version (VERSIONINFO $installerVersion)"
+
+      - name: Validate release tag
+        if: startsWith(github.ref, 'refs/tags/')
+        run: |
+          $tagVersion = '${{ github.ref_name }}' -replace '^windows-v', ''
+          $version = '${{ steps.version.outputs.version }}'
+          if ($tagVersion -ne $version) {
+            throw "Tag '${{ github.ref_name }}' does not match VERSION '$version'; expected tag 'windows-v$version'."
+          }
+          Write-Host "Tag ${{ github.ref_name }} matches VERSION $version."
+
+      # ---------------------------------------------------------------------
+      # Rust sidecar
+      # ---------------------------------------------------------------------
+      - name: Set up Rust (stable)
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+
+      - name: Cache cargo registry and target dirs
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+            windows/backend/target
+            src/AirPlayReceiver.Core/target
+            src/FusionPlay.MiPlaySdk/target
+            src/FusionPlay.AndroidIfAddrs/target
+            vendor/shairplay/target
+          # key 必须覆盖所有 Cargo.lock/Cargo.toml，否则依赖变化会命中旧缓存
+          key: ${{ runner.os }}-windows-cargo-${{ hashFiles('windows/backend/Cargo.lock', 'windows/backend/Cargo.toml', 'src/AirPlayReceiver.Core/Cargo.lock', 'src/AirPlayReceiver.Core/Cargo.toml', 'src/FusionPlay.MiPlaySdk/Cargo.toml', 'src/FusionPlay.AndroidIfAddrs/Cargo.toml', 'vendor/shairplay/Cargo.toml') }}
+          restore-keys: |
+            ${{ runner.os }}-windows-cargo-
+
+      - name: Sidecar unit tests (null audio, no hardware)
+        timeout-minutes: 30
+        run: |
+          cargo test --release --manifest-path windows/backend/Cargo.toml
+          if ($LASTEXITCODE -ne 0) {
+            throw "windows/backend unit tests failed with exit code $LASTEXITCODE."
+          }
+
+      - name: Build FusionPlayCore.exe (release)
+        timeout-minutes: 30
+        run: |
+          cargo build --release --manifest-path windows/backend/Cargo.toml
+          if ($LASTEXITCODE -ne 0) {
+            throw "cargo build failed with exit code $LASTEXITCODE."
+          }
+          $sidecar = Join-Path $PWD 'windows\backend\target\release\FusionPlayCore.exe'
+          if (-not (Test-Path -LiteralPath $sidecar)) {
+            throw "FusionPlayCore.exe was not produced at $sidecar."
+          }
+          # Validate the VERSIONINFO resource built by windows/backend/build.rs:
+          # ProductName must be FusionPlay, the string version comes from VERSION
+          # and the numeric PE version comes from INSTALLER_VERSION.
+          $info = (Get-Item -LiteralPath $sidecar).VersionInfo
+          Write-Host "FusionPlayCore VERSIONINFO: FileVersion=$($info.FileVersion) ProductVersion=$($info.ProductVersion) ProductName=$($info.ProductName)"
+          if ($info.ProductName -ne 'FusionPlay') {
+            throw "FusionPlayCore.exe ProductName is '$($info.ProductName)', expected 'FusionPlay'."
+          }
+          $expectedNumeric = '${{ steps.version.outputs.installerVersion }}'.Split('.')
+          if ($info.FileMajorPart -ne [int]$expectedNumeric[0] -or
+              $info.FileMinorPart -ne [int]$expectedNumeric[1] -or
+              $info.FileBuildPart -ne [int]$expectedNumeric[2] -or
+              $info.FilePrivatePart -ne [int]$expectedNumeric[3]) {
+            throw "FusionPlayCore.exe numeric FileVersion does not match ${{ steps.version.outputs.installerVersion }}."
+          }
+
+      # ---------------------------------------------------------------------
+      # Sidecar NDJSON smoke test: --null-audio --no-miplay, wait for ready and
+      # an app_state with receiverReady=true, then shutdown and expect exit 0.
+      # ---------------------------------------------------------------------
+      - name: Sidecar smoke test (NDJSON ready / receiverReady / shutdown)
+        timeout-minutes: 5
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $sidecar = [System.IO.Path]::GetFullPath((Join-Path $PWD 'windows\backend\target\release\FusionPlayCore.exe'))
+          if (-not (Test-Path -LiteralPath $sidecar)) {
+            throw "FusionPlayCore.exe not found: $sidecar"
+          }
+          $dataDir = Join-Path $env:RUNNER_TEMP 'fp-smoke'
+          if (Test-Path -LiteralPath $dataDir) {
+            Remove-Item -LiteralPath $dataDir -Recurse -Force
+          }
+          New-Item -ItemType Directory -Path $dataDir -Force | Out-Null
+
+          $startInfo = [System.Diagnostics.ProcessStartInfo]::new()
+          $startInfo.FileName = $sidecar
+          $startInfo.ArgumentList.Add('--null-audio')
+          $startInfo.ArgumentList.Add('--no-miplay')
+          $startInfo.ArgumentList.Add('--data-dir')
+          $startInfo.ArgumentList.Add($dataDir)
+          $startInfo.UseShellExecute = $false
+          $startInfo.CreateNoWindow = $true
+          $startInfo.RedirectStandardInput = $true
+          $startInfo.RedirectStandardOutput = $true
+          $startInfo.RedirectStandardError = $true
+          $startInfo.StandardOutputEncoding = [System.Text.UTF8Encoding]::new($false)
+          $startInfo.StandardErrorEncoding = [System.Text.UTF8Encoding]::new($false)
+
+          $process = [System.Diagnostics.Process]::new()
+          $process.StartInfo = $startInfo
+          if (-not $process.Start()) {
+            throw 'Failed to start FusionPlayCore.exe.'
+          }
+          Write-Host "Started FusionPlayCore.exe (pid $($process.Id)), data dir $dataDir"
+
+          try {
+          $state = [pscustomobject]@{
+            StdoutTask   = $process.StandardOutput.ReadLineAsync()
+            StderrTask   = $process.StandardError.ReadLineAsync()
+            StdoutClosed = $false
+            StderrClosed = $false
+            StdoutLines  = [System.Collections.Generic.List[string]]::new()
+            StderrLines  = [System.Collections.Generic.List[string]]::new()
+          }
+
+          function Receive-CoreOutput {
+            param(
+              [System.Diagnostics.Process]$Process,
+              [pscustomobject]$State,
+              [int]$WaitMilliseconds
+            )
+            $lines = [System.Collections.Generic.List[string]]::new()
+            if (-not $State.StdoutClosed) {
+              $stdoutReady = $false
+              try {
+                $stdoutReady = $State.StdoutTask.Wait($WaitMilliseconds)
+              } catch {
+                throw "Reading FusionPlayCore stdout failed: $_"
+              }
+              if ($stdoutReady) {
+                $line = $null
+                try {
+                  $line = $State.StdoutTask.Result
+                } catch {
+                  throw "Reading FusionPlayCore stdout failed: $_"
+                }
+                if ($null -eq $line) {
+                  $State.StdoutClosed = $true
+                } else {
+                  $State.StdoutLines.Add($line)
+                  $lines.Add($line)
+                  Write-Host "core> $line"
+                  $State.StdoutTask = $Process.StandardOutput.ReadLineAsync()
+                }
+              }
+            }
+            if (-not $State.StderrClosed) {
+              while ($State.StderrTask.IsCompleted) {
+                $stderrLine = $null
+                try {
+                  $stderrLine = $State.StderrTask.Result
+                } catch {
+                  $State.StderrClosed = $true
+                  break
+                }
+                if ($null -eq $stderrLine) {
+                  $State.StderrClosed = $true
+                  break
+                }
+                $State.StderrLines.Add($stderrLine)
+                $State.StderrTask = $Process.StandardError.ReadLineAsync()
+              }
+            }
+            return $lines
+          }
+
+          function Dump-CoreOutput {
+            param([pscustomobject]$State)
+            Write-Host '--- FusionPlayCore stdout ---'
+            foreach ($line in $State.StdoutLines) { Write-Host $line }
+            Write-Host '--- FusionPlayCore stderr ---'
+            foreach ($line in $State.StderrLines) { Write-Host $line }
+          }
+
+          $readySeen = $false
+          $receiverReadySeen = $false
+          $deadline = [DateTime]::UtcNow.AddSeconds(60)
+          while ([DateTime]::UtcNow -lt $deadline -and -not ($readySeen -and $receiverReadySeen)) {
+            $newLines = Receive-CoreOutput -Process $process -State $state -WaitMilliseconds 200
+            foreach ($line in $newLines) {
+              try {
+                $event = $line | ConvertFrom-Json
+              } catch {
+                Write-Host "Ignoring non-JSON stdout line: $line"
+                continue
+              }
+              if ($null -eq $event.type) { continue }
+              switch ($event.type) {
+                'ready' { $readySeen = $true }
+                'app_state' { if ($null -ne $event.state -and $event.state.receiverReady -eq $true) { $receiverReadySeen = $true } }
+                'fatal' { throw "FusionPlayCore reported fatal: $($event.message)" }
+                'exiting' { Write-Host "FusionPlayCore exiting: $($event.reason)" }
+              }
+            }
+            if ($process.HasExited) { break }
+          }
+
+          if (-not ($readySeen -and $receiverReadySeen)) {
+            Dump-CoreOutput -State $state
+            if (-not $process.HasExited) {
+              $process.Kill($true)
+              [void]$process.WaitForExit(5000)
+            }
+            throw "FusionPlayCore did not report ready + app_state.receiverReady=true within 60s (ready=$readySeen receiverReady=$receiverReadySeen)."
+          }
+          Write-Host 'Observed ready and app_state.receiverReady=true; sending shutdown.'
+
+          $process.StandardInput.WriteLine('{"command":"shutdown"}')
+          $process.StandardInput.Flush()
+          $process.StandardInput.Close()
+
+          $exitDeadline = [DateTime]::UtcNow.AddSeconds(15)
+          while (-not $process.HasExited -and [DateTime]::UtcNow -lt $exitDeadline) {
+            [void](Receive-CoreOutput -Process $process -State $state -WaitMilliseconds 200)
+          }
+          if (-not $process.HasExited) {
+            Dump-CoreOutput -State $state
+            $process.Kill($true)
+            [void]$process.WaitForExit(5000)
+            throw 'FusionPlayCore did not exit within 15s after the shutdown command.'
+          }
+          [void]$process.WaitForExit(5000)
+          # Drain anything still buffered so diagnostics are complete.
+          for ($attempt = 0; $attempt -lt 5; $attempt++) {
+            [void](Receive-CoreOutput -Process $process -State $state -WaitMilliseconds 50)
+          }
+          Dump-CoreOutput -State $state
+
+          $exitCode = $process.ExitCode
+          Write-Host "FusionPlayCore exited with code $exitCode."
+          if ($exitCode -ne 0) {
+            throw "FusionPlayCore exited with code $exitCode after shutdown (expected 0)."
+          }
+          Write-Host 'Sidecar smoke test passed.'
+          } finally {
+            # Never leave the sidecar running if the test failed (e.g. a fatal
+            # event or a stdout read error was turned into a thrown exception).
+            if (-not $process.HasExited) {
+              Write-Host 'Killing the leftover FusionPlayCore process.'
+              $process.Kill($true)
+              [void]$process.WaitForExit(5000)
+            }
+          }
+
+      # ---------------------------------------------------------------------
+      # Flutter Windows application
+      # ---------------------------------------------------------------------
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.32.8'
+          channel: stable
+          cache: true
+
+      - name: Resolve Flutter dependencies
+        working-directory: flutter
+        run: |
+          flutter pub get --enforce-lockfile
+          if ($LASTEXITCODE -ne 0) { throw "flutter pub get failed with exit code $LASTEXITCODE." }
+
+      - name: Analyze Dart code
+        working-directory: flutter
+        timeout-minutes: 15
+        run: |
+          flutter analyze --no-pub
+          if ($LASTEXITCODE -ne 0) { throw "flutter analyze failed with exit code $LASTEXITCODE." }
+
+      - name: Run Flutter tests
+        working-directory: flutter
+        timeout-minutes: 20
+        run: |
+          flutter test --no-pub
+          if ($LASTEXITCODE -ne 0) { throw "flutter test failed with exit code $LASTEXITCODE." }
+
+      - name: Build FusionPlay.exe (release)
+        working-directory: flutter
+        timeout-minutes: 30
+        run: |
+          flutter build windows --release --no-pub --dart-define="FUSIONPLAY_VERSION=${{ steps.version.outputs.version }}"
+          if ($LASTEXITCODE -ne 0) { throw "flutter build windows failed with exit code $LASTEXITCODE." }
+
+          # Validate the runner VERSIONINFO (flutter/windows/runner/Runner.rc):
+          # display strings come from VERSION, numeric PE version from
+          # INSTALLER_VERSION.
+          $appExe = Join-Path $PWD 'build\windows\x64\runner\Release\FusionPlay.exe'
+          if (-not (Test-Path -LiteralPath $appExe)) {
+            throw "FusionPlay.exe was not produced at $appExe."
+          }
+          $info = (Get-Item -LiteralPath $appExe).VersionInfo
+          Write-Host "FusionPlay VERSIONINFO: FileVersion=$($info.FileVersion) ProductVersion=$($info.ProductVersion) ProductName=$($info.ProductName)"
+          if ($info.ProductName -ne 'FusionPlay') {
+            throw "FusionPlay.exe ProductName is '$($info.ProductName)', expected 'FusionPlay'."
+          }
+          if ($info.FileVersion -ne '${{ steps.version.outputs.version }}') {
+            throw "FusionPlay.exe FileVersion is '$($info.FileVersion)', expected '${{ steps.version.outputs.version }}'."
+          }
+          $expectedNumeric = '${{ steps.version.outputs.installerVersion }}'.Split('.')
+          if ($info.FileMajorPart -ne [int]$expectedNumeric[0] -or
+              $info.FileMinorPart -ne [int]$expectedNumeric[1] -or
+              $info.FileBuildPart -ne [int]$expectedNumeric[2] -or
+              $info.FilePrivatePart -ne [int]$expectedNumeric[3]) {
+            throw "FusionPlay.exe numeric FileVersion does not match ${{ steps.version.outputs.installerVersion }}."
+          }
+
+      # ---------------------------------------------------------------------
+      # Bundle: stage the sidecar next to FusionPlay.exe, zip (no wrapper dir),
+      # then hash.
+      # ---------------------------------------------------------------------
+      - name: Stage sidecar and package portable zip
+        working-directory: flutter
+        run: |
+          $releaseDir = [System.IO.Path]::GetFullPath((Join-Path $PWD 'build\windows\x64\runner\Release'))
+          $appExe = Join-Path $releaseDir 'FusionPlay.exe'
+          if (-not (Test-Path -LiteralPath $appExe)) {
+            throw "FusionPlay.exe was not produced at $appExe."
+          }
+          $sidecar = [System.IO.Path]::GetFullPath((Join-Path $PWD '..\windows\backend\target\release\FusionPlayCore.exe'))
+          if (-not (Test-Path -LiteralPath $sidecar)) {
+            throw "FusionPlayCore.exe not found: $sidecar"
+          }
+          Copy-Item -LiteralPath $sidecar -Destination (Join-Path $releaseDir 'FusionPlayCore.exe') -Force
+
+          $dist = [System.IO.Path]::GetFullPath((Join-Path $PWD '..\dist'))
+          New-Item -ItemType Directory -Path $dist -Force | Out-Null
+          $zipName = "FusionPlay-Windows-${{ steps.version.outputs.version }}-x64.zip"
+          $zipPath = Join-Path $dist $zipName
+
+          # Compress-Archive with a wildcard puts the release directory contents
+          # at the archive root (FusionPlay.exe/FusionPlayCore.exe/data/...).
+          Compress-Archive -Path (Join-Path $releaseDir '*') -DestinationPath $zipPath -CompressionLevel Optimal -Force
+
+          Add-Type -AssemblyName System.IO.Compression.FileSystem
+          $archive = [System.IO.Compression.ZipFile]::OpenRead($zipPath)
+          try {
+            $entryNames = @($archive.Entries | ForEach-Object { $_.FullName })
+          } finally {
+            $archive.Dispose()
+          }
+          foreach ($required in @('FusionPlay.exe', 'FusionPlayCore.exe', 'flutter_windows.dll')) {
+            if ($entryNames -notcontains $required) {
+              throw "Zip is missing root entry '$required'. Entries: $($entryNames -join ', ')"
+            }
+          }
+          if (-not ($entryNames | Where-Object { $_ -like 'data/*' })) {
+            throw 'Zip is missing the data/ directory (Flutter assets).'
+          }
+          if ($entryNames | Where-Object { $_ -like 'Release/*' }) {
+            throw 'Zip contains an unexpected wrapper directory.'
+          }
+
+          $hash = (Get-FileHash -LiteralPath $zipPath -Algorithm SHA256).Hash.ToLowerInvariant()
+          $hashLine = "$hash  $zipName"
+          [System.IO.File]::WriteAllText("$zipPath.sha256", "$hashLine`n", [System.Text.UTF8Encoding]::new($false))
+          Write-Host "Created $zipPath ($($entryNames.Count) entries)"
+          Write-Host "sha256 $hash"
+
+      # ---------------------------------------------------------------------
+      # Inno Setup installer
+      # ---------------------------------------------------------------------
+      - name: Build Inno Setup installer
+        timeout-minutes: 15
+        run: |
+          choco install innosetup -y --no-progress
+          if ($LASTEXITCODE -ne 0) { throw "choco install innosetup failed with exit code $LASTEXITCODE." }
+
+          # Chocolatey currently installs Inno Setup 6 into "Program Files (x86)";
+          # also probe Program Files and a future Inno Setup 7 install location.
+          $isccCandidates = @(
+            'C:\Program Files (x86)\Inno Setup 6\ISCC.exe',
+            'C:\Program Files\Inno Setup 6\ISCC.exe',
+            'C:\Program Files (x86)\Inno Setup 7\ISCC.exe',
+            'C:\Program Files\Inno Setup 7\ISCC.exe'
+          )
+          $iscc = $isccCandidates | Where-Object { Test-Path -LiteralPath $_ } | Select-Object -First 1
+          if ($null -eq $iscc) {
+            $iscc = Get-ChildItem -Path @('C:\Program Files (x86)', 'C:\Program Files') -Directory -Filter 'Inno Setup*' -ErrorAction SilentlyContinue |
+              Sort-Object Name -Descending |
+              ForEach-Object { Join-Path $_.FullName 'ISCC.exe' } |
+              Where-Object { Test-Path -LiteralPath $_ } |
+              Select-Object -First 1
+          }
+          if ($null -eq $iscc -or -not (Test-Path -LiteralPath $iscc)) {
+            throw 'ISCC.exe (Inno Setup) was not found after installation.'
+          }
+          Write-Host "Using Inno Setup compiler: $iscc"
+
+          $dist = [System.IO.Path]::GetFullPath((Join-Path $PWD 'dist'))
+          & $iscc "/DMyAppVersion=${{ steps.version.outputs.installerVersion }}" `
+            "/DMyAppDisplayVersion=${{ steps.version.outputs.version }}" `
+            "/O$dist" 'installer\fusionplay.iss'
+          if ($LASTEXITCODE -ne 0) { throw "ISCC failed with exit code $LASTEXITCODE." }
+
+          $setupName = "FusionPlay-Setup-${{ steps.version.outputs.version }}-x64.exe"
+          $setupPath = Join-Path $dist $setupName
+          if (-not (Test-Path -LiteralPath $setupPath)) {
+            throw "Inno Setup did not produce $setupName."
+          }
+          $hash = (Get-FileHash -LiteralPath $setupPath -Algorithm SHA256).Hash.ToLowerInvariant()
+          [System.IO.File]::WriteAllText("$setupPath.sha256", "$hash  $setupName`n", [System.Text.UTF8Encoding]::new($false))
+          Write-Host "Created $setupPath"
+          Write-Host "sha256 $hash"
+
+      - name: Write build summary
+        run: |
+          $dist = [System.IO.Path]::GetFullPath((Join-Path $PWD 'dist'))
+          $lines = @('## FusionPlay Windows build', '', "Version: ${{ steps.version.outputs.version }} (VERSIONINFO ${{ steps.version.outputs.installerVersion }})", '', '| File | SHA256 |', '| --- | --- |')
+          Get-ChildItem -LiteralPath $dist -File | Where-Object { $_.Name -notlike '*.sha256' } | Sort-Object Name | ForEach-Object {
+            $hash = (Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+            $lines += "| $($_.Name) | $hash |"
+          }
+          Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value ($lines -join "`n") -Encoding utf8
+
+      - name: Upload Windows artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: FusionPlay-Windows-${{ steps.version.outputs.version }}-x64
+          path: |
+            dist/FusionPlay-Windows-*-x64.zip
+            dist/FusionPlay-Windows-*-x64.zip.sha256
+            dist/FusionPlay-Setup-*-x64.exe
+            dist/FusionPlay-Setup-*-x64.exe.sha256
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Attach artifacts to GitHub Release (tag pushes)
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          name: FusionPlay Windows ${{ steps.version.outputs.version }}
+          tag_name: ${{ github.ref_name }}
+          generate_release_notes: true
+          files: |
+            dist/FusionPlay-Windows-*-x64.zip
+            dist/FusionPlay-Windows-*-x64.zip.sha256
+            dist/FusionPlay-Setup-*-x64.exe
+            dist/FusionPlay-Setup-*-x64.exe.sha256

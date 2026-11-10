@@ -1,6 +1,6 @@
 # FusionPlay fnOS 版：源码审计报告
 
-> 审计对象：`youyoudezhuzhu/FusionPlay-Android` @ `8af8545`（含 Codex `7d3cf88` 的 MiPlay 兼容修复）
+> 审计对象：`youyoudezhuzhu/FusionPlay` @ `8af8545`（含 Codex `7d3cf88` 的 MiPlay 兼容修复）
 > 分支：`fnos/fpk`；审计时间：2026-10-28。所有结论均来自仓库源码实读，
 > 并已在 x86_64 Linux 上执行 `cargo check --manifest-path src/AirPlayReceiver.Core/Cargo.toml --all-targets`（通过）。
 > 审计边界：本机没有 iPhone/iPad/HyperOS 手机，也没有第二块声卡，因此"真机验证"项单独标注。
@@ -16,7 +16,7 @@ Linux 端必须新增；三协议都各自内置 cpal 单设备输出，**统一
 
 | 项 | 结论 |
 |---|---|
-| origin | `youyoudezhuzhu/FusionPlay-Android`（Fork），默认分支 `main` = `8af8545` |
+| origin | `youyoudezhuzhu/FusionPlay`（Fork），默认分支 `main` = `8af8545` |
 | upstream | `rosienosiesie/FusionPlay-Android`（已配置 remote） |
 | 顶层结构 | `src/`（Rust 核心）、`vendor/shairplay`、`flutter/`（Android UI）、`tools/`、`docs/` |
 | Workspace | 无根 Cargo workspace；三个 crate 各自独立 `Cargo.toml` + `Cargo.lock` |

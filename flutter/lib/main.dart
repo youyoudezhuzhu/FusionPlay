@@ -1,10 +1,13 @@
 import 'dart:async';
+import 'dart:io';
 import 'dart:ui';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import 'backend/app_controller.dart';
 import 'backend/native_app_controller.dart';
+import 'backend/windows_app_controller.dart';
 import 'models/app_state.dart';
 import 'theme/fusion_theme.dart';
 import 'ui/artwork.dart';
@@ -18,21 +21,23 @@ Future<void> main() async {
   final imageCache = PaintingBinding.instance.imageCache;
   imageCache.maximumSize = 8;
   imageCache.maximumSizeBytes = 32 * 1024 * 1024;
-  await SystemChrome.setPreferredOrientations(const [
-    DeviceOrientation.landscapeLeft,
-    DeviceOrientation.landscapeRight,
-  ]);
-  await SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
-  SystemChrome.setSystemUIOverlayStyle(
-    const SystemUiOverlayStyle(
-      statusBarColor: Colors.transparent,
-      systemNavigationBarColor: Colors.transparent,
-      systemNavigationBarDividerColor: Colors.transparent,
-      statusBarIconBrightness: Brightness.dark,
-      systemNavigationBarIconBrightness: Brightness.dark,
-      systemNavigationBarContrastEnforced: false,
-    ),
-  );
+  if (Platform.isAndroid) {
+    await SystemChrome.setPreferredOrientations(const [
+      DeviceOrientation.landscapeLeft,
+      DeviceOrientation.landscapeRight,
+    ]);
+    await SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
+    SystemChrome.setSystemUIOverlayStyle(
+      const SystemUiOverlayStyle(
+        statusBarColor: Colors.transparent,
+        systemNavigationBarColor: Colors.transparent,
+        systemNavigationBarDividerColor: Colors.transparent,
+        statusBarIconBrightness: Brightness.dark,
+        systemNavigationBarIconBrightness: Brightness.dark,
+        systemNavigationBarContrastEnforced: false,
+      ),
+    );
+  }
   runApp(const FusionPlayApplication());
 }
 
@@ -44,7 +49,12 @@ class FusionPlayApplication extends StatefulWidget {
 }
 
 class _FusionPlayApplicationState extends State<FusionPlayApplication> {
-  final NativeAppController controller = NativeAppController();
+  late final FusionPlayController controller = _createController();
+
+  /// Android keeps the Kotlin backend; every other desktop target uses the
+  /// Rust sidecar over NDJSON.
+  FusionPlayController _createController() =>
+      Platform.isWindows ? WindowsAppController() : NativeAppController();
 
   @override
   void initState() {
@@ -80,7 +90,7 @@ class FusionPlayHome extends StatefulWidget {
     required this.state,
   });
 
-  final NativeAppController controller;
+  final FusionPlayController controller;
   final AppState state;
 
   @override

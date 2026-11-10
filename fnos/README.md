@@ -10,7 +10,7 @@
 | 安装包 | `fusionplay-fnos.fpk`（GitHub Actions artifact / Release 附件） |
 | 服务端口 | `18080`（仅绑定 `127.0.0.1`，供本机诊断；对外走 fnOS 统一网关） |
 | 运行身份 | `run-as: package` + `join-groups: ["audio"]`（**非 root**） |
-| 许可证 | AGPL-3.0-only（包内 `app/licenses/LICENSE`；源码：<https://github.com/youyoudezhuzhu/FusionPlay-Android>） |
+| 许可证 | AGPL-3.0-only（包内 `app/licenses/LICENSE`；源码：<https://github.com/youyoudezhuzhu/FusionPlay>） |
 
 > FusionPlay 是**接收端**：手机/平板把音频「投放」给 NAS，NAS 再通过声卡 / HDMI / USB 解码器输出。
 > 安装包与构建测试说明见 [fnos-build.md](fnos-build.md)；逐步安装与真机验收清单见 [INSTALL.md](INSTALL.md)。

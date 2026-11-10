@@ -95,22 +95,22 @@ errors = []
 
 - 工作流：`.github/workflows/build-fnos.yml`（未改动 `android.yml`）
 - 触发：push tag `fnos-v0.1.0` → run
-  [40621295962](https://github.com/youyoudezhuzhu/FusionPlay-Android/actions/runs/40621295962)
+  [40621295962](https://github.com/youyoudezhuzhu/FusionPlay/actions/runs/40621295962)
   **全部步骤 success**：backend 45 tests / core 82+1 tests / MiPlay 93 tests →
   release 构建 → FPK 打包 → check-fpk（86 项）→ simulate-install（63）→
   simulate-upgrade（46）→ artifact 上传 → Release 附件。
 - 最终构建（tag `fnos-v0.1.0` → commit `0f4984f`）：
-  [run 40622350237](https://github.com/youyoudezhuzhu/FusionPlay-Android/actions/runs/40622350237) **全步骤 success**。
+  [run 40622350237](https://github.com/youyoudezhuzhu/FusionPlay/actions/runs/40622350237) **全步骤 success**。
 - 构建产物（CI artifact 下载后本地复验）：
   - `fusionplay-fnos.fpk`，3,804,340 B，sha256 `6a721c23739a8a97a4c24d94835413cbdd7d4af8785050a7fbdeadbeb6974d8b`
   - 解包 `BUILD-INFO`：`version=0.1.0 commit=0f4984f built=2026-10-28T02:42:36Z`
   - 结构检查 `check-fpk.sh` 通过；本地 `fnos/dist/fusionplay-fnos.fpk` 已同步该产物。
 - Android 回归：同一 commit 上手动触发
-  [run 40622350101](https://github.com/youyoudezhuzhu/FusionPlay-Android/actions/runs/40622350101)
+  [run 40622350101](https://github.com/youyoudezhuzhu/FusionPlay/actions/runs/40622350101)
   **build-apk success**——`start_audio_external` 再导出问题已修（`#[cfg(not(target_os = "android"))]`），
   Android 路径与 APK 构建均未回归。
 - GitHub Release：`fnos-v0.1.0` 已附带 `fusionplay-fnos.fpk`
-  <https://github.com/youyoudezhuzhu/FusionPlay-Android/releases/tag/fnos-v0.1.0>
+  <https://github.com/youyoudezhuzhu/FusionPlay/releases/tag/fnos-v0.1.0>
 - 说明：GitHub 的 `workflow_dispatch` 仅对默认分支上的工作流显示入口；本工作流已在
   tag push 场景真实跑通，合并 `fnos/fpk` 到默认分支后即可在 Actions 页面手动触发（支持指定 ref/分支）。
 
@@ -182,7 +182,7 @@ errors = []
 | `simulate-upgrade.sh`（0.2.0 → 0.2.1 临时包 + 孤儿进程） | ✅ **46 / 46** |
 
 CI 云端构建（GitHub Actions，tag `fnos-v0.2.0` → commit `4904c2b`）：
-[run 40629718303](https://github.com/youyoudezhuzhu/FusionPlay-Android/actions/runs/40629718303)
+[run 40629718303](https://github.com/youyoudezhuzhu/FusionPlay/actions/runs/40629718303)
 全步骤 success（后端/核心/MiPlay 测试 → release 构建 → FPK → check-fpk → simulate-install
 63 断言 → simulate-upgrade 46 断言 → artifact → Release 附件）。
 
@@ -191,7 +191,7 @@ CI 云端构建（GitHub Actions，tag `fnos-v0.2.0` → commit `4904c2b`）：
   sha256 `bdf093289ba0896cdbac6d2f684d76759c02618f1d72221fc316a20c34f2bf43`，
   `BUILD-INFO: version=0.2.0 commit=4904c2b built=2026-10-28T04:03:14Z`。
 - GitHub Release：`fnos-v0.2.0`
-  <https://github.com/youyoudezhuzhu/FusionPlay-Android/releases/tag/fnos-v0.2.0>。
+  <https://github.com/youyoudezhuzhu/FusionPlay/releases/tag/fnos-v0.2.0>。
 - 本工作区副本：`artifacts/FusionPlay-fnos-0.2.0-x86.fpk`、`fnos/dist/fusionplay-fnos.fpk`。
 
 ### 8.4 未验证边界（v0.2.0 仍为真机项）
@@ -239,13 +239,13 @@ core 的 `status` 事件把 `ready` 原样写入 AirPlay 状态；MiPlay 启动�
 ### 9.4 CI 与产物
 
 GitHub Actions（tag `fnos-v0.2.1` → commit `5a7105c`）：
-[run 40640601613](https://github.com/youyoudezhuzhu/FusionPlay-Android/actions/runs/40640601613)
+[run 40640601613](https://github.com/youyoudezhuzhu/FusionPlay/actions/runs/40640601613)
 全步骤 success（测试 → release 构建 → FPK → check-fpk → simulate-install 63 → simulate-upgrade 46 → artifact → Release）。
 
 - CI artifact（本地复验通过）：`fusionplay-fnos.fpk`，3,837,915 B，
   sha256 `a2cca44dbe4bc8bb425a151c43b9bba89683014d8191fdcfbe4b08612df5b29a`，
   `BUILD-INFO: version=0.2.1 commit=5a7105c built=2026-10-28T05:56:24Z`。
-- Release：<https://github.com/youyoudezhuzhu/FusionPlay-Android/releases/tag/fnos-v0.2.1>。
+- Release：<https://github.com/youyoudezhuzhu/FusionPlay/releases/tag/fnos-v0.2.1>。
 - 工作区副本：`artifacts/FusionPlay-fnos-0.2.1-x86.fpk`。
 
 ### 9.5 仍未验证
@@ -294,13 +294,13 @@ miplay  state='waiting'  detail='等待小米妙播投放'
 ### 10.5 CI 与产物
 
 GitHub Actions（tag `fnos-v0.2.2` → commit `ae81ef1`）：
-[run 40641665412](https://github.com/youyoudezhuzhu/FusionPlay-Android/actions/runs/40641665412)
+[run 40641665412](https://github.com/youyoudezhuzhu/FusionPlay/actions/runs/40641665412)
 全步骤 success。
 
 - CI artifact（本地复验通过）：`fusionplay-fnos.fpk`，3,839,087 B，
   sha256 `938a552ba74de8651d83cff02b77cb73c7c0a24136d9243998d7be6c2f67c184`，
   `BUILD-INFO: version=0.2.2 commit=ae81ef1 built=2026-10-28T06:08:18Z`。
-- Release：<https://github.com/youyoudezhuzhu/FusionPlay-Android/releases/tag/fnos-v0.2.2>。
+- Release：<https://github.com/youyoudezhuzhu/FusionPlay/releases/tag/fnos-v0.2.2>。
 - 工作区副本：`artifacts/FusionPlay-fnos-0.2.2-x86.fpk`。
 
 ---
@@ -337,12 +337,12 @@ Android 版设置页可选择妙播设备身份（`vehicle` 车机 / `television
 ### 11.4 CI 与产物
 
 GitHub Actions（tag `fnos-v0.2.3` → commit `ea29bd8`）：
-[run 40667398529](https://github.com/youyoudezhuzhu/FusionPlay-Android/actions/runs/40667398529)
+[run 40667398529](https://github.com/youyoudezhuzhu/FusionPlay/actions/runs/40667398529)
 全步骤 success。
 
 - CI artifact（本地复验通过）：`fusionplay-fnos.fpk`，3,850,868 B，
   sha256 `d5ba44a91e8678197c6e3417d646e0f09a3b722f6d49a7d42d0321f70cf1f51a`。
-- Release：<https://github.com/youyoudezhuzhu/FusionPlay-Android/releases/tag/fnos-v0.2.3>。
+- Release：<https://github.com/youyoudezhuzhu/FusionPlay/releases/tag/fnos-v0.2.3>。
 - 工作区副本：`artifacts/FusionPlay-fnos-0.2.3-x86.fpk`。
 
 ---

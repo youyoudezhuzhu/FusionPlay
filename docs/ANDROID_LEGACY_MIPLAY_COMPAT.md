@@ -31,7 +31,7 @@ GitHub Actions（推荐，Linux 上产 release APK）：
 
 ```bash
 # 在 fork 仓库的 Actions 页面手动触发，或：
-gh workflow run android.yml --repo youyoudezhuzhu/FusionPlay-Android --ref compat/android-legacy-miplay
+gh workflow run android.yml --repo youyoudezhuzhu/FusionPlay --ref compat/android-legacy-miplay
 ```
 
 产物：`FusionPlay-Android-APK` artifact 里的 APK（1.2.5 起默认启用；1.2.6 起同时改为 AirPlay 音响身份广播，见 `docs/AIRPLAY_AUDIO_ONLY.md`）
