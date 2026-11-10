@@ -31,7 +31,11 @@ env:
 
 jobs:
   build-windows:
-    runs-on: windows-latest
+    # Flutter 3.32.8 only maps Visual Studio 2019 (v16) and 2022 (v17) to a CMake
+    # generator. Newer windows-latest images ship a newer Visual Studio, which
+    # makes Flutter fall back to the unavailable "Visual Studio 16 2019"
+    # generator, so pin the image that carries VS 2022 + the C++ workload.
+    runs-on: windows-2022
     timeout-minutes: 150
     defaults:
       run:
@@ -357,6 +361,15 @@ jobs:
         run: |
           flutter test --no-pub
           if ($LASTEXITCODE -ne 0) { throw "flutter test failed with exit code $LASTEXITCODE." }
+
+      - name: Diagnose Visual Studio toolchain
+        run: |
+          $vswhere = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio\Installer\vswhere.exe'
+          if (Test-Path -LiteralPath $vswhere) {
+            & $vswhere -all -products * -format json
+          } else {
+            Write-Host "vswhere.exe not found at $vswhere"
+          }
 
       - name: Build FusionPlay.exe (release)
         working-directory: flutter
