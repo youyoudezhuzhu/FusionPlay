@@ -84,20 +84,48 @@ Name: "{group}\{cm:UninstallProgram,{#MyAppName}}"; Filename: "{uninstallexe}"
 Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\FusionPlay.exe"; WorkingDir: "{app}"; Tasks: desktopicon
 
 [Run]
-; Best-effort cleanup of a stale rule from a previous install, then allow the
-; sidecar through the Windows Firewall on private/domain networks. The program
-; based rule covers AirPlay (RTSP/RTP), DLNA (SSDP/HTTP) and MiPlay traffic.
-Filename: "{sys}\netsh.exe"; Parameters: "advfirewall firewall delete rule name=""FusionPlay"""; Flags: runhidden ignoreerrors; StatusMsg: "Removing stale FusionPlay firewall rules..."
-Filename: "{sys}\netsh.exe"; Parameters: "advfirewall firewall add rule name=""FusionPlay"" dir=in action=allow program=""{app}\FusionPlayCore.exe"" enable=yes profile=private,domain"; Flags: runhidden; StatusMsg: "Allowing FusionPlay through Windows Firewall..."
+; Launch after install. Firewall configuration is done in [Code] (see
+; ConfigureFirewall) because netsh exits non-zero when a stale rule is missing
+; and Inno's [Run] flags cannot ignore that without failing the install.
 Filename: "{app}\FusionPlay.exe"; Description: "{cm:LaunchProgram,{#MyAppName}}"; Flags: nowait postinstall skipifsilent
 
-[UninstallRun]
-; Remove the firewall rule created above. Runs only when the uninstaller for the
-; installed version runs (an upgrade removes the old rule before the new [Run]
-; section re-adds it).
-Filename: "{sys}\netsh.exe"; Parameters: "advfirewall firewall delete rule name=""FusionPlay"""; Flags: runhidden ignoreerrors
-
 [Code]
+// Runs netsh without blocking the UI and without turning a non-zero exit code
+// into an install failure: firewall configuration is best effort. The rule name
+// is inlined because Inno's Pascal Script only supports simple declarations.
+procedure RunNetsh(Parameters: String);
+var
+  ResultCode: Integer;
+begin
+  if not Exec(ExpandConstant('{sys}\netsh.exe'), Parameters, '', SW_HIDE,
+              ewWaitUntilTerminated, ResultCode) then
+    Log('Failed to start netsh.exe for: ' + Parameters)
+  else if ResultCode <> 0 then
+    Log('netsh.exe returned a non-zero exit code for: ' + Parameters);
+end;
+
+procedure ConfigureFirewall();
+begin
+  // Clean up a stale rule from an older install, then allow the sidecar on
+  // private/domain networks (AirPlay + DLNA + MiPlay traffic).
+  RunNetsh('advfirewall firewall delete rule name="FusionPlay"');
+  RunNetsh('advfirewall firewall add rule name="FusionPlay" dir=in action=allow program="' +
+           ExpandConstant('{app}\FusionPlayCore.exe') +
+           '" enable=yes profile=private,domain');
+  Log('FusionPlay firewall rule configured.');
+end;
+
+procedure RemoveFirewallRule();
+begin
+  RunNetsh('advfirewall firewall delete rule name="FusionPlay"');
+end;
+
+procedure CurStepChanged(CurStep: TSetupStep);
+begin
+  if CurStep = ssPostInstall then
+    ConfigureFirewall();
+end;
+
 // User data (%LOCALAPPDATA%\FusionPlay: settings.json, logs, artwork cache,
 // MiPlay identity) is intentionally kept by default so upgrades and reinstalls
 // preserve the receiver configuration. Ask during interactive uninstall;
@@ -108,6 +136,7 @@ var
 begin
   if CurUninstallStep <> usUninstall then
     Exit;
+  RemoveFirewallRule();
   DataDir := ExpandConstant('{localappdata}\FusionPlay');
   if (not DirExists(DataDir)) or UninstallSilent then
     Exit;
