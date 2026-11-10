@@ -383,6 +383,9 @@ fn run_track(
         )
     })();
 
+    // Clear the playing flag before publishing the final events: observers that
+    // react to `Stopped` must already see `is_playing() == false`.
+    playing.store(false, Ordering::Release);
     let superseded = abandoned.load(Ordering::Acquire);
     if !superseded {
         if let Err(error) = &result {
@@ -799,10 +802,44 @@ fn file_path_from_uri(uri: &str) -> Result<String> {
         bail!("file:// 地址缺少路径：{uri}");
     }
     let path = percent_decode(rest)?;
-    if !path.starts_with('/') {
-        bail!("file:// 必须是绝对路径：{uri}");
+    #[cfg(windows)]
+    {
+        // DLNA control points and local tools emit several Windows spellings:
+        //   file://C:\Media\song.mp3
+        //   file://C:/Media/song.mp3
+        //   file:///C:/Media/song.mp3
+        //   file://server/share/song.mp3   (UNC)
+        let mut path = path.replace('\\', "/");
+        if let Some(stripped) = path.strip_prefix("//") {
+            // UNC path: \\server\share\...
+            return Ok(format!("\\\\{stripped}").replace('/', "\\"));
+        }
+        if let Some(stripped) = path.strip_prefix('/') {
+            if is_windows_drive_path(stripped) {
+                path = stripped.to_owned();
+            }
+        }
+        if !is_windows_drive_path(&path) {
+            bail!("file:// 必须是绝对路径：{uri}");
+        }
+        Ok(path.replace('/', "\\"))
     }
-    Ok(path)
+    #[cfg(not(windows))]
+    {
+        if !path.starts_with('/') {
+            bail!("file:// 必须是绝对路径：{uri}");
+        }
+        Ok(path)
+    }
+}
+
+/// `C:/...` or `C:\\...` — a Windows drive-letter rooted path.
+#[cfg(windows)]
+fn is_windows_drive_path(path: &str) -> bool {
+    let mut chars = path.chars();
+    matches!(chars.next(), Some(letter) if letter.is_ascii_alphabetic())
+        && matches!(chars.next(), Some(':'))
+        && matches!(chars.next(), Some('/') | Some('\\'))
 }
 
 fn open_file(uri: &str) -> Result<OpenedMedia> {
@@ -1984,5 +2021,41 @@ mod tests {
             steady.iter().copied().fold(f32::INFINITY, f32::min),
             steady.iter().copied().fold(f32::NEG_INFINITY, f32::max)
         );
+    }
+}
+
+#[cfg(all(test, windows))]
+mod windows_file_uri_tests {
+    use super::file_path_from_uri;
+
+    #[test]
+    fn accepts_windows_file_uri_spellings() {
+        assert_eq!(
+            file_path_from_uri("file://C:\\Media\\song.mp3").unwrap(),
+            "C:\\Media\\song.mp3"
+        );
+        assert_eq!(
+            file_path_from_uri("file://C:/Media/song.mp3").unwrap(),
+            "C:\\Media\\song.mp3"
+        );
+        assert_eq!(
+            file_path_from_uri("file:///C:/Media/song.mp3").unwrap(),
+            "C:\\Media\\song.mp3"
+        );
+        assert_eq!(
+            file_path_from_uri("file://localhost/C:/Media/song.mp3").unwrap(),
+            "C:\\Media\\song.mp3"
+        );
+        assert_eq!(
+            file_path_from_uri("file://server/share/song.mp3").unwrap(),
+            "\\\\server\\share\\song.mp3"
+        );
+    }
+
+    #[test]
+    fn rejects_relative_and_empty_windows_file_uris() {
+        assert!(file_path_from_uri("file://").is_err());
+        assert!(file_path_from_uri("file://song.mp3").is_err());
+        assert!(file_path_from_uri("file:///song.mp3").is_err());
     }
 }
