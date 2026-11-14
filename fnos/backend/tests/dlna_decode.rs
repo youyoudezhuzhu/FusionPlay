@@ -29,7 +29,7 @@ use fusionplay_fnos::audio::{
     AudioEngine, DeviceInfo, EngineStatus, NullBackend, OutputBackend,
 };
 use fusionplay_fnos::config::AudioSettings;
-use fusionplay_fnos::dlna_player::DlnaPlayer;
+use fusionplay_fnos::dlna_player::{DlnaPlayer, DlnaTrack};
 use fusionplay_fnos::session::{Arbiter, Source};
 use fusionplay_fnos::state::{AppState, SharedState};
 
@@ -756,6 +756,53 @@ fn stop_releases_lease_and_stops_feeding_engine() {
         frames_after_stop,
         "no PCM may reach the engine after stop"
     );
+}
+
+/// NetEase Cloud Music casts audio-only streams as `video/flv` with a
+/// `videoItem` UPnP class; the host must demux FLV AAC instead of rejecting it.
+#[test]
+fn flv_aac_audio_plays_from_disk() {
+    let harness = harness();
+    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/data/sine_aac.flv");
+    let uri = format!("file://{}", path.display());
+    let track = DlnaTrack {
+        uri: &uri,
+        media_kind: "audio",
+        content_type: Some("video/flv"),
+        upnp_class: Some("object.item.videoItem"),
+        ..DlnaTrack::default()
+    };
+    harness
+        .player
+        .play_track(&track)
+        .expect("FLV AAC audio playback should work");
+
+    assert!(harness.backend.frames() > 20_000, "no FLV audio reached the engine");
+    harness.backend.assert_48k_stereo();
+    let state = harness.state.snapshot();
+    assert!(state.last_error.is_none(), "unexpected error: {:?}", state.last_error);
+    assert_eq!(harness.arbiter.current(), None);
+}
+
+#[test]
+fn ogg_vorbis_audio_plays_from_disk() {
+    let harness = harness();
+    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/data/sine_vorbis.ogg");
+    let uri = format!("file://{}", path.display());
+    let track = DlnaTrack {
+        uri: &uri,
+        media_kind: "audio",
+        content_type: Some("audio/ogg"),
+        ..DlnaTrack::default()
+    };
+    harness
+        .player
+        .play_track(&track)
+        .expect("OGG/Vorbis playback should work");
+
+    assert!(harness.backend.frames() > 20_000, "no OGG audio reached the engine");
+    let state = harness.state.snapshot();
+    assert!(state.last_error.is_none(), "unexpected error: {:?}", state.last_error);
 }
 
 #[test]

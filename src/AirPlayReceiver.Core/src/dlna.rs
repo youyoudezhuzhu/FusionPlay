@@ -2958,35 +2958,48 @@ fn extract_lrc_resource(metadata: &str) -> Option<String> {
 }
 
 fn media_kind(uri: &str, mime_type: Option<&str>, upnp_class: Option<&str>) -> &'static str {
+    let path = uri
+        .split(['?', '#'])
+        .next()
+        .unwrap_or(uri)
+        .to_ascii_lowercase();
+    let mime_type = mime_type
+        .map(|mime| mime.split(';').next().unwrap_or("").trim().to_ascii_lowercase());
+    // NetEase Cloud Music announces audio-only DLNA casts as `video/flv`
+    // with an `object.item.videoItem` class, carrying AAC inside an FLV
+    // container. Treat that combination as audio instead of rejecting it as
+    // video (the host DLNA player demuxes the FLV audio).
+    let flv_audio = path.ends_with(".flv")
+        || matches!(
+            mime_type.as_deref(),
+            Some("video/flv" | "video/x-flv" | "application/x-flv")
+        );
     if let Some(upnp_class) = upnp_class {
         let upnp_class = upnp_class.to_ascii_lowercase();
         if upnp_class.contains("audioitem") {
             return "audio";
         }
         if upnp_class.contains("videoitem") {
-            return "video";
+            return if flv_audio { "audio" } else { "video" };
         }
         if upnp_class.contains("imageitem") {
             return "image";
         }
     }
-    if let Some(mime_type) = mime_type {
-        let mime_type = mime_type.to_ascii_lowercase();
+    if let Some(mime_type) = mime_type.as_deref() {
         if mime_type.starts_with("audio/") {
             return "audio";
         }
         if mime_type.starts_with("video/") || mime_type.contains("mpegurl") {
-            return "video";
+            return if flv_audio { "audio" } else { "video" };
         }
         if mime_type.starts_with("image/") {
             return "image";
         }
     }
-    let path = uri
-        .split(['?', '#'])
-        .next()
-        .unwrap_or(uri)
-        .to_ascii_lowercase();
+    if flv_audio {
+        return "audio";
+    }
     if [".mp3", ".m4a", ".aac", ".flac", ".wav", ".wma", ".ogg"]
         .iter()
         .any(|extension| path.ends_with(extension))
@@ -3760,6 +3773,56 @@ mod tests {
         assert_eq!(
             parse_didl_metadata(resource).lyrics_uri.as_deref(),
             Some("https://example.test/track.lrc?token=1")
+        );
+    }
+
+    #[test]
+    fn netease_flv_audio_is_classified_as_audio() {
+        // The URI shape NetEase Cloud Music sends over DLNA: no audio
+        // extension, `video/flv` MIME and a videoItem UPnP class.
+        assert_eq!(
+            media_kind(
+                "http://example.test/music/stream?id=42",
+                Some("video/flv"),
+                Some("object.item.videoItem"),
+            ),
+            "audio"
+        );
+        assert_eq!(
+            media_kind(
+                "http://example.test/music/stream.flv",
+                None,
+                Some("object.item.videoItem"),
+            ),
+            "audio"
+        );
+        assert_eq!(
+            media_kind(
+                "http://example.test/music/stream.flv",
+                Some("video/x-flv; charset=binary"),
+                None,
+            ),
+            "audio"
+        );
+    }
+
+    #[test]
+    fn real_video_is_still_classified_as_video() {
+        assert_eq!(
+            media_kind(
+                "http://example.test/movie.mp4",
+                Some("video/mp4"),
+                Some("object.item.videoItem"),
+            ),
+            "video"
+        );
+        assert_eq!(
+            media_kind(
+                "http://example.test/movie.mp4",
+                Some("video/mp4"),
+                Some("object.item.videoItem.movie"),
+            ),
+            "video"
         );
     }
 

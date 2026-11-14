@@ -26,7 +26,8 @@
 //! | `https://`                      | **not supported** (no TLS stack bundled) |
 //! | HLS (`m3u8`/`m3u`, `*mpegurl`)  | **not supported** (explicit error) |
 //! | video tracks / `upnp:class` video | **not supported** (explicit error) |
-//! | mp3 / flac / wav / aac / mp4 audio | supported containers |
+//! | `video/flv` audio (NetEase Cloud Music) | supported (FLV AAC demuxed) |
+//! | mp3 / flac / wav / aac / ogg / mp4 audio | supported containers |
 //!
 //! Downloading is fully streaming: the HTTP body is decoded (content-length,
 //! chunked, or until-close) as the decoder pulls bytes, so a multi-GB file never
@@ -67,13 +68,17 @@ use rubato::{
     SincInterpolationType, WindowFunction,
 };
 use symphonia::core::audio::{Channels, Position};
-use symphonia::core::codecs::audio::AudioDecoderOptions;
+use symphonia::core::codecs::audio::{
+    AudioCodecParameters, AudioDecoderOptions, well_known::CODEC_ID_AAC,
+};
 use symphonia::core::codecs::CodecParameters;
 use symphonia::core::errors::Error as SymphoniaError;
 use symphonia::core::formats::probe::Hint;
 use symphonia::core::formats::{FormatOptions, TrackType};
 use symphonia::core::io::{MediaSource, MediaSourceStream, MediaSourceStreamOptions};
 use symphonia::core::meta::MetadataOptions;
+use symphonia::core::packet::Packet;
+use symphonia::core::units::{Duration as MediaDuration, Timestamp};
 
 use crate::audio::{AudioEngine, TARGET_CHANNELS, TARGET_RATE};
 use crate::session::Source;
@@ -91,6 +96,15 @@ const READ_POLL: Duration = Duration::from_millis(200);
 
 /// Maximum number of HTTP redirects followed for one media URI.
 const MAX_REDIRECTS: usize = 4;
+
+/// Browser-like User-Agent for DLNA media pulls.
+///
+/// Several Chinese music CDNs (notably QQ Music) answer non-browser clients
+/// with 403, while NetEase CDNs accept the generic client string. Chrome's UA
+/// is accepted by all of them, so it is the default; deployments that need a
+/// custom string can set `FUSIONPLAY_DLNA_USER_AGENT`.
+const DEFAULT_USER_AGENT: &str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) \
+                                 AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36";
 
 /// HTTP header parsing limits (defensive against broken/malicious servers).
 const MAX_HEADER_LINE: usize = 8 * 1024;
@@ -424,6 +438,28 @@ fn decode_and_play(
         content_type,
     } = opened;
 
+    // Sniff the container before symphonia probes it: NetEase Cloud Music
+    // serves audio-only DLNA casts as `video/flv`, which symphonia cannot
+    // demux. Reading a few bytes up-front costs nothing and keeps the
+    // original extension/MIME hints working for every other container.
+    let (prefix, source) = read_prefix(source)?;
+    let source: Box<dyn MediaSource> = Box::new(
+        fusionplay_core::dlna_flv::PrefixedSource::new(prefix.clone(), source),
+    );
+    if fusionplay_core::dlna_flv::is_flv(&prefix) {
+        return decode_flv_and_play(
+            engine,
+            emit,
+            abort,
+            playing,
+            epoch,
+            track,
+            gain_bits,
+            source,
+            bytes,
+        );
+    }
+
     let mut hint = Hint::new();
     if let Some(extension) = uri_extension(&track.url) {
         hint.with_extension(&extension);
@@ -450,7 +486,7 @@ fn decode_and_play(
         )
         .map_err(|error| {
             anyhow!(
-                "无法识别 DLNA 媒体格式（支持 mp3/flac/wav/aac/mp4 音频；不支持 HLS/视频）：{error}"
+                "无法识别 DLNA 媒体格式（支持 mp3/flac/wav/aac/ogg/mp4 音频与 FLV AAC 音频；不支持 HLS/视频）：{error}"
             )
         })?;
 
@@ -613,6 +649,248 @@ fn decode_and_play(
     Ok(summary)
 }
 
+/// Reads the first bytes of a media stream so the caller can sniff the
+/// container, then hands back a source that replays them.
+fn read_prefix(mut source: Box<dyn MediaSource>) -> Result<(Vec<u8>, Box<dyn MediaSource>)> {
+    const SNIFF_BYTES: usize = 4;
+    let mut prefix = vec![0u8; SNIFF_BYTES];
+    let mut filled = 0;
+    while filled < SNIFF_BYTES {
+        match source.read(&mut prefix[filled..]) {
+            Ok(0) => break,
+            Ok(count) => filled += count,
+            Err(error) if error.kind() == io::ErrorKind::Interrupted => continue,
+            Err(error) => {
+                return Err(anyhow!(
+                    "读取 DLNA 媒体流用于格式识别失败（网络中断）：{error}"
+                ));
+            }
+        }
+    }
+    prefix.truncate(filled);
+    Ok((prefix, source))
+}
+
+/// Fill `buf` until it is full, returning the number of bytes read (may be
+/// shorter than `buf` at end-of-stream).
+fn read_full<R: Read>(reader: &mut R, buf: &mut [u8]) -> io::Result<usize> {
+    let mut filled = 0;
+    while filled < buf.len() {
+        match reader.read(&mut buf[filled..]) {
+            Ok(0) => break,
+            Ok(count) => filled += count,
+            Err(error) if error.kind() == io::ErrorKind::Interrupted => continue,
+            Err(error) => return Err(error),
+        }
+    }
+    Ok(filled)
+}
+
+/// Pulls one ADTS frame from the FLV demuxer's AAC output and returns its raw
+/// AAC payload (the ADTS header is stripped).
+fn read_adts_payload<R: Read>(reader: &mut R) -> io::Result<Option<Vec<u8>>> {
+    let mut header = [0u8; 7];
+    let read = read_full(reader, &mut header)?;
+    if read == 0 {
+        return Ok(None);
+    }
+    if read < header.len() {
+        return Err(io::Error::new(
+            io::ErrorKind::UnexpectedEof,
+            "FLV ADTS 头被截断",
+        ));
+    }
+    if header[0] != 0xFF || header[1] & 0xF6 != 0xF0 {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "FLV AAC 帧同步字非法",
+        ));
+    }
+    let header_len = if header[1] & 0x01 == 0 { 9 } else { 7 };
+    if header_len == 9 {
+        let mut crc = [0u8; 2];
+        let read = read_full(reader, &mut crc)?;
+        if read < crc.len() {
+            return Err(io::Error::new(
+                io::ErrorKind::UnexpectedEof,
+                "FLV ADTS CRC 被截断",
+            ));
+        }
+    }
+    let frame_len = ((usize::from(header[3] & 0x03)) << 11)
+        | (usize::from(header[4]) << 3)
+        | (usize::from(header[5]) >> 5);
+    if frame_len <= header_len || frame_len > 0x1FFF {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "FLV AAC 帧长度非法",
+        ));
+    }
+    let mut payload = vec![0u8; frame_len - header_len];
+    let read = read_full(reader, &mut payload)?;
+    if read < payload.len() {
+        return Err(io::Error::new(
+            io::ErrorKind::UnexpectedEof,
+            "FLV AAC 帧被截断",
+        ));
+    }
+    Ok(Some(payload))
+}
+
+/// Decode an FLV AAC stream (NetEase Cloud Music DLNA casts) into the engine.
+fn decode_flv_and_play(
+    engine: &Arc<AudioEngine>,
+    emit: &DlnaEventSink,
+    abort: &Abort,
+    playing: &AtomicBool,
+    epoch: u64,
+    track: &DlnaTrack,
+    gain_bits: &Arc<AtomicU32>,
+    source: Box<dyn MediaSource>,
+    bytes: Arc<AtomicU64>,
+) -> Result<PlaySummary> {
+    let mut stream = fusionplay_core::dlna_flv::FlvAacAdtsStream::new(source);
+    let info = stream
+        .info()
+        .context("无法解析 FLV 音频流（网易云等音乐 App 的投屏容器）")?;
+    let layout = info
+        .channel_layout()
+        .context("FLV 音频声道布局暂不支持（仅支持单声道/立体声）")?;
+    let mut parameters = AudioCodecParameters::new();
+    parameters
+        .for_codec(CODEC_ID_AAC)
+        .with_sample_rate(info.sample_rate)
+        .with_channels(layout);
+    let mut decoder = symphonia::default::get_codecs()
+        .make_audio_decoder(&parameters, &AudioDecoderOptions::default())
+        .context("无法创建 FLV AAC 解码器")?;
+
+    let mut summary = PlaySummary {
+        source_rate: info.sample_rate,
+        source_channels: usize::from(info.channels),
+        duration_ms: track.duration_ms.unwrap_or(0),
+        ..PlaySummary::default()
+    };
+    let mut converter: Option<Converter> = None;
+    let mut interleaved: Vec<f32> = Vec::new();
+    let mut pcm: Vec<f32> = Vec::new();
+    let mut timestamp: u64 = 0;
+    let mut consecutive_errors = 0u32;
+    let mut last_state_update = Instant::now();
+    let mut announced_playing = false;
+    let mut skip_frames =
+        track.start_position_ms.saturating_mul(TARGET_RATE as u64) / 1_000;
+
+    loop {
+        if abort.aborted() {
+            break;
+        }
+        let payload = match read_adts_payload(&mut stream) {
+            Ok(Some(payload)) => payload,
+            Ok(None) => break,
+            Err(_) if abort.aborted() => break,
+            Err(error) => {
+                return Err(anyhow!(
+                    "读取 FLV 音频流失败（网络中断或容器损坏）：{error}"
+                ))
+            }
+        };
+        let packet = Packet::new(
+            0,
+            Timestamp::new(timestamp as i64),
+            MediaDuration::new(1024),
+            payload,
+        );
+        timestamp = timestamp.saturating_add(1024);
+        let decoded = match decoder.decode(&packet) {
+            Ok(decoded) => {
+                consecutive_errors = 0;
+                decoded
+            }
+            Err(error) => {
+                if abort.aborted() {
+                    break;
+                }
+                summary.skipped_packets += 1;
+                if matches!(error, SymphoniaError::ResetRequired) {
+                    decoder.reset();
+                    consecutive_errors = 0;
+                    continue;
+                }
+                consecutive_errors += 1;
+                if consecutive_errors >= MAX_CONSECUTIVE_DECODE_ERRORS {
+                    return Err(anyhow!(
+                        "连续 {MAX_CONSECUTIVE_DECODE_ERRORS} 个 FLV 音频包解码失败后中止（最后一个错误：{error}）"
+                    ));
+                }
+                continue;
+            }
+        };
+
+        let spec = decoded.spec();
+        let rate = spec.rate().max(1);
+        let channels = spec.channels().clone();
+        let planes = decoded.num_planes().max(1);
+        let rebuild = converter
+            .as_ref()
+            .map(|converter| converter.source_rate != rate || converter.planes != planes)
+            .unwrap_or(true);
+        if rebuild {
+            converter = Some(Converter::new(rate, &channels, planes)?);
+            summary.source_rate = rate;
+            summary.source_channels = planes;
+        }
+
+        interleaved.resize(decoded.samples_interleaved(), 0.0);
+        decoded.copy_to_slice_interleaved(interleaved.as_mut_slice());
+        summary.decoded_frames += (interleaved.len() / planes) as u64;
+
+        pcm.clear();
+        let converter = converter.as_mut().expect("converter is initialised above");
+        converter.convert(&interleaved, &mut pcm)?;
+        if pcm.is_empty() {
+            continue;
+        }
+        if abort.aborted() {
+            break;
+        }
+
+        if skip_frames > 0 {
+            let frames = (pcm.len() / TARGET_CHANNELS as usize) as u64;
+            if frames <= skip_frames {
+                skip_frames -= frames;
+                continue;
+            }
+            let offset = (skip_frames as usize) * TARGET_CHANNELS as usize;
+            pcm.drain(..offset);
+            skip_frames = 0;
+        }
+
+        if !announced_playing {
+            announced_playing = true;
+            playing.store(true, Ordering::Release);
+            emit(DlnaEvent::Playback { epoch, playing: true });
+        }
+        summary.push_frames(engine, epoch, volume_gain(gain_bits), &pcm);
+        if last_state_update.elapsed() >= STATE_UPDATE_INTERVAL {
+            last_state_update = Instant::now();
+            emit_progress(emit, epoch, track, &summary);
+        }
+    }
+
+    if let Some(converter) = converter.as_mut() {
+        pcm.clear();
+        converter.finish(&mut pcm)?;
+        if !pcm.is_empty() && !abort.aborted() && skip_frames == 0 {
+            summary.push_frames(engine, epoch, volume_gain(gain_bits), &pcm);
+        }
+    }
+
+    summary.bytes_read = bytes.load(Ordering::Relaxed);
+    emit_progress(emit, epoch, track, &summary);
+    Ok(summary)
+}
+
 fn emit_progress(emit: &DlnaEventSink, epoch: u64, track: &DlnaTrack, summary: &PlaySummary) {
     emit(DlnaEvent::Progress {
         epoch,
@@ -714,12 +992,21 @@ fn validate_track(track: &DlnaTrack) -> Result<()> {
         if content_type.contains("mpegurl") {
             bail!("DLNA HLS 播放列表暂不支持，请使用音频文件直链：{uri}");
         }
-        if content_type.starts_with("video/") {
-            bail!("DLNA 视频暂不支持（仅支持音频：mp3/flac/wav/aac/mp4 音轨）：{uri}");
+        if content_type.starts_with("video/") && !is_flv_content_type(&content_type) {
+            bail!(
+                "DLNA 视频暂不支持（仅支持音频：mp3/flac/wav/aac/ogg/mp4 音轨，以及网易云常用的 FLV 音频）：{uri}"
+            );
         }
     }
-    if track.media_kind.eq_ignore_ascii_case("video") {
-        bail!("DLNA 视频暂不支持（仅支持音频：mp3/flac/wav/aac/mp4 音轨）：{uri}");
+    let flv_audio = path_lower.ends_with(".flv")
+        || track
+            .content_type
+            .as_deref()
+            .is_some_and(is_flv_content_type);
+    if track.media_kind.eq_ignore_ascii_case("video") && !flv_audio {
+        bail!(
+            "DLNA 视频暂不支持（仅支持音频：mp3/flac/wav/aac/ogg/mp4 音轨，以及网易云常用的 FLV 音频）：{uri}"
+        );
     }
     Ok(())
 }
@@ -1152,6 +1439,22 @@ fn open_http(uri: &str, timeout: Duration, abort: &Abort) -> Result<OpenedMedia>
     }
 }
 
+fn dlna_user_agent() -> String {
+    std::env::var("FUSIONPLAY_DLNA_USER_AGENT")
+        .ok()
+        .map(|value| value.trim().to_owned())
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| DEFAULT_USER_AGENT.split_whitespace().collect::<Vec<_>>().join(" "))
+}
+
+fn is_flv_content_type(content_type: &str) -> bool {
+    let mime = content_type.split(';').next().unwrap_or("").trim();
+    matches!(
+        mime.to_ascii_lowercase().as_str(),
+        "video/flv" | "video/x-flv" | "application/x-flv"
+    )
+}
+
 fn http_request(url: &HttpUrl, timeout: Duration, abort: &Abort) -> Result<HttpHead> {
     let addrs = (url.host.as_str(), url.port)
         .to_socket_addrs()
@@ -1190,10 +1493,10 @@ fn http_request(url: &HttpUrl, timeout: Duration, abort: &Abort) -> Result<HttpH
 
     let mut stream = stream;
     let request = format!(
-        "GET {} HTTP/1.1\r\nHost: {}\r\nUser-Agent: FusionPlay-Windows/{}\r\nAccept: */*\r\nAccept-Encoding: identity\r\nConnection: close\r\n\r\n",
+        "GET {} HTTP/1.1\r\nHost: {}\r\nUser-Agent: {}\r\nAccept: */*\r\nAccept-Encoding: identity\r\nConnection: close\r\n\r\n",
         url.request_target,
         url.host_header(),
-        crate::VERSION
+        dlna_user_agent()
     );
     stream
         .write_all(request.as_bytes())
@@ -1922,6 +2225,20 @@ mod tests {
         assert!(empty.contains("为空"), "got: {empty}");
         let relative = validate("media/a.mp3").unwrap_err().to_string();
         assert!(relative.contains("不支持"), "got: {relative}");
+    }
+
+    #[test]
+    fn accepts_netease_flv_audio_and_ogg() {
+        let mut flv = track("http://127.0.0.1:1/music/stream?id=42");
+        flv.content_type = Some("video/flv".to_string());
+        validate_track(&flv).expect("video/flv must be treated as audio");
+
+        let mut video_class_flv = track("http://127.0.0.1:1/music/stream.flv");
+        video_class_flv.media_kind = "video".to_string();
+        validate_track(&video_class_flv)
+            .expect("videoItem FLV audio must pass validation");
+
+        validate("http://127.0.0.1:1/song.ogg").expect("OGG audio is supported");
     }
 
     #[test]

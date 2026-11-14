@@ -445,6 +445,58 @@ fn rejects_unsupported_media_synchronously() {
     assert!(harness.events.try_recv().is_err());
 }
 
+fn fixture_path(name: &str) -> String {
+    format!("{}/tests/data/{name}", env!("CARGO_MANIFEST_DIR"))
+}
+
+/// NetEase Cloud Music casts audio-only streams as `video/flv` with a
+/// `videoItem` UPnP class; the core classifies it as audio and the host must
+/// demux the FLV AAC payload instead of rejecting it as video.
+#[test]
+fn flv_aac_audio_plays_from_disk() {
+    let path = fixture_path("sine_aac.flv");
+    let url = format!("file://{path}");
+    let harness = Harness::new();
+    let track = DlnaTrack {
+        epoch: 11,
+        url,
+        media_kind: "audio".to_string(),
+        content_type: Some("video/flv".to_string()),
+        ..DlnaTrack::default()
+    };
+    harness.play_track(track).expect("FLV AAC audio is supported");
+    let events = harness.wait_stopped(Duration::from_secs(10));
+    harness.expect_no_error(&events);
+    assert!(
+        events
+            .iter()
+            .any(|event| matches!(event, DlnaEvent::Playback { playing: true, .. })),
+        "FLV playback must start; events: {events:?}"
+    );
+    let frames = harness.captured_frames();
+    assert!(frames > 10_000, "unexpected frame count: {frames}");
+}
+
+#[test]
+fn ogg_vorbis_audio_plays_from_disk() {
+    let path = fixture_path("sine_vorbis.ogg");
+    let url = format!("file://{path}");
+    let harness = Harness::new();
+    harness
+        .play_track(DlnaTrack {
+            epoch: 12,
+            url,
+            media_kind: "audio".to_string(),
+            content_type: Some("audio/ogg".to_string()),
+            ..DlnaTrack::default()
+        })
+        .expect("OGG/Vorbis audio is supported");
+    let events = harness.wait_stopped(Duration::from_secs(10));
+    harness.expect_no_error(&events);
+    let frames = harness.captured_frames();
+    assert!(frames > 10_000, "unexpected frame count: {frames}");
+}
+
 #[test]
 fn file_url_plays_from_disk() {
     let bytes = wav_bytes(44_100, 2, 22_050, 660.0);

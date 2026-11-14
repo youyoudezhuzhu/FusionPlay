@@ -31,7 +31,7 @@ Windows 10/11（x64）上的 FusionPlay 接收端：把电脑变成支持 **AirP
 2. 手机/平板/电脑在投放菜单里选择接收器名称（默认是电脑的计算机名，可在设置里自定义）。
 3. 支持：
    - iPhone / iPad / Mac：AirPlay 音频
-   - 支持 DLNA 的音乐 App、NAS、电视：DLNA 投放（mp3 / flac / wav / aac / m4a 音频；HTTPS 媒体源、HLS、视频暂不支持）
+   - 支持 DLNA 的音乐 App、NAS、电视：DLNA 投放（mp3 / flac / wav / aac / m4a / **ogg** 音频，以及**网易云音乐常用的 FLV(AAC) 音频**；QQ 音乐/网易云 CDN 拉流使用浏览器 UA 以规避 403；HTTPS 媒体源、HLS、视频仍不支持）
    - 小米手机/平板：妙播（MiPlay）
 4. 设置里可切换接收器名称、开机自启、自动唤醒（播放时阻止系统休眠）、三个协议开关、妙播设备身份（车机/电视/平板/音响）。
 

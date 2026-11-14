@@ -1,5 +1,6 @@
 mod audio;
 mod dlna;
+pub mod dlna_flv;
 mod events;
 mod host;
 #[cfg(any(target_os = "android", test))]
