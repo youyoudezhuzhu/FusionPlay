@@ -114,6 +114,59 @@ pub(crate) fn idm_short_id(stable_seed: &str) -> String {
     idm_identity(stable_seed).short_id
 }
 
+/// Short id actually advertised by this process. Official `idHash` is derived
+/// from the IDM identity; a bench override exists only to reproduce account
+/// bound captures and must feed every discovery channel from one place.
+fn advertised_short_id(stable_seed: &str) -> String {
+    std::env::var("FUSIONPLAY_MIPLAY_DIAGNOSTIC_ACCOUNT_ID")
+        .ok()
+        .filter(|value| value.len() == 3 && value.bytes().all(|byte| byte.is_ascii_alphanumeric()))
+        .unwrap_or_else(|| idm_short_id(stable_seed))
+}
+
+/// mDNS `_mi-connect` TXT `idHash`: standard Base64 of the three-character IDM
+/// short id. This is the single source of truth for every discovery channel.
+pub(crate) fn mdns_id_hash(stable_seed: &str) -> String {
+    base64::engine::general_purpose::STANDARD.encode(advertised_short_id(stable_seed).as_bytes())
+}
+
+/// The opt-in UDP 5355 legacy DNS-SD TXT carries the same four characters as
+/// `idHash`, but the wire contract specifies the Base64URL alphabet
+/// (`+`→`-`, `/`→`_`). The current IDM digest produces short ids whose Base64
+/// form never contains those characters, so today this is a defensive
+/// transformation; it is still explicit and unit tested because the 5355
+/// channel must not silently diverge if the id source changes.
+pub(crate) fn legacy_lan_id_hash(stable_seed: &str) -> String {
+    to_base64url_alphabet(&mdns_id_hash(stable_seed))
+}
+
+/// Re-encode a standard Base64 `idHash` with the Base64URL alphabet used by
+/// the 5355 legacy TXT. Exposed separately so the mapping is testable with
+/// characters the current IDM digest never produces.
+pub(crate) fn to_base64url_alphabet(value: &str) -> String {
+    value.replace('+', "-").replace('/', "_")
+}
+
+/// Largest value a single DNS label may encode.
+const DNS_SINGLE_LABEL_MAX_BYTES: usize = 63;
+
+/// Sanitize a display name for use inside a DNS-SD instance label.
+///
+/// A `.` inside a label is a separator on the wire, so a phone parsing the
+/// PTR/SRV name would see a malformed record and silently drop the whole
+/// route. Control characters make the label unparsable for some stacks, and
+/// surrounding whitespace produces an instance that users cannot match when
+/// they rename the receiver. Truncation happens afterwards on a UTF-8
+/// boundary so `<name>(<suffix>)` fits the 63-byte label limit.
+fn sanitize_dns_instance_name(name: &str) -> String {
+    let sanitized: String = name
+        .chars()
+        .filter(|character| !character.is_control())
+        .map(|character| if character == '.' { '-' } else { character })
+        .collect();
+    sanitized.trim().to_owned()
+}
+
 fn sanitize_protocol_name(name: &str) -> String {
     let mut sanitized: String = name
         .chars()
@@ -1778,7 +1831,7 @@ fn is_service_query(packet: &[u8], service_qname: &[u8]) -> bool {
     })
 }
 
-fn parse_dns_questions(packet: &[u8]) -> Vec<(String, u16, u16)> {
+pub(crate) fn parse_dns_questions(packet: &[u8]) -> Vec<(String, u16, u16)> {
     if packet.len() < 12 {
         return Vec::new();
     }
@@ -1800,7 +1853,7 @@ fn parse_dns_questions(packet: &[u8]) -> Vec<(String, u16, u16)> {
     queries
 }
 
-fn parse_dns_name(packet: &[u8], offset: &mut usize) -> Option<String> {
+pub(crate) fn parse_dns_name(packet: &[u8], offset: &mut usize) -> Option<String> {
     let mut cursor = *offset;
     let mut labels = Vec::new();
     let mut read_steps = 0u8;
@@ -1957,7 +2010,7 @@ fn build_retired_dns_sd_goodbye(
 /// retaining every owner name and RDATA byte exactly.  Cache eviction is
 /// keyed by that complete record identity, so rebuilding only the PTR record
 /// is insufficient for clients that retained the SRV/TXT address records.
-fn set_dns_record_ttls(packet: &[u8], ttl_seconds: u32) -> Option<Vec<u8>> {
+pub(crate) fn set_dns_record_ttls(packet: &[u8], ttl_seconds: u32) -> Option<Vec<u8>> {
     if packet.len() < 12 {
         return None;
     }
@@ -1994,6 +2047,37 @@ fn set_dns_record_ttls(packet: &[u8], ttl_seconds: u32) -> Option<Vec<u8>> {
 
 fn zero_dns_record_ttls(packet: &[u8]) -> Option<Vec<u8>> {
     set_dns_record_ttls(packet, 0)
+}
+
+/// FusionPlay has always advertised the television `sec` value 2. Some
+/// HyperOS senders compare `sec` against `dev`; the environment override is a
+/// bench-only escape hatch for testing other categories (1..=5) without
+/// rebuilding. Out-of-range values fall back to the historical default and
+/// warn on stderr so a typo never changes the wire identity silently.
+const DEFAULT_MIPLAY_SEC: u8 = 2;
+
+fn mi_play_sec_from(raw: Option<&str>) -> u8 {
+    let Some(raw) = raw else {
+        return DEFAULT_MIPLAY_SEC;
+    };
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return DEFAULT_MIPLAY_SEC;
+    }
+    match trimmed.parse::<u8>() {
+        Ok(value) if (1..=5).contains(&value) => value,
+        _ => {
+            eprintln!(
+                "[fusionplay] ignoring FUSIONPLAY_MIPLAY_SEC={raw:?}: expected an integer in 1..=5, \
+                 keeping sec={DEFAULT_MIPLAY_SEC}"
+            );
+            DEFAULT_MIPLAY_SEC
+        }
+    }
+}
+
+fn mi_play_sec() -> u8 {
+    mi_play_sec_from(std::env::var("FUSIONPLAY_MIPLAY_SEC").ok().as_deref())
 }
 
 fn build_mi_connect_response(
@@ -2074,23 +2158,18 @@ fn build_mi_connect_response(
     packet
 }
 
-fn build_mi_connect_txt(
+pub(crate) fn build_mi_connect_txt(
     receiver_name: &str,
     idm_device_id: &str,
     media_device_id: &str,
     device_type: MiPlayDeviceType,
 ) -> Vec<u8> {
-    let identity = idm_identity(idm_device_id);
     let advertised_mac = parse_hardware_address(media_device_id)
         .map(|address| base64::engine::general_purpose::STANDARD.encode(address));
-    let advertised_short_id = std::env::var("FUSIONPLAY_MIPLAY_DIAGNOSTIC_ACCOUNT_ID")
-        .ok()
-        .filter(|value| value.len() == 3 && value.bytes().all(|byte| byte.is_ascii_alphanumeric()))
-        .unwrap_or_else(|| identity.short_id.clone());
     // `idHash` is Base64 of the three-character IDM id, not Base64 of the
     // first three raw digest bytes.  For example Xiaomi's logged-in `bsl`
     // identity is advertised as `YnNs`.
-    let id_hash = base64::engine::general_purpose::STANDARD.encode(advertised_short_id.as_bytes());
+    let id_hash = mdns_id_hash(idm_device_id);
     let mut txt = Vec::new();
     let mut values = vec![
         "version=196608".to_owned(),
@@ -2112,7 +2191,7 @@ fn build_mi_connect_txt(
         // session reports the same selected category so discovery and command
         // identity remain consistent.
         format!("dev={}", device_type.protocol_value()),
-        "sec=2".to_owned(),
+        format!("sec={}", mi_play_sec()),
         // Preserve the descriptor emitted by Android 1.1.7. Its Lyra support
         // marker is intentionally absent: Mi Connect owns the sole picker
         // route while Lyra remains the discovery/control handshake.
@@ -2138,7 +2217,7 @@ fn build_mi_connect_txt(
     txt
 }
 
-fn parse_hardware_address(device_id: &str) -> Option<[u8; 6]> {
+pub(crate) fn parse_hardware_address(device_id: &str) -> Option<[u8; 6]> {
     let compact = device_id
         .chars()
         .filter(|character| character.is_ascii_hexdigit())
@@ -2372,10 +2451,15 @@ fn lyra_instance(device_id: &str, local_ip: Ipv4Addr) -> String {
     )
 }
 
-fn legacy_mi_connect_instance(receiver_name: &str, device_id: &str) -> String {
+/// DNS-SD instance used by `_mi-connect` and by the opt-in 5355 legacy
+/// channel. Both channels must publish the same label so a sender never sees
+/// two identities for one receiver. The display name is sanitized first
+/// (`.`→`-`, control characters removed, outer whitespace trimmed) and then
+/// truncated on a UTF-8 boundary so `name(suffix)` stays ≤ 63 bytes.
+pub(crate) fn legacy_mi_connect_instance(receiver_name: &str, device_id: &str) -> String {
     let suffix = idm_identity(device_id).instance_suffix;
-    let mut name = receiver_name.to_owned();
-    let maximum_name_bytes = 63usize.saturating_sub(suffix.len() + 2);
+    let mut name = sanitize_dns_instance_name(receiver_name);
+    let maximum_name_bytes = DNS_SINGLE_LABEL_MAX_BYTES.saturating_sub(suffix.len() + 2);
     while name.len() > maximum_name_bytes {
         name.pop();
     }
@@ -2429,22 +2513,22 @@ fn build_app_data(
     payload
 }
 
-fn push_label(packet: &mut Vec<u8>, label: &str) {
+pub(crate) fn push_label(packet: &mut Vec<u8>, label: &str) {
     let bytes = label.as_bytes();
     let length = u8::try_from(bytes.len()).unwrap_or(u8::MAX);
     packet.push(length);
     packet.extend_from_slice(&bytes[..usize::from(length)]);
 }
 
-fn push_pointer(packet: &mut Vec<u8>, offset: u16) {
+pub(crate) fn push_pointer(packet: &mut Vec<u8>, offset: u16) {
     push_u16(packet, 0xc000 | offset);
 }
 
-fn push_u16(packet: &mut Vec<u8>, value: u16) {
+pub(crate) fn push_u16(packet: &mut Vec<u8>, value: u16) {
     packet.extend_from_slice(&value.to_be_bytes());
 }
 
-fn push_u32(packet: &mut Vec<u8>, value: u32) {
+pub(crate) fn push_u32(packet: &mut Vec<u8>, value: u32) {
     packet.extend_from_slice(&value.to_be_bytes());
 }
 
@@ -2455,8 +2539,10 @@ mod tests {
         build_mi_connect_txt, build_retired_dns_sd_goodbye, discovery_goodbye_repeat_interval,
         discovery_platform_policy, encode_xiaomi_debug_ip, idm_identity, is_lyra_query,
         is_service_query, legacy_mi_connect_instance, lyra_discovery_device_type, lyra_instance,
-        mi_connect_instance_for_platform, parse_dns_name, persistent_mi_connect_discovery,
-        query_matches_service, set_dns_record_ttls, zero_dns_record_ttls,
+        legacy_lan_id_hash, mdns_id_hash, mi_connect_instance_for_platform, mi_play_sec_from,
+        parse_dns_name, persistent_mi_connect_discovery, query_matches_service,
+        sanitize_dns_instance_name, set_dns_record_ttls, to_base64url_alphabet,
+        zero_dns_record_ttls,
     };
     use crate::MiPlayDeviceType;
     use base64::Engine;
@@ -2891,6 +2977,95 @@ mod tests {
             offset += 10 + data_length;
         }
         assert_eq!(offset, rewritten.len());
+    }
+
+    #[test]
+    fn instance_name_replaces_dots_and_control_characters() {
+        let seed = "c86c85e8-cd15-4ebd-b898-c15e75deb923";
+        // A dot inside a DNS label is a separator on the wire, so the phone
+        // would parse a malformed PTR/SRV record and silently drop the route.
+        let instance = legacy_mi_connect_instance("客厅.电视\n", seed);
+        assert_eq!(instance, "客厅-电视(sly3iRBCZ7)");
+        assert!(!instance.contains('.'));
+        assert!(!instance.chars().any(char::is_control));
+        assert!(!instance.starts_with(' ') && !instance.ends_with(' '));
+
+        // Symbols, spaces and emoji are legal in a DNS label: only dots,
+        // control characters and outer whitespace are rewritten.
+        assert_eq!(
+            legacy_mi_connect_instance("  ★☆ TV  ", seed),
+            "★☆ TV(sly3iRBCZ7)"
+        );
+
+        let control_only = legacy_mi_connect_instance("\u{1}\u{2}\t", seed);
+        assert_eq!(control_only, "FusionPlay(sly3iRBCZ7)");
+        let dots_only = legacy_mi_connect_instance("....", seed);
+        assert_eq!(dots_only, "----(sly3iRBCZ7)");
+        assert!(!dots_only.contains('.'));
+    }
+
+    #[test]
+    fn instance_name_truncates_long_cjk_on_a_utf8_boundary() {
+        let seed = "c86c85e8-cd15-4ebd-b898-c15e75deb923";
+        let instance = legacy_mi_connect_instance(&"中".repeat(40), seed);
+        assert_eq!(instance.len(), 63, "instance label must fit one DNS label");
+        assert!(instance.ends_with("(sly3iRBCZ7)"));
+        // 63 - "(sly3iRBCZ7)".len() = 51 bytes = exactly 17 CJK characters.
+        assert_eq!(instance, format!("{}(sly3iRBCZ7)", "中".repeat(17)));
+
+        let mixed = format!("Fusion.{}", "🎵".repeat(30));
+        let mixed_instance = legacy_mi_connect_instance(&mixed, seed);
+        assert!(mixed_instance.len() <= 63);
+        assert!(!mixed_instance.contains('.'));
+        // `String::pop` removes whole chars, never a partial UTF-8 sequence.
+        assert!(std::str::from_utf8(mixed_instance.as_bytes()).is_ok());
+        assert_eq!(mixed_instance, legacy_mi_connect_instance(&mixed, seed));
+    }
+
+    #[test]
+    fn sanitize_dns_instance_name_keeps_labels_parseable() {
+        assert_eq!(sanitize_dns_instance_name("a.b"), "a-b");
+        assert_eq!(sanitize_dns_instance_name("  a  "), "a");
+        assert_eq!(sanitize_dns_instance_name("a\u{7}b"), "ab");
+        assert_eq!(sanitize_dns_instance_name(""), "");
+    }
+
+    #[test]
+    fn sec_override_is_validated_and_defaults_to_the_television_identity() {
+        assert_eq!(mi_play_sec_from(None), 2);
+        assert_eq!(mi_play_sec_from(Some("")), 2);
+        assert_eq!(mi_play_sec_from(Some(" 3 ")), 3);
+        assert_eq!(mi_play_sec_from(Some("1")), 1);
+        assert_eq!(mi_play_sec_from(Some("5")), 5);
+        for invalid in ["0", "6", "255", "-1", "abc", "2.0"] {
+            assert_eq!(mi_play_sec_from(Some(invalid)), 2, "invalid sec {invalid}");
+        }
+
+        // The mDNS TXT keeps advertising the historical television `sec=2`
+        // while the environment override is absent.
+        let txt = build_mi_connect_txt("ASUS", "idm-test", "", MiPlayDeviceType::Television);
+        assert!(txt.windows(b"sec=2".len()).any(|window| window == b"sec=2"));
+    }
+
+    #[test]
+    fn legacy_lan_id_hash_is_the_same_identity_in_the_base64url_alphabet() {
+        let seed = "c86c85e8-cd15-4ebd-b898-c15e75deb923";
+        let mdns = mdns_id_hash(seed);
+        let legacy = legacy_lan_id_hash(seed);
+        assert_eq!(mdns, "c2x5");
+        assert_eq!(legacy, "c2x5");
+        assert_eq!(
+            base64::engine::general_purpose::STANDARD
+                .decode(&mdns)
+                .unwrap(),
+            base64::engine::general_purpose::URL_SAFE_NO_PAD
+                .decode(&legacy)
+                .unwrap()
+        );
+        // The alphabet mapping itself is exercised with characters the
+        // current IDM digest never produces.
+        assert_eq!(to_base64url_alphabet("ab+/cd=="), "ab-_cd==");
+        assert_eq!(to_base64url_alphabet("c2x5"), "c2x5");
     }
 }
 

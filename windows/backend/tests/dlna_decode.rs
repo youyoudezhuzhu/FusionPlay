@@ -14,13 +14,16 @@
 //! * `https://`, HLS, video and empty URIs fail synchronously in `play_track`.
 //! * `stop()` aborts a blocked read within one second.
 //! * An AirPlay takeover (engine active source change) stops DLNA promptly.
-//! * `file://` playback from disk works.
+//! * `file://` playback from disk works (WAV, FLV-AAC, FLV-MP3, ALAC, AIFF).
 //! * `seek()` restarts the stream near the requested position.
+//! * A CDN that answers 403 to the browser UA is retried once with the legacy
+//!   `FusionPlay-Windows/<version>` UA.
 
 use std::io::{self, BufRead, BufReader, Write};
 use std::net::{SocketAddr, TcpListener, TcpStream};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::mpsc::{self, Receiver};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -183,6 +186,28 @@ fn read_request(stream: &mut TcpStream) -> String {
         }
     }
     request_line
+}
+
+/// Read the whole request (request line + headers) as text; used by tests that
+/// assert on request headers such as `User-Agent`.
+fn read_request_text(stream: &mut TcpStream) -> String {
+    let mut reader = BufReader::new(stream.try_clone().expect("clone stream"));
+    let mut text = String::new();
+    loop {
+        let mut line = String::new();
+        match reader.read_line(&mut line) {
+            Ok(0) => break,
+            Ok(_) => {
+                let done = line == "\r\n";
+                text.push_str(&line);
+                if done {
+                    break;
+                }
+            }
+            Err(_) => break,
+        }
+    }
+    text
 }
 
 fn write_full_response(
@@ -633,6 +658,136 @@ fn seek_restarts_near_the_requested_position() {
     assert!(
         (10_000..=26_000).contains(&frames),
         "unexpected frame count after seek to 400 ms: {frames}"
+    );
+}
+
+
+/// NetEase-style FLV containers also carry MP3 audio (SoundFormat 2); the core
+/// demuxer re-assembles the MPEG frames and the host decodes them.
+#[test]
+fn flv_mp3_audio_plays_from_disk() {
+    let path = fixture_path("sine_mp3.flv");
+    let url = format!("file://{path}");
+    let harness = Harness::new();
+    harness
+        .play_track(DlnaTrack {
+            epoch: 13,
+            url,
+            media_kind: "audio".to_string(),
+            content_type: Some("video/flv".to_string()),
+            ..DlnaTrack::default()
+        })
+        .expect("FLV MP3 audio is supported");
+    let events = harness.wait_stopped(Duration::from_secs(10));
+    harness.expect_no_error(&events);
+    assert!(
+        events
+            .iter()
+            .any(|event| matches!(event, DlnaEvent::Playback { playing: true, .. })),
+        "FLV MP3 playback must start; events: {events:?}"
+    );
+    let frames = harness.captured_frames();
+    // LAME pads the MP3 stream to whole frames (40 x 1152 samples for a 1 s
+    // fixture), so slightly more than 48 000 output frames are expected.
+    assert!(
+        (44_000..=51_500).contains(&frames),
+        "unexpected frame count for 1 s FLV MP3: {frames}"
+    );
+    assert!(rms(&harness.engine.captured()) > 0.05);
+}
+
+#[test]
+fn alac_m4a_audio_plays_from_disk() {
+    let path = fixture_path("sine_alac.m4a");
+    let url = format!("file://{path}");
+    let harness = Harness::new();
+    harness
+        .play_track(DlnaTrack {
+            epoch: 14,
+            url,
+            media_kind: "audio".to_string(),
+            content_type: Some("audio/mp4".to_string()),
+            ..DlnaTrack::default()
+        })
+        .expect("ALAC/M4A audio is supported");
+    let events = harness.wait_stopped(Duration::from_secs(10));
+    harness.expect_no_error(&events);
+    let frames = harness.captured_frames();
+    assert!(
+        (44_000..=51_000).contains(&frames),
+        "unexpected frame count for 1 s ALAC: {frames}"
+    );
+}
+
+#[test]
+fn aiff_audio_plays_from_disk() {
+    let path = fixture_path("sine_aiff.aiff");
+    let url = format!("file://{path}");
+    let harness = Harness::new();
+    harness
+        .play_track(DlnaTrack {
+            epoch: 15,
+            url,
+            media_kind: "audio".to_string(),
+            content_type: Some("audio/aiff".to_string()),
+            ..DlnaTrack::default()
+        })
+        .expect("AIFF audio is supported");
+    let events = harness.wait_stopped(Duration::from_secs(10));
+    harness.expect_no_error(&events);
+    let frames = harness.captured_frames();
+    assert!(
+        (21_000..=25_000).contains(&frames),
+        "unexpected frame count for 0.5 s AIFF: {frames}"
+    );
+}
+
+/// A CDN may reject the browser User-Agent with 403; the player must reconnect
+/// once with the legacy `FusionPlay-Windows/<version>` UA and succeed.
+#[test]
+fn http_403_retries_once_with_the_legacy_user_agent() {
+    let body = wav_bytes(44_100, 2, 22_050, 440.0);
+    let attempts = Arc::new(AtomicUsize::new(0));
+    let agents = Arc::new(Mutex::new(Vec::<String>::new()));
+    let attempts_for_server = Arc::clone(&attempts);
+    let agents_for_server = Arc::clone(&agents);
+    let server = spawn_server(2, move |stream| {
+        let request = read_request_text(stream);
+        let agent = request
+            .lines()
+            .find(|line| line.to_ascii_lowercase().starts_with("user-agent:"))
+            .map(str::trim)
+            .unwrap_or_default()
+            .to_string();
+        agents_for_server.lock().unwrap().push(agent);
+        let attempt = attempts_for_server.fetch_add(1, Ordering::SeqCst);
+        if attempt == 0 {
+            write!(
+                stream,
+                "HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+            )?;
+            stream.flush()
+        } else {
+            write_full_response(stream, "audio/wav", &body)
+        }
+    });
+    let harness = Harness::new();
+    harness.play(server.url("/guarded.wav")).unwrap();
+    let events = harness.wait_stopped(Duration::from_secs(10));
+    harness.expect_no_error(&events);
+    assert!(harness.captured_frames() > 20_000, "fallback playback must produce audio");
+
+    let agents = agents.lock().unwrap();
+    assert_eq!(agents.len(), 2, "expected exactly two HTTP attempts: {agents:?}");
+    assert!(
+        agents[0].to_ascii_lowercase().contains("chrome"),
+        "first attempt must use the browser UA: {:?}",
+        agents[0]
+    );
+    assert!(
+        agents[1].contains("FusionPlay-Windows/"),
+        "retry must use the legacy FusionPlay UA: {:?}",
+        agents[1]
     );
 }
 

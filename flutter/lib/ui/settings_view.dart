@@ -140,6 +140,21 @@ class _SettingsViewState extends State<SettingsView> {
               _card([
                 for (final identity in MiPlayDeviceIdentity.values)
                   _identityRow(identity, settings.miPlayDeviceIdentity),
+                // Xiaomi's device picker is version dependent: some HyperOS
+                // builds hide "speaker" receivers from the MiPlay list while
+                // "television" works. Surface that instead of letting users
+                // think the receiver vanished.
+                const Padding(
+                  padding: EdgeInsets.fromLTRB(20, 4, 20, 14),
+                  child: Text(
+                    '设备类型影响小米手机妙播列表中的图标与可见性；'
+                    '若选「音响」后手机里找不到设备，请改用「电视」。',
+                    style: TextStyle(
+                      fontSize: 12,
+                      color: SettingsStyle.secondaryText,
+                    ),
+                  ),
+                ),
               ]),
               const SizedBox(height: SettingsStyle.cardSpacing),
               _card([

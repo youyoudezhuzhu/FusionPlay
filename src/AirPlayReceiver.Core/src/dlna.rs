@@ -3000,7 +3000,9 @@ fn media_kind(uri: &str, mime_type: Option<&str>, upnp_class: Option<&str>) -> &
     if flv_audio {
         return "audio";
     }
-    if [".mp3", ".m4a", ".aac", ".flac", ".wav", ".wma", ".ogg"]
+    if [
+        ".mp3", ".m4a", ".aac", ".flac", ".wav", ".wma", ".ogg", ".aiff", ".aif",
+    ]
         .iter()
         .any(|extension| path.ends_with(extension))
     {
@@ -3802,6 +3804,27 @@ mod tests {
                 Some("video/x-flv; charset=binary"),
                 None,
             ),
+            "audio"
+        );
+    }
+
+    #[test]
+    fn alac_and_aiff_are_classified_as_audio() {
+        // ALAC usually ships as `.m4a`; AIFF is uncompressed PCM.
+        assert_eq!(
+            media_kind(
+                "http://example.test/music/track.m4a",
+                Some("audio/mp4"),
+                None,
+            ),
+            "audio"
+        );
+        assert_eq!(
+            media_kind("http://example.test/music/track.aiff", None, None),
+            "audio"
+        );
+        assert_eq!(
+            media_kind("http://example.test/music/track.aif", None, None),
             "audio"
         );
     }

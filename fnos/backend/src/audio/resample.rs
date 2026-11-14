@@ -6,6 +6,13 @@
 //! **ppm** that the resampler applies, so a fast/slow DAC does not drain/fill
 //! the ring forever.
 //!
+//! On top of that continuous loop a 4-tier supervisor
+//! ([`DriftTierConfig`] / [`DriftAction`]) handles abnormal excursions: a dead
+//! zone where only the fine loop acts, a gentle and an aggressive rate clamp,
+//! and a frame-aligned rebuild when the ring is too far from target. The
+//! band edges are sized from the fnOS ring geometry (120 ms target inside a
+//! 300 ms ring), not copied from the multi-second-buffer reference model.
+//!
 //! Two resamplers live here:
 //! - [`SincResampler`]: windowed-sinc streaming resampler used on the device
 //!   output path. Arbitrary ratio (device rate / master rate, plus drift) with
@@ -178,6 +185,197 @@ impl DriftEstimator {
     /// Output/input frame ratio for the device resampler at unity nominal rate.
     pub fn ratio(&self) -> f64 {
         1.0 + (self.ppm as f64) / 1_000_000.0
+    }
+
+    /// True while the loop is still learning its reference fill (warm-up or
+    /// calibration window). The target is nominal until calibration finishes,
+    /// so tier decisions are meaningless and must not be taken.
+    pub fn calibrating(&self) -> bool {
+        self.calibrating
+    }
+
+    /// Smoothed signed ring-fill error in frames (`target - fill`).
+    ///
+    /// Positive means the ring is *below* target, i.e. the device consumes
+    /// faster than nominal, which matches the positive-ppm sign convention.
+    pub fn error_frames(&self) -> f32 {
+        self.target_frames - self.fill_avg
+    }
+
+    /// [`DriftEstimator::error_frames`] expressed in milliseconds at `rate`.
+    pub fn error_ms(&self, rate: u32) -> f32 {
+        self.error_frames() * 1_000.0 / rate.max(1) as f32
+    }
+}
+
+// ---------------------------------------------------------------------------
+// 4-tier drift supervisor (esp-sonic-sync model, sized for the fnOS ring)
+// ---------------------------------------------------------------------------
+
+// The reference model (esp-sonic-sync, reverse-engineered MiPlay) uses a
+// 4-level drift state machine with 100 / 300 / 600 ms boundaries. Those
+// numbers assume a multi-second jitter buffer. The fnOS engine keeps a
+// `RING_TARGET_MS = 120` ms jitter target inside a `RING_EXTRA_MS = 300` ms
+// ring (`audio::engine`), so the bands are scaled to that geometry instead of
+// copied: an error can physically never exceed `300 - 120 = 180` ms above the
+// target (overflow drops the oldest frames) or `120` ms below it (underrun).
+//
+// - `DRIFT_HOLD_MS`: 5 ms is roughly one 240-frame source chunk at 48 kHz and
+//   sits well inside the fine proportional loop's noise band. Below it no
+//   coarse tier correction is applied; the continuous P-loop keeps running
+//   (deleting the P-loop for "small" errors would leave a ±500 ppm DAC
+//   uncorrected for minutes on a 120 ms ring).
+// - `DRIFT_GENTLE_MS`: 40 ms is one third of the jitter target. A moderate
+//   excursion is corrected at most at `DRIFT_GENTLE_PPM` (0.03 % speed) so a
+//   local glitch cannot audibly bend the pitch.
+// - `DRIFT_AGGRESSIVE_MS`: 100 ms is roughly the 120 ms jitter target itself.
+//   It is smaller than both the 120 ms below-target slack and the 180 ms
+//   above-target headroom, so the rebuild tier is reachable in *both*
+//   directions: a fast device that has drained the ring to < 20 ms, and a
+//   stalled one that has filled it past 220 ms. Inside this band the full
+//   `MAX_DRIFT_PPM` (0.1 %, the existing hard clamp) pulls the ring back.
+// - Above `DRIFT_AGGRESSIVE_MS`: recover by dropping / re-prefilling whole
+//   frames back to the calibrated target, then re-calibrate the estimator.
+
+/// |error| below this is handled by the fine P-loop only (no tier action).
+pub const DRIFT_HOLD_MS: f32 = 5.0;
+/// Upper bound of the gentle band.
+pub const DRIFT_GENTLE_MS: f32 = 40.0;
+/// Upper bound of the aggressive band; above it the ring is rebuilt.
+pub const DRIFT_AGGRESSIVE_MS: f32 = 100.0;
+/// Rate clamp used inside the gentle band (0.03 %, inaudible pitch change).
+pub const DRIFT_GENTLE_PPM: f32 = 300.0;
+/// Rate clamp used inside the aggressive band: the existing hard clamp.
+pub const DRIFT_AGGRESSIVE_PPM: f32 = MAX_DRIFT_PPM;
+
+/// Which drift countermeasure the supervisor selects for the current error.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum DriftAction {
+    /// Dead zone: no coarse correction, the fine proportional loop keeps the
+    /// ring on target exactly as before this tier layer existed.
+    Hold,
+    /// Moderate excursion: clamp the correction to `max_ppm` (gentle rate).
+    Gentle { max_ppm: f32 },
+    /// Large excursion: clamp the correction to `max_ppm` (aggressive rate).
+    Aggressive { max_ppm: f32 },
+    /// Huge excursion: drop or re-prefill whole frames back to target.
+    /// Positive = ring below target (pad with silence), negative = ring above
+    /// target (discard the oldest frames); the value is always whole frames.
+    Recover { realign_frames: i64 },
+}
+
+/// Thresholds and rate clamps of the 4-tier drift supervisor.
+///
+/// Defaults are enabled; every field can be overridden from the environment
+/// (`FUSIONPLAY_FNOS_DRIFT_TIERS=0` disables the tier layer and keeps the
+/// legacy continuous P-loop, `FUSIONPLAY_FNOS_DRIFT_{HOLD,GENTLE,AGGRESSIVE}_MS`
+/// and `FUSIONPLAY_FNOS_DRIFT_{GENTLE,AGGRESSIVE}_PPM` tune the bands).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct DriftTierConfig {
+    pub enabled: bool,
+    pub hold_ms: f32,
+    pub gentle_ms: f32,
+    pub aggressive_ms: f32,
+    pub gentle_ppm: f32,
+    pub aggressive_ppm: f32,
+}
+
+impl Default for DriftTierConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            hold_ms: DRIFT_HOLD_MS,
+            gentle_ms: DRIFT_GENTLE_MS,
+            aggressive_ms: DRIFT_AGGRESSIVE_MS,
+            gentle_ppm: DRIFT_GENTLE_PPM,
+            aggressive_ppm: DRIFT_AGGRESSIVE_PPM,
+        }
+    }
+}
+
+impl DriftTierConfig {
+    /// Read the configuration from the environment, falling back to the
+    /// defaults for every unset or unparsable variable. Values are sanitised
+    /// (finite, monotonic bands, ppm inside the existing clamp).
+    pub fn from_env() -> Self {
+        let mut config = Self::default();
+        if let Ok(raw) = std::env::var("FUSIONPLAY_FNOS_DRIFT_TIERS") {
+            let value = raw.trim().to_ascii_lowercase();
+            config.enabled =
+                !matches!(value.as_str(), "0" | "off" | "false" | "no" | "disabled");
+        }
+        config.hold_ms = env_f32("FUSIONPLAY_FNOS_DRIFT_HOLD_MS", config.hold_ms);
+        config.gentle_ms = env_f32("FUSIONPLAY_FNOS_DRIFT_GENTLE_MS", config.gentle_ms);
+        config.aggressive_ms = env_f32("FUSIONPLAY_FNOS_DRIFT_AGGRESSIVE_MS", config.aggressive_ms);
+        config.gentle_ppm = env_f32("FUSIONPLAY_FNOS_DRIFT_GENTLE_PPM", config.gentle_ppm);
+        config.aggressive_ppm =
+            env_f32("FUSIONPLAY_FNOS_DRIFT_AGGRESSIVE_PPM", config.aggressive_ppm);
+        config.sanitized()
+    }
+
+    /// Force the configuration into a usable shape: finite non-negative band
+    /// edges with `hold < gentle < aggressive`, and rate clamps inside
+    /// `1..=MAX_DRIFT_PPM` with `gentle_ppm <= aggressive_ppm`. Invalid bands
+    /// fall back to the defaults rather than silently inverting the tiers.
+    pub fn sanitized(self) -> Self {
+        let mut config = self;
+        config.hold_ms = finite_non_negative(config.hold_ms, DRIFT_HOLD_MS);
+        config.gentle_ms = finite_non_negative(config.gentle_ms, DRIFT_GENTLE_MS);
+        config.aggressive_ms = finite_non_negative(config.aggressive_ms, DRIFT_AGGRESSIVE_MS);
+        if !(config.hold_ms < config.gentle_ms && config.gentle_ms < config.aggressive_ms) {
+            config.hold_ms = DRIFT_HOLD_MS;
+            config.gentle_ms = DRIFT_GENTLE_MS;
+            config.aggressive_ms = DRIFT_AGGRESSIVE_MS;
+        }
+        config.gentle_ppm = finite_non_negative(config.gentle_ppm, DRIFT_GENTLE_PPM)
+            .clamp(1.0, MAX_DRIFT_PPM);
+        config.aggressive_ppm = finite_non_negative(config.aggressive_ppm, DRIFT_AGGRESSIVE_PPM)
+            .clamp(config.gentle_ppm, MAX_DRIFT_PPM);
+        config
+    }
+
+    /// Select the countermeasure for a signed frame error (`target - fill`).
+    ///
+    /// The error is converted to milliseconds at the device rate, so the bands
+    /// are rate-independent; `realign_frames` is the original whole-frame
+    /// error, keeping the recovery path frame-aligned.
+    pub fn decide(&self, error_frames: i64, rate: u32) -> DriftAction {
+        if !self.enabled || error_frames == 0 {
+            return DriftAction::Hold;
+        }
+        let error_ms = error_frames as f32 * 1_000.0 / rate.max(1) as f32;
+        let magnitude = error_ms.abs();
+        if magnitude < self.hold_ms {
+            DriftAction::Hold
+        } else if magnitude <= self.gentle_ms {
+            DriftAction::Gentle {
+                max_ppm: self.gentle_ppm,
+            }
+        } else if magnitude <= self.aggressive_ms {
+            DriftAction::Aggressive {
+                max_ppm: self.aggressive_ppm,
+            }
+        } else {
+            DriftAction::Recover {
+                realign_frames: error_frames,
+            }
+        }
+    }
+}
+
+fn env_f32(name: &str, fallback: f32) -> f32 {
+    std::env::var(name)
+        .ok()
+        .and_then(|raw| raw.trim().parse::<f32>().ok())
+        .filter(|value| value.is_finite())
+        .unwrap_or(fallback)
+}
+
+fn finite_non_negative(value: f32, fallback: f32) -> f32 {
+    if value.is_finite() && value >= 0.0 {
+        value
+    } else {
+        fallback
     }
 }
 
@@ -555,5 +753,149 @@ mod tests {
             "got {} frames",
             out.len() / 2
         );
+    }
+
+    // -----------------------------------------------------------------------
+    // 4-tier drift supervisor
+    // -----------------------------------------------------------------------
+
+    /// Convert a millisecond error into the whole-frame error the worker feeds
+    /// the supervisor.
+    fn error_frames(ms: f32, rate: u32) -> i64 {
+        (ms * rate as f32 / 1_000.0).round() as i64
+    }
+
+    #[test]
+    fn drift_error_accessors_follow_the_ppm_sign_convention() {
+        // 100 ms target at 48 kHz. smoothing = 1.0 keeps the steps exact.
+        let mut estimator = DriftEstimator::new(4_800, 1.0, 500.0);
+        assert!(!estimator.calibrating());
+        // Ring below target -> positive error (device consumes fast).
+        estimator.update(2_400.0);
+        assert!((estimator.error_frames() - 2_400.0).abs() < 1.0);
+        assert!((estimator.error_ms(RATE) - 50.0).abs() < 0.1);
+        // Ring above target -> negative error (device consumes slow).
+        estimator.update(7_200.0);
+        assert!(estimator.error_frames() < 0.0);
+        assert!(estimator.error_ms(RATE) < 0.0);
+        // Ms conversion is rate independent.
+        assert!((estimator.error_ms(24_000) - estimator.error_ms(RATE) * 2.0).abs() < 0.5);
+        // The estimator reports calibration until the reference is learned.
+        let calibrating = DriftEstimator::with_calibration(
+            4_800,
+            DRIFT_FILL_SMOOTHING,
+            MAX_DRIFT_PPM,
+            DRIFT_CALIBRATION_WARMUP,
+            DRIFT_CALIBRATION_UPDATES,
+        );
+        assert!(calibrating.calibrating());
+    }
+
+    #[test]
+    fn drift_tier_bands_select_the_four_actions() {
+        let config = DriftTierConfig::default();
+        // Dead zone on both signs, including just below the edge.
+        assert_eq!(config.decide(0, RATE), DriftAction::Hold);
+        assert_eq!(config.decide(error_frames(4.9, RATE), RATE), DriftAction::Hold);
+        assert_eq!(config.decide(-error_frames(4.9, RATE), RATE), DriftAction::Hold);
+        // Gentle band: edge inclusive on both signs.
+        assert_eq!(
+            config.decide(error_frames(5.0, RATE), RATE),
+            DriftAction::Gentle { max_ppm: DRIFT_GENTLE_PPM }
+        );
+        assert_eq!(
+            config.decide(-error_frames(DRIFT_GENTLE_MS, RATE), RATE),
+            DriftAction::Gentle { max_ppm: DRIFT_GENTLE_PPM }
+        );
+        // Aggressive band: just past the gentle edge up to the aggressive edge.
+        assert_eq!(
+            config.decide(error_frames(DRIFT_GENTLE_MS + 1.0, RATE), RATE),
+            DriftAction::Aggressive { max_ppm: DRIFT_AGGRESSIVE_PPM }
+        );
+        assert_eq!(
+            config.decide(-error_frames(DRIFT_AGGRESSIVE_MS, RATE), RATE),
+            DriftAction::Aggressive { max_ppm: DRIFT_AGGRESSIVE_PPM }
+        );
+        // Rebuild: just past the aggressive edge, sign preserved.
+        let beyond = error_frames(DRIFT_AGGRESSIVE_MS + 1.0, RATE);
+        assert_eq!(config.decide(beyond, RATE), DriftAction::Recover { realign_frames: beyond });
+        assert_eq!(
+            config.decide(-beyond, RATE),
+            DriftAction::Recover { realign_frames: -beyond }
+        );
+    }
+
+    #[test]
+    fn drift_tier_recover_is_frame_aligned_at_every_device_rate() {
+        let config = DriftTierConfig::default();
+        // 190 ms is beyond the aggressive edge at every common device rate.
+        let error_ms = DRIFT_AGGRESSIVE_MS + 40.0;
+        for rate in [44_100u32, 48_000, 96_000, 192_000] {
+            let frames = error_frames(error_ms, rate);
+            match config.decide(frames, rate) {
+                DriftAction::Recover { realign_frames } => {
+                    // The recovery path moves the *exact whole-frame* error, not
+                    // a rounded millisecond value, so PCM frames cannot be torn.
+                    assert_eq!(realign_frames, frames, "rate {rate}");
+                }
+                other => panic!("rate {rate}: expected Recover, got {other:?}"),
+            }
+            match config.decide(-frames, rate) {
+                DriftAction::Recover { realign_frames } => {
+                    assert_eq!(realign_frames, -frames, "rate {rate}");
+                }
+                other => panic!("rate {rate}: expected Recover, got {other:?}"),
+            }
+        }
+    }
+
+    #[test]
+    fn drift_tiers_disabled_keep_the_legacy_fine_loop() {
+        let config = DriftTierConfig { enabled: false, ..DriftTierConfig::default() };
+        for error_ms in [0.0f32, 4.0, 40.0, 149.0, 151.0, 5_000.0] {
+            let frames = error_frames(error_ms, RATE);
+            assert_eq!(config.decide(frames, RATE), DriftAction::Hold, "{error_ms} ms");
+            assert_eq!(config.decide(-frames, RATE), DriftAction::Hold, "-{error_ms} ms");
+        }
+    }
+
+    #[test]
+    fn drift_tier_config_sanitizes_bad_values_without_panicking() {
+        let broken = DriftTierConfig {
+            enabled: true,
+            hold_ms: f32::NAN,
+            gentle_ms: -5.0,
+            aggressive_ms: f32::INFINITY,
+            gentle_ppm: -100.0,
+            aggressive_ppm: 1.0e9,
+        }
+        .sanitized();
+        assert!(broken.hold_ms.is_finite() && broken.hold_ms >= 0.0);
+        assert!(broken.hold_ms < broken.gentle_ms && broken.gentle_ms < broken.aggressive_ms);
+        assert!((1.0..=MAX_DRIFT_PPM).contains(&broken.gentle_ppm));
+        assert!(broken.aggressive_ppm >= broken.gentle_ppm);
+        assert!(broken.aggressive_ppm <= MAX_DRIFT_PPM);
+
+        // Inverted band edges fall back to the documented defaults.
+        let inverted = DriftTierConfig {
+            hold_ms: 100.0,
+            gentle_ms: 50.0,
+            aggressive_ms: 10.0,
+            ..DriftTierConfig::default()
+        }
+        .sanitized();
+        assert_eq!(inverted.hold_ms, DRIFT_HOLD_MS);
+        assert_eq!(inverted.gentle_ms, DRIFT_GENTLE_MS);
+        assert_eq!(inverted.aggressive_ms, DRIFT_AGGRESSIVE_MS);
+
+        // Absurd/extreme errors stay panic-free (rate 0 is clamped to 1 Hz).
+        assert!(matches!(
+            inverted.decide(i64::MAX, 0),
+            DriftAction::Recover { realign_frames } if realign_frames == i64::MAX
+        ));
+        assert!(matches!(
+            inverted.decide(i64::MIN, 1),
+            DriftAction::Recover { realign_frames } if realign_frames == i64::MIN
+        ));
     }
 }

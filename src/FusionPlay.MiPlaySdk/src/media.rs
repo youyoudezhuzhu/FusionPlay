@@ -22,7 +22,7 @@ use std::net::{Ipv4Addr, SocketAddr, TcpStream, UdpSocket};
 use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU32, AtomicU64, Ordering};
 #[cfg(target_os = "android")]
 use std::sync::mpsc;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::thread;
 use std::time::{Duration as StdDuration, Instant};
 use symphonia::core::audio::{Channels, Position};
@@ -1709,14 +1709,63 @@ fn adts_frame_len(data: &[u8]) -> Option<usize> {
     )
 }
 
+const ADTS_SAMPLE_RATES: [u32; 13] = [
+    96_000, 88_200, 64_000, 48_000, 44_100, 32_000, 24_000, 22_050, 16_000, 12_000, 11_025, 8_000,
+    7_350,
+];
+
+/// ADTS `profile`（adts[2] 高 2 位）：0=Main、1=LC、2=SSR、3=reserved。
+const ADTS_PROFILE_AAC_LC: u8 = 1;
+
+fn adts_profile(data: &[u8]) -> Option<u8> {
+    is_adts(data).then_some(data[2] >> 6)
+}
+
+fn adts_profile_name(profile: u8) -> &'static str {
+    match profile {
+        0 => "main",
+        1 => "lc",
+        2 => "ssr",
+        _ => "reserved",
+    }
+}
+
+fn adts_sampling_frequency_index(data: &[u8]) -> Option<u8> {
+    is_adts(data).then_some((data[2] & 0x3c) >> 2)
+}
+
+fn adts_channels(data: &[u8]) -> Option<u32> {
+    is_adts(data).then_some(u32::from((data[2] & 0x01) << 2 | (data[3] >> 6)))
+}
+
 fn adts_sample_rate(data: &[u8]) -> Option<u32> {
-    const SAMPLE_RATES: [u32; 13] = [
-        96_000, 88_200, 64_000, 48_000, 44_100, 32_000, 24_000, 22_050, 16_000, 12_000, 11_025,
-        8_000, 7_350,
-    ];
-    is_adts(data).then_some(())?;
-    let frequency_index = usize::from((data[2] & 0x3c) >> 2);
-    SAMPLE_RATES.get(frequency_index).copied()
+    adts_sampling_frequency_index(data)
+        .map(usize::from)
+        .and_then(|frequency_index| ADTS_SAMPLE_RATES.get(frequency_index).copied())
+}
+
+/// 首次 ADTS 帧的音频编码诊断：只观测不改变解码/拒流行为。
+/// profile 非 LC 或采样率为 22.05/24kHz 时提示可能是 HE-AAC（SBR/PS 会复用
+/// AAC-LC 的 ADTS profile，因此这个判定只作提示）。
+fn audio_codec_diagnostic_event(adts: &[u8]) -> Option<Value> {
+    let profile = adts_profile(adts)?;
+    let sampling_frequency_index = adts_sampling_frequency_index(adts)?;
+    let sample_rate = adts_sample_rate(adts);
+    let channels = adts_channels(adts)
+        .filter(|channels| *channels > 0)
+        .unwrap_or(MIPLAY_SOURCE_CHANNELS as u32);
+    let possible_he_aac = profile != ADTS_PROFILE_AAC_LC
+        || matches!(sample_rate, Some(22_050) | Some(24_000));
+    Some(json!({
+        "event": "audio_codec_diagnostic",
+        "protocol": "xiaomi_miplay",
+        "adts_profile": profile,
+        "adts_profile_name": adts_profile_name(profile),
+        "sampling_frequency_index": sampling_frequency_index,
+        "sample_rate": sample_rate,
+        "channels": channels,
+        "verdict": if possible_he_aac { "possible_he_aac" } else { "aac_lc" },
+    }))
 }
 
 fn validate_miplay_sample_rate(data: &[u8]) -> Result<u32> {
@@ -2090,11 +2139,43 @@ fn should_hard_drop_late_frames(
         return false;
     }
     let threshold = if timed_playback_started {
-        MIPLAY_RUNNING_LATE_DROP_MICROS
+        running_late_drop_micros()
     } else {
-        MIPLAY_INITIAL_LATE_DROP_MICROS
+        initial_late_drop_micros()
     };
     schedule_error_micros < -threshold
+}
+
+/// 解析环境变量里的迟到丢帧阈值（毫秒）。非法/缺失时回退默认值，并 clamp 到
+/// 1..=500ms：低于 1ms 会误杀正常网络抖动，高于 500ms 则等价于不再丢帧。
+fn parse_late_drop_millis(raw: Option<&str>, default_millis: f64) -> f64 {
+    raw.and_then(|text| text.trim().parse::<f64>().ok())
+        .filter(|millis| millis.is_finite())
+        .map(|millis| {
+            millis.clamp(
+                MIPLAY_LATE_DROP_MIN_MILLIS,
+                MIPLAY_LATE_DROP_MAX_MILLIS,
+            )
+        })
+        .unwrap_or(default_millis)
+}
+
+/// 运行期迟到丢帧阈值，首次调用时读取环境变量并缓存；默认 25ms。
+fn running_late_drop_micros() -> f64 {
+    static CACHED: OnceLock<f64> = OnceLock::new();
+    *CACHED.get_or_init(|| {
+        let raw = std::env::var(MIPLAY_RUNNING_LATE_DROP_ENV).ok();
+        parse_late_drop_millis(raw.as_deref(), MIPLAY_RUNNING_LATE_DROP_DEFAULT_MILLIS) * 1_000.0
+    })
+}
+
+/// 起播期迟到丢帧阈值，首次调用时读取环境变量并缓存；默认 2ms。
+fn initial_late_drop_micros() -> f64 {
+    static CACHED: OnceLock<f64> = OnceLock::new();
+    *CACHED.get_or_init(|| {
+        let raw = std::env::var(MIPLAY_INITIAL_LATE_DROP_ENV).ok();
+        parse_late_drop_millis(raw.as_deref(), MIPLAY_INITIAL_LATE_DROP_DEFAULT_MILLIS) * 1_000.0
+    })
 }
 
 const MIPLAY_SAMPLE_RATE_HZ: u32 = 48_000;
@@ -2114,8 +2195,13 @@ const MIPLAY_MAX_RATE_CORRECTION: f64 = 0.0025;
 #[cfg(target_os = "android")]
 const MIPLAY_ANDROID_PLAYBACK_RATE: f64 = 1.0;
 const MIPLAY_PTS_DISCONTINUITY_MICROS: f64 = 100_000.0;
-const MIPLAY_INITIAL_LATE_DROP_MICROS: f64 = 2_000.0;
-const MIPLAY_RUNNING_LATE_DROP_MICROS: f64 = 25_000.0;
+/// 迟到丢帧阈值的默认值与环境变量；可通过环境变量覆盖，解析一次后缓存。
+const MIPLAY_INITIAL_LATE_DROP_DEFAULT_MILLIS: f64 = 2.0;
+const MIPLAY_RUNNING_LATE_DROP_DEFAULT_MILLIS: f64 = 25.0;
+const MIPLAY_LATE_DROP_MIN_MILLIS: f64 = 1.0;
+const MIPLAY_LATE_DROP_MAX_MILLIS: f64 = 500.0;
+const MIPLAY_INITIAL_LATE_DROP_ENV: &str = "FUSIONPLAY_MIPLAY_INITIAL_LATE_DROP_MS";
+const MIPLAY_RUNNING_LATE_DROP_ENV: &str = "FUSIONPLAY_MIPLAY_LATE_DROP_MS";
 const MIPLAY_TIMER_PACKET_BYTES: usize = 40;
 const MIPLAY_CLOCK_SYNC_SAMPLES: usize = 10;
 const MIPLAY_CLOCK_FILTER_SAMPLES: usize = 10;
@@ -2150,6 +2236,7 @@ struct AacPlayer {
     decoded_frames: u64,
     non_silent_diagnostic_emitted: bool,
     pes_layout_diagnostic_emitted: bool,
+    codec_diagnostic_emitted: bool,
     latency_telemetry: Arc<MiPlayLatencyTelemetry>,
     events: EventEmitter,
 }
@@ -2237,6 +2324,7 @@ impl AacPlayer {
             decoded_frames: 0,
             non_silent_diagnostic_emitted: false,
             pes_layout_diagnostic_emitted: false,
+            codec_diagnostic_emitted: false,
             latency_telemetry,
             events,
         })
@@ -2269,6 +2357,14 @@ impl AacPlayer {
     }
 
     fn decode_adts_frame(&mut self, adts: &[u8], media_pts_micros: Option<f64>) -> Result<()> {
+        // 首个 ADTS 帧到达时解析 profile / 采样率索引。必须在采样率校验之前
+        // 发送，否则 HE-AAC 常见的 22.05/24kHz 流会在校验失败后拿不到诊断。
+        if !self.codec_diagnostic_emitted
+            && let Some(diagnostic) = audio_codec_diagnostic_event(adts)
+        {
+            self.codec_diagnostic_emitted = true;
+            (self.events)(diagnostic);
+        }
         validate_miplay_sample_rate(adts)?;
         let header_len = adts_header_len(adts).context("invalid ADTS header")?;
         let frame_len = adts_frame_len(adts).context("invalid ADTS length")?;
@@ -3547,14 +3643,16 @@ fn random_hex_32() -> String {
 #[cfg(test)]
 mod tests {
     use super::{
-        AdtsFramer, ClockFitPoint, MAX_RTSP_MESSAGE_BYTES, MIPLAY_RTP_CLOCK_HZ,
-        MIPLAY_SAMPLE_RATE_HZ, MIPLAY_SOURCE_CHANNELS, MiPlayLatencyTelemetry, PcmQueue,
-        StreamKeys, TsDemuxer, adts_bitrate, adts_sample_rate, decode_timer_sample,
-        extend_wrapping_counter, fit_clock_line, is_adts, normalized_output_latency_millis,
-        parse_rtp_packet, parse_timer_server, pes_private_data_iv, pes_pts_micros,
-        presentation_schedule_error_micros, rtp_payload, should_hard_drop_late_frames,
-        smooth_clock_model, synchronized_buffer_frames, trimmed_clock_offset,
-        try_parse_rtsp_message, usable_presentation_schedule_error_micros,
+        AdtsFramer, ClockFitPoint, MAX_RTSP_MESSAGE_BYTES, MIPLAY_INITIAL_LATE_DROP_DEFAULT_MILLIS,
+        MIPLAY_LATE_DROP_MAX_MILLIS, MIPLAY_LATE_DROP_MIN_MILLIS,
+        MIPLAY_RUNNING_LATE_DROP_DEFAULT_MILLIS, MIPLAY_RTP_CLOCK_HZ, MIPLAY_SAMPLE_RATE_HZ,
+        MIPLAY_SOURCE_CHANNELS, MiPlayLatencyTelemetry, PcmQueue, StreamKeys, TsDemuxer,
+        adts_bitrate, adts_profile, adts_sample_rate, adts_sampling_frequency_index,
+        audio_codec_diagnostic_event, decode_timer_sample, extend_wrapping_counter, fit_clock_line,
+        is_adts, normalized_output_latency_millis, parse_late_drop_millis, parse_rtp_packet,
+        parse_timer_server, pes_private_data_iv, pes_pts_micros, presentation_schedule_error_micros,
+        rtp_payload, should_hard_drop_late_frames, smooth_clock_model, synchronized_buffer_frames,
+        trimmed_clock_offset, try_parse_rtsp_message, usable_presentation_schedule_error_micros,
         validate_miplay_sample_rate, video_latency_request,
     };
     use aes::Aes128;
@@ -4042,5 +4140,79 @@ mod tests {
                 if enabled && has_iv { &plain } else { &cipher }.clone()
             );
         }
+    }
+
+    #[test]
+    fn audio_codec_diagnostic_reports_aac_lc_and_he_aac_suspicion() {
+        // 0x4c: profile=1(LC)、frequency_index=3(48kHz)、channel_config=2。
+        let lc = [0xff, 0xf9, 0x4c, 0x80, 0x01, 0x9f, 0xfc];
+        assert_eq!(adts_profile(&lc), Some(1));
+        assert_eq!(adts_sampling_frequency_index(&lc), Some(3));
+        let diagnostic = audio_codec_diagnostic_event(&lc).unwrap();
+        assert_eq!(diagnostic["event"], "audio_codec_diagnostic");
+        assert_eq!(diagnostic["protocol"], "xiaomi_miplay");
+        assert_eq!(diagnostic["adts_profile"], 1);
+        assert_eq!(diagnostic["adts_profile_name"], "lc");
+        assert_eq!(diagnostic["sampling_frequency_index"], 3);
+        assert_eq!(diagnostic["sample_rate"], 48_000);
+        assert_eq!(diagnostic["channels"], 2);
+        assert_eq!(diagnostic["verdict"], "aac_lc");
+
+        // profile=2(SSR) 属于非预期 profile，只提示 HE-AAC 可能，不拒流。
+        let ssr = [0xff, 0xf9, 0x8c, 0x80, 0x01, 0x9f, 0xfc];
+        assert_eq!(adts_profile(&ssr), Some(2));
+        let diagnostic = audio_codec_diagnostic_event(&ssr).unwrap();
+        assert_eq!(diagnostic["adts_profile"], 2);
+        assert_eq!(diagnostic["adts_profile_name"], "ssr");
+        assert_eq!(diagnostic["sample_rate"], 48_000);
+        assert_eq!(diagnostic["verdict"], "possible_he_aac");
+
+        // LC profile + 22.05kHz 采样率同样是 HE-AAC(SBR) 的典型组合。
+        let lc_22k = [0xff, 0xf9, 0x5c, 0x80, 0x01, 0x9f, 0xfc];
+        let diagnostic = audio_codec_diagnostic_event(&lc_22k).unwrap();
+        assert_eq!(diagnostic["adts_profile"], 1);
+        assert_eq!(diagnostic["sampling_frequency_index"], 7);
+        assert_eq!(diagnostic["sample_rate"], 22_050);
+        assert_eq!(diagnostic["verdict"], "possible_he_aac");
+
+        // 非 ADTS 数据不产生诊断事件。
+        assert!(audio_codec_diagnostic_event(&[0x00, 0x11, 0x22]).is_none());
+    }
+
+    #[test]
+    fn late_drop_thresholds_are_configurable_and_clamped() {
+        assert_eq!(MIPLAY_RUNNING_LATE_DROP_DEFAULT_MILLIS, 25.0);
+        assert_eq!(MIPLAY_INITIAL_LATE_DROP_DEFAULT_MILLIS, 2.0);
+        assert_eq!(MIPLAY_LATE_DROP_MIN_MILLIS, 1.0);
+        assert_eq!(MIPLAY_LATE_DROP_MAX_MILLIS, 500.0);
+
+        let running_default = MIPLAY_RUNNING_LATE_DROP_DEFAULT_MILLIS;
+        assert_eq!(parse_late_drop_millis(None, running_default), 25.0);
+        assert_eq!(parse_late_drop_millis(Some("50"), running_default), 50.0);
+        assert_eq!(parse_late_drop_millis(Some(" 12.5 "), running_default), 12.5);
+        assert_eq!(
+            parse_late_drop_millis(Some("0"), running_default),
+            MIPLAY_LATE_DROP_MIN_MILLIS
+        );
+        assert_eq!(
+            parse_late_drop_millis(Some("-7"), running_default),
+            MIPLAY_LATE_DROP_MIN_MILLIS
+        );
+        assert_eq!(
+            parse_late_drop_millis(Some("9999"), running_default),
+            MIPLAY_LATE_DROP_MAX_MILLIS
+        );
+        assert_eq!(parse_late_drop_millis(Some("garbage"), running_default), 25.0);
+        assert_eq!(parse_late_drop_millis(Some("NaN"), running_default), 25.0);
+
+        let initial_default = MIPLAY_INITIAL_LATE_DROP_DEFAULT_MILLIS;
+        assert_eq!(parse_late_drop_millis(None, initial_default), 2.0);
+        assert_eq!(parse_late_drop_millis(Some("2"), initial_default), 2.0);
+        assert_eq!(parse_late_drop_millis(Some("1"), initial_default), 1.0);
+        assert_eq!(parse_late_drop_millis(Some("500"), initial_default), 500.0);
+        assert_eq!(
+            parse_late_drop_millis(Some("501"), initial_default),
+            MIPLAY_LATE_DROP_MAX_MILLIS
+        );
     }
 }

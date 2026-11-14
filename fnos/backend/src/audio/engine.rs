@@ -25,8 +25,8 @@ use anyhow::{anyhow, Result};
 
 use super::device::{DeviceProvider, DeviceSink, SampleFormat};
 use super::resample::{
-    DriftEstimator, SincResampler, DRIFT_CALIBRATION_UPDATES, DRIFT_CALIBRATION_WARMUP,
-    DRIFT_FILL_SMOOTHING, MAX_DRIFT_PPM,
+    DriftAction, DriftEstimator, DriftTierConfig, SincResampler, DRIFT_CALIBRATION_UPDATES,
+    DRIFT_CALIBRATION_WARMUP, DRIFT_FILL_SMOOTHING, MAX_DRIFT_PPM,
 };
 use super::{DeviceInfo, DeviceStatus, EngineStatus, OutputBackend};
 use crate::config::{AudioSettings, DeviceSetting};
@@ -694,6 +694,10 @@ fn run_worker(worker: &Arc<DeviceWorker>) {
         DRIFT_CALIBRATION_WARMUP,
         DRIFT_CALIBRATION_UPDATES,
     );
+    // 4-tier drift supervisor (dead zone / gentle / aggressive / rebuild).
+    // Read once per device open; `FUSIONPLAY_FNOS_DRIFT_TIERS=0` restores the
+    // legacy continuous P-loop behaviour for A/B comparison.
+    let drift_tiers = DriftTierConfig::from_env();
     let mut scratch: Vec<f32> = Vec::with_capacity(MAX_BATCH_FRAMES * MASTER_CHANNELS);
     let mut resampled: Vec<f32> = Vec::with_capacity(MAX_BATCH_FRAMES * MASTER_CHANNELS * 2);
     let mut gain = bits_f32(worker.control.gain.load(Ordering::Relaxed));
@@ -782,11 +786,18 @@ fn run_worker(worker: &Arc<DeviceWorker>) {
                     worker.stats.set_state(WorkerState::Running);
                 }
                 ever_played = true;
-                let ppm = drift.update(fill as f32);
-                worker.stats.drift_ppm.store(ppm.to_bits(), Ordering::Relaxed);
+                let applied_ppm = apply_drift_tier(
+                    &mut drift,
+                    &drift_tiers,
+                    &worker.ring,
+                    &mut resampler,
+                    fill,
+                    rate,
+                );
+                worker.stats.drift_ppm.store(applied_ppm.to_bits(), Ordering::Relaxed);
                 let source_rate = worker.source_rate.load(Ordering::Relaxed).max(1) as f64;
                 let nominal = rate as f64 / source_rate;
-                let ratio = nominal * (1.0 + ppm as f64 / 1_000_000.0);
+                let ratio = nominal * (1.0 + applied_ppm as f64 / 1_000_000.0);
                 resampled.clear();
                 resampler.process(&scratch, ratio, &mut resampled);
                 if resampled.is_empty() {
@@ -844,6 +855,50 @@ fn run_worker(worker: &Arc<DeviceWorker>) {
     if worker.stats.state() != WorkerState::Offline {
         if worker.stats.state() != WorkerState::Error {
             worker.stats.set_state(WorkerState::Offline);
+        }
+    }
+}
+
+/// Feed one ring-fill measurement through the continuous P-loop and then the
+/// 4-tier supervisor, returning the ppm the device resampler must apply.
+///
+/// - `Hold`: the fine proportional loop result is used unchanged (legacy
+///   behaviour; the fnOS ring is only 120 ms, so a large absolute dead zone
+///   that switched the P-loop off would let ordinary DAC drift accumulate).
+/// - `Gentle` / `Aggressive`: the P-loop result is clamped to the tier's rate
+///   limit (0.03 % / 0.1 %), so a large ring excursion cannot bend the pitch.
+/// - `Recover`: the ring is realigned by whole frames (pad when below target,
+///   drop the oldest frames when above) and both the estimator and resampler
+///   state are reset; the ring restarts at the calibrated target.
+fn apply_drift_tier(
+    drift: &mut DriftEstimator,
+    tiers: &DriftTierConfig,
+    ring: &DeviceRing,
+    resampler: &mut SincResampler,
+    fill: usize,
+    rate: u32,
+) -> f32 {
+    let ppm = drift.update(fill as f32);
+    // While the reference fill is being learned the target is still nominal;
+    // a tier decision (especially Recover) would act on a bogus error.
+    if drift.calibrating() {
+        return ppm;
+    }
+    match tiers.decide(drift.error_frames().round() as i64, rate) {
+        DriftAction::Hold => ppm,
+        DriftAction::Gentle { max_ppm } | DriftAction::Aggressive { max_ppm } => {
+            ppm.clamp(-max_ppm, max_ppm)
+        }
+        DriftAction::Recover { realign_frames } => {
+            let magnitude = usize::try_from(realign_frames.unsigned_abs()).unwrap_or(usize::MAX);
+            if realign_frames > 0 {
+                ring.prefill_silence(magnitude);
+            } else {
+                ring.discard_frames(magnitude);
+            }
+            drift.reset();
+            resampler.reset();
+            0.0
         }
     }
 }

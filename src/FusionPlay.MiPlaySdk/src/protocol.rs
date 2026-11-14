@@ -2180,6 +2180,52 @@ fn media_info_value(body: &[u8]) -> Option<Value> {
     Some(value)
 }
 
+/// 歌词字段的优先级：新版点歌使用 mYrc/yrc（逐字），旧版使用 mLyric/lyrics。
+const MEDIA_INFO_LYRICS_FIELDS: [&str; 5] = ["mLyric", "lyrics", "mYrc", "yrc", "mLyricText"];
+/// 事件里歌词的最大字节数；超过即截断，避免一条 media_info 事件撑爆宿主通道。
+const MAX_MEDIA_INFO_LYRICS_BYTES: usize = 64 * 1024;
+
+fn media_info_lyrics(value: &Value) -> Option<(&'static str, &str)> {
+    MEDIA_INFO_LYRICS_FIELDS.iter().find_map(|name| {
+        value
+            .get(*name)
+            .and_then(Value::as_str)
+            // 部分发送端会带上空的占位字段，跳过它们继续尝试下一别名。
+            .filter(|lyrics| !lyrics.trim().is_empty())
+            .map(|lyrics| (*name, lyrics))
+    })
+}
+
+/// 判断歌词格式：字段名带 yrc，或时间标签 `[mm:ss` 后跟 `{...}` 视为逐字 yrc；
+/// 只有 `[mm:ss]` 时间标签的是普通 lrc；其余按 plain 处理。
+fn media_info_lyrics_kind(field: &str, lyrics: &str) -> &'static str {
+    let timed = lyrics.as_bytes().windows(4).any(|window| {
+        window[0] == b'['
+            && window[1].is_ascii_digit()
+            && window[2].is_ascii_digit()
+            && window[3] == b':'
+    });
+    if field.to_ascii_lowercase().contains("yrc") || (timed && lyrics.contains('{')) {
+        "yrc"
+    } else if timed {
+        "lrc"
+    } else {
+        "plain"
+    }
+}
+
+/// 按 UTF-8 边界截断歌词，返回 (截断后文本, 是否截断)。
+fn truncated_lyrics(lyrics: &str) -> (&str, bool) {
+    if lyrics.len() <= MAX_MEDIA_INFO_LYRICS_BYTES {
+        return (lyrics, false);
+    }
+    let mut end = MAX_MEDIA_INFO_LYRICS_BYTES;
+    while end > 0 && !lyrics.is_char_boundary(end) {
+        end -= 1;
+    }
+    (&lyrics[..end], true)
+}
+
 fn media_identity(body: &[u8]) -> Option<String> {
     let value = media_info_value(body)?;
     let id =
@@ -2237,6 +2283,19 @@ fn emit_media_info(body: &[u8], events: &EventEmitter) {
     )
     .map(|artwork| Value::String(artwork.to_owned()))
     .unwrap_or(Value::Null);
+    // 歌词随 media_info 事件一并下发；超过 64KB 截断并标记 truncated。
+    let (lyrics, lyrics_kind, lyrics_truncated) = match media_info_lyrics(&value) {
+        Some((field, lyrics)) => {
+            let kind = media_info_lyrics_kind(field, lyrics);
+            let (clipped, truncated) = truncated_lyrics(lyrics);
+            (
+                Value::String(clipped.to_owned()),
+                Value::String(kind.to_owned()),
+                truncated,
+            )
+        }
+        None => (Value::Null, Value::Null, false),
+    };
     events(json!({
         "event": "media_info",
         "source": "xiaomi",
@@ -2254,6 +2313,9 @@ fn emit_media_info(body: &[u8], events: &EventEmitter) {
             &value,
             &["mMetaChangeType", "metaChangeType"],
         ),
+        "lyrics": lyrics,
+        "lyrics_kind": lyrics_kind,
+        "truncated": lyrics_truncated,
     }));
 }
 
@@ -3328,5 +3390,126 @@ mod tests {
         assert_eq!(events[0]["title"], "Track D");
         assert_eq!(events[0]["artist"], "Artist D");
         assert_eq!(events[0]["artwork"], "https://example.invalid/d.jpg");
+    }
+
+    #[test]
+    fn media_info_carries_yrc_lyrics_and_kind() {
+        let recorded = Arc::new(Mutex::new(Vec::<Value>::new()));
+        let sink = Arc::clone(&recorded);
+        let events: EventEmitter = Arc::new(move |event| {
+            sink.lock().unwrap().push(event);
+        });
+        emit_media_info(
+            br#"{"mTitle":"Track F","mYrc":"[00:01.00]{word(300,0)}[00:02.00]{next(300,0)}"}"#,
+            &events,
+        );
+        emit_media_info(
+            br#"{"mediaInfo":{"mTitle":"Track G","lyrics":"[00:01.00]{plain-field-yrc}"}}"#,
+            &events,
+        );
+
+        let events = recorded.lock().unwrap();
+        assert_eq!(events.len(), 2);
+        assert_eq!(events[0]["lyrics"], "[00:01.00]{word(300,0)}[00:02.00]{next(300,0)}");
+        assert_eq!(events[0]["lyrics_kind"], "yrc");
+        assert_eq!(events[0]["truncated"], false);
+        assert_eq!(events[1]["lyrics"], "[00:01.00]{plain-field-yrc}");
+        assert_eq!(events[1]["lyrics_kind"], "yrc");
+    }
+
+    #[test]
+    fn media_info_lyrics_falls_back_to_lrc_and_plain() {
+        let recorded = Arc::new(Mutex::new(Vec::<Value>::new()));
+        let sink = Arc::clone(&recorded);
+        let events: EventEmitter = Arc::new(move |event| {
+            sink.lock().unwrap().push(event);
+        });
+        emit_media_info(br#"{"mTitle":"Lrc","mLyric":"[00:01.00]line one\n[00:02.00]line two"}"#, &events);
+        emit_media_info(br#"{"mTitle":"Plain","mLyricText":"just words"}"#, &events);
+        emit_media_info(br#"{"mTitle":"No Lyrics"}"#, &events);
+        emit_media_info(
+            br#"{"mTitle":"Fallback","mLyric":"","lyrics":"[00:03.00]fallback"}"#,
+            &events,
+        );
+
+        let events = recorded.lock().unwrap();
+        assert_eq!(events[0]["lyrics_kind"], "lrc");
+        assert_eq!(events[1]["lyrics_kind"], "plain");
+        assert_eq!(events[2]["lyrics"], Value::Null);
+        assert_eq!(events[2]["lyrics_kind"], Value::Null);
+        assert_eq!(events[2]["truncated"], false);
+        assert_eq!(events[3]["lyrics"], "[00:03.00]fallback");
+        assert_eq!(events[3]["lyrics_kind"], "lrc");
+    }
+
+    #[test]
+    fn media_info_truncates_oversized_lyrics() {
+        let recorded = Arc::new(Mutex::new(Vec::<Value>::new()));
+        let sink = Arc::clone(&recorded);
+        let events: EventEmitter = Arc::new(move |event| {
+            sink.lock().unwrap().push(event);
+        });
+        // 封面 base64 + 逐字歌词的实测控制帧可超过 256KB，歌词本身也可能很大。
+        let long_lyrics = format!("[00:01.00]{}", "a".repeat(70 * 1024));
+        let body = format!(r#"{{"mTitle":"Long","lyrics":"{long_lyrics}"}}"#);
+        emit_media_info(body.as_bytes(), &events);
+
+        let events = recorded.lock().unwrap();
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0]["truncated"], true);
+        let lyrics = events[0]["lyrics"].as_str().unwrap();
+        assert_eq!(lyrics.len(), 64 * 1024);
+        assert!(lyrics.starts_with("[00:01.00]"));
+        assert_eq!(events[0]["lyrics_kind"], "lrc");
+    }
+
+    #[test]
+    fn large_control_frame_does_not_treat_ciphertext_dollar_as_frame_header() {
+        const LARGE_BODY_BYTES: usize = 256 * 1024;
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let mut client = TcpStream::connect(address).unwrap();
+        let (mut server, _) = listener.accept().unwrap();
+        client
+            .set_read_timeout(Some(Duration::from_secs(5)))
+            .unwrap();
+
+        // 正文整段为 0x24（'$'）。若解析器按明文内容扫描帧头，这里会被误判
+        // 成一个 length=0x24242424 的假帧头；正确行为是严格按长度前缀消费
+        // 整个 256KB body，并完整读出紧随其后的普通帧。
+        let large_body = vec![0x24_u8; LARGE_BODY_BYTES];
+        let expected_large_body = large_body.clone();
+        let ordinary_body = vec![0x5a_u8; 32];
+        let expected_ordinary_body = ordinary_body.clone();
+        let writer = thread::spawn(move || {
+            write_frame(
+                &mut server,
+                0x00,
+                super::SET_MEDIA_INFO,
+                7,
+                &large_body,
+            )
+            .unwrap();
+            write_frame(&mut server, 0x00, NOTIFY, 9, &ordinary_body).unwrap();
+        });
+
+        let mut cipher = ControlCipher::new(*b"0123456789abcdef");
+        let large = read_frame(&mut client, &mut cipher).unwrap();
+        assert_eq!(large.command, super::SET_MEDIA_INFO);
+        assert_eq!(large.sequence, 7);
+        assert_eq!(large.wire_body_length, LARGE_BODY_BYTES);
+        assert_eq!(large.body.len(), LARGE_BODY_BYTES);
+        assert_eq!(large.body, expected_large_body);
+
+        let ordinary = read_frame(&mut client, &mut cipher).unwrap();
+        assert_eq!(ordinary.command, NOTIFY);
+        assert_eq!(ordinary.sequence, 9);
+        assert_eq!(ordinary.wire_body_length, expected_ordinary_body.len());
+        assert_eq!(ordinary.body, expected_ordinary_body);
+        writer.join().unwrap();
+
+        // 两帧消费完之后流里没有残留的第三个帧。
+        let mut trailing = [0_u8; 1];
+        assert_eq!(client.read(&mut trailing).unwrap(), 0);
     }
 }

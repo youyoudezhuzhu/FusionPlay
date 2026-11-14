@@ -20,7 +20,7 @@
 ### 支持
 
 - **AirPlay 2 音频**：配对、播放/暂停、切歌、进度、发送端音量、封面/元数据（复用上游协议栈）。
-- **DLNA MediaRenderer（控制面）**：SSDP 发现、AVTransport / RenderingControl、事件回传；媒体侧支持 mp3 / flac / wav / aac / mp4 / **ogg** 音频与**网易云常用的 FLV(AAC) 音频**（QQ 音乐/网易云 CDN 拉流使用浏览器 UA 规避 403）；
+- **DLNA MediaRenderer（控制面）**：SSDP 发现、AVTransport / RenderingControl、事件回传；媒体侧支持 mp3 / flac / wav / aac / mp4 / **ogg / alac / aiff** 音频与**网易云常用的 FLV(AAC/MP3) 音频**（QQ 音乐/网易云 CDN 拉流使用浏览器 UA 规避 403）；
   媒体由本机 HTTP(S) 拉流解码（MP3 / FLAC / WAV / AAC / MP4 音频轨）后输出。
 - **小米妙播（MiPlay）**：设备发现、鉴权、媒体接收；默认开启旧版固定密钥兼容（兼容老发送端）。
 - **统一多声卡输出**：48 kHz 立体声主混音 → 每设备独立 ring + 重采样 + 漂移/延迟补偿；

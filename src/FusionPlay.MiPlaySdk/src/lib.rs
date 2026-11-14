@@ -7,6 +7,7 @@
 
 pub mod clock_observer;
 pub mod discovery;
+pub mod legacy_lan;
 pub mod lyra;
 pub mod media;
 pub mod protocol;
@@ -290,6 +291,9 @@ impl ReceiverController {
 pub struct MiPlayReceiver {
     advertisement: MiPlayAdvertisement,
     lyra_control: LyraControlServer,
+    /// Opt-in UDP 5355 `_miplay_lan._tcp` compatibility route. `None` on the
+    /// default path, in which case port 5355 is never bound.
+    legacy_lan: Option<legacy_lan::LegacyLanAdvertisement>,
     controller: ReceiverController,
 }
 
@@ -332,16 +336,39 @@ impl MiPlayReceiver {
                 return Err(error);
             }
         };
-        // `_miplay_lan` is intentionally not a runtime option because HyperOS
-        // exposes it as a second generic television. Account-free MiPlay uses
-        // query-scoped Lyra and Mi Connect routes instead, so both identities
-        // first appear while MiPlay's listener is active and no permanent
-        // legacy TV identity is published.
-        events(json!({
-            "event": "miplay_lan_removed",
-            "protocol": "xiaomi_miplay",
-            "reason": "query_scoped_lyra_and_mi_connect_without_legacy_lan_tv",
-        }));
+        // `_miplay_lan` stays off by default because HyperOS exposes it as a
+        // second generic television. Account-free MiPlay uses query-scoped
+        // Lyra and Mi Connect routes instead, so both identities first appear
+        // while MiPlay's listener is active and no permanent legacy TV
+        // identity is published. The legacy 5355 channel remains available
+        // strictly opt-in for senders that never browse mDNS.
+        let legacy_lan = legacy_lan::start_from_env(
+            legacy_lan::LegacyLanIdentity {
+                receiver_name: config.name.clone(),
+                idm_instance_id: config.identity.idm_instance_id.clone(),
+                hardware_address: config
+                    .hardware_address
+                    .clone()
+                    .unwrap_or_else(|| config.identity.media_device_id.clone()),
+                local_ip: config.local_ip,
+            },
+            Arc::clone(&events),
+        );
+        if legacy_lan.is_some() {
+            events(json!({
+                "event": "miplay_lan_legacy_advertised",
+                "protocol": "xiaomi_miplay",
+                "reason": "opt_in_legacy_lan_dns_sd_over_udp_5355",
+                "port": 5355,
+                "environment_switch": "FUSIONPLAY_MIPLAY_LEGACY_LAN",
+            }));
+        } else {
+            events(json!({
+                "event": "miplay_lan_removed",
+                "protocol": "xiaomi_miplay",
+                "reason": "query_scoped_lyra_and_mi_connect_without_legacy_lan_tv",
+            }));
+        }
         let advertisement = match MiPlayAdvertisement::register(
             &config.name,
             &config.identity.lyra_instance_id,
@@ -375,7 +402,7 @@ impl MiPlayReceiver {
             "device_type": config.device_type.protocol_value(),
             "output_device": config.output_device,
             "mdns_service": advertisement.fullname(),
-            "legacy_lan_discovery": false,
+            "legacy_lan_discovery": legacy_lan.is_some(),
             "network_scope": "local_subnet",
             "official_wired_support": "undocumented",
             "external_service_required": false,
@@ -389,6 +416,7 @@ impl MiPlayReceiver {
         Ok(Self {
             advertisement,
             lyra_control,
+            legacy_lan,
             controller,
         })
     }
@@ -399,6 +427,12 @@ impl MiPlayReceiver {
 
     pub fn service_name(&self) -> &str {
         self.advertisement.fullname()
+    }
+
+    /// Whether the opt-in UDP 5355 `_miplay_lan._tcp` legacy route is active.
+    /// Defaults to `false`; enable with `FUSIONPLAY_MIPLAY_LEGACY_LAN=1`.
+    pub const fn legacy_lan_enabled(&self) -> bool {
+        self.legacy_lan.is_some()
     }
 
     pub const fn lyra_command_port(&self) -> u16 {

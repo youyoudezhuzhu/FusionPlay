@@ -31,7 +31,7 @@ Windows 10/11（x64）上的 FusionPlay 接收端：把电脑变成支持 **AirP
 2. 手机/平板/电脑在投放菜单里选择接收器名称（默认是电脑的计算机名，可在设置里自定义）。
 3. 支持：
    - iPhone / iPad / Mac：AirPlay 音频
-   - 支持 DLNA 的音乐 App、NAS、电视：DLNA 投放（mp3 / flac / wav / aac / m4a / **ogg** 音频，以及**网易云音乐常用的 FLV(AAC) 音频**；QQ 音乐/网易云 CDN 拉流使用浏览器 UA 以规避 403；HTTPS 媒体源、HLS、视频仍不支持）
+   - 支持 DLNA 的音乐 App、NAS、电视：DLNA 投放（mp3 / flac / wav / aac / m4a / **ogg** / **alac / aiff** 音频，以及**网易云音乐常用的 FLV(AAC/MP3) 音频**；QQ 音乐/网易云 CDN 拉流使用浏览器 UA，401/403 时自动回退旧式 UA；HTTPS 媒体源、HLS、视频仍不支持）
    - 小米手机/平板：妙播（MiPlay）
 4. 设置里可切换接收器名称、开机自启、自动唤醒（播放时阻止系统休眠）、三个协议开关、妙播设备身份（车机/电视/平板/音响）。
 
@@ -57,6 +57,10 @@ Windows 10/11（x64）上的 FusionPlay 接收端：把电脑变成支持 **AirP
 - 仅音频接收：不支持 AirPlay 镜像/视频、DLNA 视频、HLS、DRM 内容；不会向发送端广告视频能力。
 - 不支持 Windows 系统媒体控制中心（SMTC）/媒体键，后续版本补充。
 - AirPlay 低延迟目前通过 settings.json 字段/环境变量配置，暂未做进设置界面。
+- 妙播设备类型：默认"电视(2)"可正常投屏；部分 HyperOS 版本选"音响(4)"后设备可能不进妙播列表，详见 [MIPLAY_DEVICE_TYPES.md](MIPLAY_DEVICE_TYPES.md)。
+- 妙播 HE-AAC 兼容性、5355 legacy 发现通道（默认关闭）、大帧/歌词诊断等，见 [MIPLAY_DEVICE_TYPES.md](MIPLAY_DEVICE_TYPES.md)。
+- DLNA 支持格式、UA 回退、国产音乐 App 兼容与未实现项（HTTPS/DMR edge case），见 [DLNA_COMPAT.md](DLNA_COMPAT.md)。
+- 多设备同步与 ESP32 可行性笔记：见 [MULTIROOM_SYNC_NOTES.md](MULTIROOM_SYNC_NOTES.md)、[ESP32_REUSE.md](ESP32_REUSE.md)。
 - 不支持 DLNA HTTPS 媒体源；本地网络建议使用 HTTP 媒体服务器。
 - 数据目录固定为当前用户的 `%LOCALAPPDATA%`，不支持多用户共享一套接收器。
 - 同一时间只支持一个活动的音频输出设备（系统默认设备；多设备 fan-out 是 fnOS 版特性）。
