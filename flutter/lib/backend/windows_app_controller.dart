@@ -2,8 +2,6 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
-import 'package:flutter/foundation.dart';
-
 import '../models/app_state.dart';
 import 'app_controller.dart';
 
@@ -181,8 +179,7 @@ class SidecarLogEntry {
 
 /// Windows backend: owns `FusionPlayCore.exe` and speaks NDJSON over its
 /// stdin/stdout (see `docs/WINDOWS_ARCHITECTURE.md` §5/§6).
-class WindowsAppController extends ChangeNotifier
-    implements FusionPlayController {
+class WindowsAppController extends FusionPlayController {
   WindowsAppController({
     SidecarTransport? transport,
     String? executablePath,

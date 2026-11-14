@@ -4,6 +4,7 @@ import 'package:flutter/services.dart';
 
 import '../models/app_state.dart';
 import 'app_controller.dart';
+import 'update_service.dart';
 
 /// Android backend: bridges to the Kotlin runtime through MethodChannel.
 class NativeAppController extends FusionPlayController {
@@ -13,6 +14,7 @@ class NativeAppController extends FusionPlayController {
   @override
   AppState state = const AppState();
   StreamSubscription<Object?>? _subscription;
+  final AndroidUpdateService _updates = AndroidUpdateService();
 
   @override
   Future<void> initialize() async {
@@ -75,6 +77,13 @@ class NativeAppController extends FusionPlayController {
 
   @override
   Future<void> clearError() => _invoke('clearError');
+
+  @override
+  Future<UpdateCheckResult> checkForUpdate() => _updates.check();
+
+  @override
+  Future<UpdateInstallResult> downloadAndInstallUpdate() =>
+      _updates.downloadAndInstall();
 
   Future<void> _invoke(String method, [Map<String, Object?>? arguments]) async {
     try {

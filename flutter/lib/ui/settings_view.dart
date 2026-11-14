@@ -1,7 +1,11 @@
+import 'dart:async';
+
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_svg/flutter_svg.dart';
 
+import '../backend/update_service.dart';
 import '../models/app_state.dart';
 import '../theme/fusion_theme.dart';
 import 'g2_shape.dart';
@@ -10,7 +14,7 @@ import 'vector_icon.dart';
 
 const fusionPlayVersion = String.fromEnvironment(
   'FUSIONPLAY_VERSION',
-  defaultValue: '1.3.3',
+  defaultValue: '1.3.4',
 );
 
 class SettingsView extends StatefulWidget {
@@ -28,6 +32,9 @@ class SettingsView extends StatefulWidget {
     required this.onAirPlay,
     required this.onDlna,
     required this.onExportLogs,
+    this.isAndroid,
+    this.onCheckUpdate,
+    this.onInstallUpdate,
   });
 
   final AppState state;
@@ -43,6 +50,16 @@ class SettingsView extends StatefulWidget {
   final ValueChanged<bool> onDlna;
   final Future<void> Function() onExportLogs;
 
+  /// Overrides the platform detection so widget tests can render the update
+  /// row for Android and hide it for Windows without touching the host OS.
+  final bool? isAndroid;
+
+  /// Update check triggered by the "检查更新" row (Android only).
+  final Future<UpdateCheckResult> Function()? onCheckUpdate;
+
+  /// Download + system installer triggered from the update dialog.
+  final Future<UpdateInstallResult> Function()? onInstallUpdate;
+
   @override
   State<SettingsView> createState() => _SettingsViewState();
 }
@@ -52,6 +69,8 @@ class _SettingsViewState extends State<SettingsView> {
   late final FocusNode _nameFocus;
   late String _savedName;
   bool _exportingLogs = false;
+  bool _checkingUpdate = false;
+  bool _downloadingUpdate = false;
 
   @override
   void initState() {
@@ -178,7 +197,11 @@ class _SettingsViewState extends State<SettingsView> {
                 ),
               ]),
               const SizedBox(height: SettingsStyle.cardSpacing),
-              _card([_aboutRow(), _exportLogsRow()]),
+              _card([
+                _aboutRow(),
+                if (_showUpdateRow) _checkUpdateRow(),
+                _exportLogsRow(),
+              ]),
             ],
           ),
         ),
@@ -289,6 +312,286 @@ class _SettingsViewState extends State<SettingsView> {
       if (mounted) setState(() => _exportingLogs = false);
     }
   }
+
+  bool get _showUpdateRow =>
+      (widget.isAndroid ?? defaultTargetPlatform == TargetPlatform.android) &&
+      widget.onCheckUpdate != null &&
+      widget.onInstallUpdate != null;
+
+  Widget _checkUpdateRow() {
+    final busy = _checkingUpdate || _downloadingUpdate;
+    final enabled = !busy && !widget.state.busy;
+    void check() {
+      if (enabled) unawaited(_checkForUpdate());
+    }
+
+    return RemoteFocusFrame(
+      enabled: enabled,
+      onActivate: check,
+      shape: const G2ContinuousBorder(radius: 20),
+      child: InkWell(
+        key: const ValueKey('check-update'),
+        onTap: enabled ? check : null,
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(20, 16, 28.5, 16),
+          child: Row(
+            children: [
+              const SizedBox(
+                width: 42,
+                height: 42,
+                child: Center(
+                  child: Icon(
+                    Icons.system_update_rounded,
+                    size: 25,
+                    color: SettingsStyle.iconColor,
+                  ),
+                ),
+              ),
+              const SizedBox(width: 14),
+              const Expanded(
+                child: Text(
+                  '检查更新',
+                  style: TextStyle(
+                    fontSize: 16,
+                    fontWeight: FusionTypography.semiBoldFontWeight,
+                    fontVariations: FusionTypography.semiBold,
+                  ),
+                ),
+              ),
+              if (busy)
+                const SizedBox.square(
+                  dimension: 20,
+                  child: CircularProgressIndicator(
+                    strokeWidth: 2.5,
+                    color: SettingsStyle.iconColor,
+                  ),
+                )
+              else
+                const Icon(
+                  Icons.chevron_right_rounded,
+                  size: 22,
+                  color: SettingsStyle.iconColor,
+                ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Future<void> _checkForUpdate() async {
+    if (_checkingUpdate || _downloadingUpdate) return;
+    final onCheck = widget.onCheckUpdate;
+    final onInstall = widget.onInstallUpdate;
+    if (onCheck == null || onInstall == null) return;
+
+    setState(() => _checkingUpdate = true);
+    UpdateCheckResult? result;
+    try {
+      result = await _showBusyDialog<UpdateCheckResult>(
+        message: '正在检查更新…',
+        task: onCheck,
+      );
+    } finally {
+      if (mounted) setState(() => _checkingUpdate = false);
+    }
+    if (!mounted) return;
+    if (result == null) {
+      await _showUpdateMessage('检查更新失败', '请稍后重试');
+      return;
+    }
+    switch (result.status) {
+      case UpdateCheckStatus.available:
+        final install = await _showAvailableUpdateDialog(result);
+        if (!mounted || !install) return;
+        await _downloadAndInstall(onInstall);
+      case UpdateCheckStatus.upToDate:
+        await _showUpdateMessage('已是最新版本');
+      case UpdateCheckStatus.unavailable:
+        await _showUpdateMessage('当前无法检查更新', result.message);
+      case UpdateCheckStatus.error:
+        await _showUpdateMessage('检查更新失败', result.message ?? '请稍后重试');
+    }
+  }
+
+  Future<void> _downloadAndInstall(
+    Future<UpdateInstallResult> Function() onInstall,
+  ) async {
+    setState(() => _downloadingUpdate = true);
+    UpdateInstallResult? result;
+    try {
+      result = await _showBusyDialog<UpdateInstallResult>(
+        message: '正在下载更新…',
+        task: onInstall,
+      );
+    } finally {
+      if (mounted) setState(() => _downloadingUpdate = false);
+    }
+    if (!mounted) return;
+    if (result == null) {
+      await _showUpdateMessage('下载更新失败', '请稍后重试');
+      return;
+    }
+    switch (result.status) {
+      case UpdateInstallStatus.started:
+        await _showUpdateMessage('安装器已打开', '请在系统安装界面完成更新。');
+      case UpdateInstallStatus.permissionRequired:
+        await _showUpdateMessage('需要安装权限', '请在系统设置中允许「FusionPlay」安装未知应用后重试。');
+      case UpdateInstallStatus.error:
+        await _showUpdateMessage('下载更新失败', result.message ?? '请稍后重试');
+    }
+  }
+
+  /// Shows a non-dismissible progress dialog while [task] runs and returns the
+  /// task result (or null when it failed).
+  Future<T?> _showBusyDialog<T>({
+    required String message,
+    required Future<T> Function() task,
+  }) => showDialog<T>(
+    context: context,
+    barrierDismissible: false,
+    builder: (_) => _UpdateProgressDialog<T>(message: message, task: task),
+  );
+
+  Future<bool> _showAvailableUpdateDialog(UpdateCheckResult result) async {
+    final version = result.versionName?.trim();
+    final title = version == null || version.isEmpty
+        ? '发现新版本'
+        : '发现新版本 $version';
+    final notes = result.notes?.trim();
+    final publishedAt = result.publishedAt?.trim();
+    final apkSize = result.apkSize;
+    final accepted = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        backgroundColor: Colors.white,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
+        title: Text(
+          title,
+          style: const TextStyle(
+            fontSize: 18,
+            fontWeight: FusionTypography.semiBoldFontWeight,
+            fontVariations: FusionTypography.semiBold,
+            color: SettingsStyle.primaryText,
+          ),
+        ),
+        content: ConstrainedBox(
+          constraints: const BoxConstraints(maxHeight: 320),
+          child: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                if (publishedAt != null && publishedAt.isNotEmpty)
+                  _updateDetail('发布时间：$publishedAt'),
+                if (apkSize != null && apkSize > 0)
+                  _updateDetail('安装包大小：${_formatBytes(apkSize)}'),
+                if (notes != null && notes.isNotEmpty) ...[
+                  if (publishedAt != null && publishedAt.isNotEmpty ||
+                      apkSize != null && apkSize > 0)
+                    const SizedBox(height: 12),
+                  Text(
+                    notes,
+                    style: const TextStyle(
+                      fontSize: 14,
+                      height: 1.5,
+                      color: SettingsStyle.primaryText,
+                    ),
+                  ),
+                ] else
+                  const Text(
+                    '本次更新未提供更新说明。',
+                    style: TextStyle(
+                      fontSize: 14,
+                      height: 1.5,
+                      color: SettingsStyle.secondaryText,
+                    ),
+                  ),
+              ],
+            ),
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(false),
+            child: const Text(
+              '取消',
+              style: TextStyle(color: SettingsStyle.secondaryText),
+            ),
+          ),
+          FilledButton(
+            style: FilledButton.styleFrom(
+              backgroundColor: Colors.black,
+              foregroundColor: Colors.white,
+            ),
+            onPressed: () => Navigator.of(dialogContext).pop(true),
+            child: const Text(
+              '下载并安装',
+              style: TextStyle(
+                fontWeight: FusionTypography.mediumFontWeight,
+                fontVariations: FusionTypography.medium,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+    return accepted ?? false;
+  }
+
+  Widget _updateDetail(String text) => Padding(
+    padding: const EdgeInsets.only(bottom: 4),
+    child: Text(
+      text,
+      style: const TextStyle(fontSize: 13, color: SettingsStyle.secondaryText),
+    ),
+  );
+
+  Future<void> _showUpdateMessage(String title, [String? message]) =>
+      showDialog<void>(
+        context: context,
+        builder: (dialogContext) => AlertDialog(
+          backgroundColor: Colors.white,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(24),
+          ),
+          title: Text(
+            title,
+            style: const TextStyle(
+              fontSize: 18,
+              fontWeight: FusionTypography.semiBoldFontWeight,
+              fontVariations: FusionTypography.semiBold,
+              color: SettingsStyle.primaryText,
+            ),
+          ),
+          content: message == null || message.trim().isEmpty
+              ? null
+              : Text(
+                  message,
+                  style: const TextStyle(
+                    fontSize: 14,
+                    height: 1.5,
+                    color: SettingsStyle.primaryText,
+                  ),
+                ),
+          actions: [
+            FilledButton(
+              style: FilledButton.styleFrom(
+                backgroundColor: Colors.black,
+                foregroundColor: Colors.white,
+              ),
+              onPressed: () => Navigator.of(dialogContext).pop(),
+              child: const Text(
+                '好',
+                style: TextStyle(
+                  fontWeight: FusionTypography.mediumFontWeight,
+                  fontVariations: FusionTypography.medium,
+                ),
+              ),
+            ),
+          ],
+        ),
+      );
 
   Widget _nameEditor() {
     final dirty = _name.text.trim() != _savedName.trim();
@@ -671,6 +974,67 @@ class _G2SettingsSwitch extends StatelessWidget {
   }
 }
 
+class _UpdateProgressDialog<T> extends StatefulWidget {
+  const _UpdateProgressDialog({required this.message, required this.task});
+
+  final String message;
+  final Future<T> Function() task;
+
+  @override
+  State<_UpdateProgressDialog<T>> createState() =>
+      _UpdateProgressDialogState<T>();
+}
+
+class _UpdateProgressDialogState<T> extends State<_UpdateProgressDialog<T>> {
+  @override
+  void initState() {
+    super.initState();
+    unawaited(_run());
+  }
+
+  Future<void> _run() async {
+    T? result;
+    var failed = false;
+    try {
+      result = await widget.task();
+    } catch (_) {
+      failed = true;
+    }
+    if (!mounted) return;
+    Navigator.of(context).pop(failed ? null : result);
+  }
+
+  @override
+  Widget build(BuildContext context) => PopScope(
+    canPop: false,
+    child: AlertDialog(
+      backgroundColor: Colors.white,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
+      content: Row(
+        children: [
+          const SizedBox.square(
+            dimension: 22,
+            child: CircularProgressIndicator(
+              strokeWidth: 2.5,
+              color: SettingsStyle.iconColor,
+            ),
+          ),
+          const SizedBox(width: 16),
+          Flexible(
+            child: Text(
+              widget.message,
+              style: const TextStyle(
+                fontSize: 15,
+                color: SettingsStyle.primaryText,
+              ),
+            ),
+          ),
+        ],
+      ),
+    ),
+  );
+}
+
 class _FocusReceiverNameIntent extends Intent {
   const _FocusReceiverNameIntent();
 }
@@ -705,4 +1069,14 @@ class _SectionTitle extends StatelessWidget {
       ),
     ],
   );
+}
+
+String _formatBytes(int bytes) {
+  if (bytes >= 1024 * 1024) {
+    return '${(bytes / (1024 * 1024)).toStringAsFixed(1)} MB';
+  }
+  if (bytes >= 1024) {
+    return '${(bytes / 1024).toStringAsFixed(0)} KB';
+  }
+  return '$bytes B';
 }

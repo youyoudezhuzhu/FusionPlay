@@ -14,6 +14,7 @@ import androidx.core.content.ContextCompat
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
+import com.fusionplay.android.update.UpdateManager
 import com.fusionplay.android.media.FusionPlayMediaChannel
 import com.fusionplay.android.media.FusionPlayMediaCommand
 import io.flutter.embedding.android.FlutterActivity
@@ -23,6 +24,7 @@ import io.flutter.plugin.common.MethodChannel
 class MainActivity : FlutterActivity() {
     private val consumedMediaKeys = mutableSetOf<Int>()
     private var navigationKeyChannel: MethodChannel? = null
+    private var updateManager: UpdateManager? = null
     private var pendingAccessibilityKeepAlivePrompt = false
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -41,6 +43,9 @@ class MainActivity : FlutterActivity() {
             flutterEngine.dartExecutor.binaryMessenger,
             NAVIGATION_KEY_CHANNEL,
         )
+        updateManager = UpdateManager(applicationContext).also {
+            it.attach(flutterEngine.dartExecutor.binaryMessenger)
+        }
     }
 
     override fun onStart() {
@@ -56,6 +61,12 @@ class MainActivity : FlutterActivity() {
     override fun onWindowFocusChanged(hasFocus: Boolean) {
         super.onWindowFocusChanged(hasFocus)
         if (hasFocus) configureImmersiveMode(window)
+    }
+
+    override fun onDestroy() {
+        updateManager?.close()
+        updateManager = null
+        super.onDestroy()
     }
 
     override fun dispatchKeyEvent(event: KeyEvent): Boolean {

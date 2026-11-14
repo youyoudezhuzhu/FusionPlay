@@ -1,0 +1,224 @@
+<!doctype html>
+<!--
+  FusionPlay Android 下载页。
+  android-pages.yml 会把本文件复制为 Pages artifact 的 index.html（站点根），
+  因此下面使用 ./update/android/... 相对路径；直接在 docs/update/ 里打开本文件
+  不会加载清单（需部署到 Pages 根目录）。
+-->
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>FusionPlay · Android 下载</title>
+<meta name="description" content="FusionPlay 局域网音乐投放接收器 Android 版下载与更新说明。">
+<style>
+  :root {
+    color-scheme: dark;
+    --bg: #0b1020;
+    --panel: #121a2f;
+    --panel-2: #17223c;
+    --text: #e8eefc;
+    --muted: #93a1c2;
+    --accent: #4f8cff;
+    --accent-2: #7cf0c5;
+    --border: #26345a;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC",
+                 "Microsoft YaHei", sans-serif;
+    background: radial-gradient(1200px 600px at 50% -10%, #1b2a52 0%, var(--bg) 60%);
+    color: var(--text);
+    line-height: 1.7;
+  }
+  main { max-width: 720px; margin: 0 auto; padding: 48px 20px 64px; }
+  .brand { display: flex; align-items: center; gap: 14px; margin-bottom: 8px; }
+  .mark {
+    width: 44px; height: 44px; border-radius: 12px;
+    background: linear-gradient(135deg, var(--accent), var(--accent-2));
+    display: grid; place-items: center; font-weight: 700; font-size: 20px; color: #08101f;
+  }
+  h1 { font-size: 26px; margin: 0; letter-spacing: .5px; }
+  .sub { color: var(--muted); margin: 4px 0 0; font-size: 14px; }
+  .card {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 16px;
+    padding: 22px;
+    margin: 22px 0;
+  }
+  .row { display: flex; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+  .badge {
+    display: inline-block; padding: 2px 10px; border-radius: 999px;
+    background: rgba(79, 140, 255, .16); border: 1px solid rgba(79, 140, 255, .45);
+    color: #bcd3ff; font-size: 12px; letter-spacing: .4px;
+  }
+  .version { font-size: 30px; font-weight: 700; margin: 10px 0 2px; }
+  .meta { color: var(--muted); font-size: 13px; }
+  a.btn {
+    display: block; text-align: center; text-decoration: none; font-weight: 700;
+    background: linear-gradient(135deg, var(--accent), #3d6fe0);
+    color: #fff; padding: 15px 18px; border-radius: 12px; margin: 18px 0 10px;
+    transition: filter .15s ease;
+  }
+  a.btn:hover { filter: brightness(1.08); }
+  a.btn.disabled { background: var(--panel-2); color: var(--muted); pointer-events: none; }
+  .links { display: flex; flex-wrap: wrap; gap: 16px; font-size: 13px; }
+  a { color: #9dbcff; }
+  code, .mono {
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 12px; background: #0d1528; border: 1px solid var(--border);
+    border-radius: 6px; padding: 2px 6px; word-break: break-all;
+  }
+  pre {
+    white-space: pre-wrap; word-break: break-word; margin: 0;
+    color: #cdd9f3; font-size: 13.5px;
+    font-family: inherit;
+  }
+  h2 { font-size: 16px; margin: 0 0 12px; color: #cfe0ff; }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th, td { text-align: left; padding: 7px 0; vertical-align: top; }
+  th { color: var(--muted); font-weight: 500; width: 96px; white-space: nowrap; }
+  td { word-break: break-all; }
+  .notice {
+    border-left: 3px solid var(--accent-2); padding: 8px 0 8px 14px;
+    color: var(--muted); font-size: 13px; margin: 0 0 18px;
+  }
+  .error { color: #ffb4b4; }
+  footer { color: #6f7d9d; font-size: 12px; text-align: center; margin-top: 34px; }
+</style>
+</head>
+<body>
+<main>
+  <div class="brand">
+    <div class="mark">FP</div>
+    <div>
+      <h1>FusionPlay</h1>
+      <p class="sub">局域网音乐投放接收器 · Android 5.0+</p>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="row">
+      <span class="badge">STABLE</span>
+      <span class="meta" id="published">正在读取更新清单…</span>
+    </div>
+    <div class="version" id="version">—</div>
+    <div class="meta" id="version-code">versionCode —</div>
+    <a class="btn" id="download" href="./update/android/dl/latest.apk">下载最新 APK</a>
+    <div class="links">
+      <a id="release-link" href="https://github.com/youyoudezhuzhu/FusionPlay/releases" rel="noopener">GitHub Release</a>
+      <a href="./update/android/stable.json">stable.json</a>
+      <a href="https://raw.githubusercontent.com/youyoudezhuzhu/FusionPlay/main/updates/android/stable.json" rel="noopener">raw 清单</a>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>文件校验</h2>
+    <table>
+      <tr><th>SHA-256</th><td><code id="sha256">—</code></td></tr>
+      <tr><th>签名证书</th><td><code id="signer">—</code></td></tr>
+      <tr><th>构建提交</th><td><code id="commit">—</code></td></tr>
+      <tr><th>文件大小</th><td id="size">—</td></tr>
+    </table>
+    <p class="notice" id="notice">
+      App 下载后会校验 SHA-256 与签名证书；如果与上表不一致，请不要安装。
+    </p>
+  </div>
+
+  <div class="card">
+    <h2>更新说明</h2>
+    <pre id="notes">正在读取更新清单…</pre>
+  </div>
+
+  <div class="card">
+    <h2>安装</h2>
+    <pre>1. 下载 APK 后，在文件管理器中打开并允许“安装未知应用”；
+2. 覆盖安装会保留设置与数据（同一签名证书才能覆盖升级）；
+3. 从 1.2.6 或更早的 debug 签名版本升级时，需要先卸载一次旧版本；
+4. 手机与电脑/音箱需要在同一局域网内。</pre>
+  </div>
+
+  <footer>
+    FusionPlay · AGPL-3.0 · 更新清单与 APK 通过 GitHub Pages 分发
+  </footer>
+</main>
+<script>
+(function () {
+  "use strict";
+  var manifestUrl = "./update/android/stable.json";
+  var apkPath = "./update/android/dl/latest.apk";
+
+  function text(id, value) {
+    var node = document.getElementById(id);
+    if (node) { node.textContent = value; }
+  }
+
+  function formatSize(bytes) {
+    var value = Number(bytes);
+    if (!isFinite(value) || value <= 0) { return "—"; }
+    return (value / (1024 * 1024)).toFixed(1) + " MB（" + value.toLocaleString("en-US") + " 字节）";
+  }
+
+  function formatTime(value) {
+    if (!value) { return "—"; }
+    var date = new Date(value);
+    if (isNaN(date.getTime())) { return String(value); }
+    return date.toLocaleString("zh-CN", { hour12: false }) + "（" + value + "）";
+  }
+
+  function render(manifest) {
+    var version = manifest.version_name || "—";
+    var code = manifest.version_code;
+    text("version", "v" + version);
+    text("version-code", "versionCode " + (code || "—"));
+    text("published", "发布于 " + formatTime(manifest.published_at));
+    text("sha256", manifest.sha256 || "—");
+    text("signer", manifest.signer_sha256 || "—");
+    text("commit", manifest.source_commit || "—");
+    text("size", formatSize(manifest.apk_size));
+    text("notes", manifest.notes || "（本次发布未提供更新说明）");
+
+    var download = document.getElementById("download");
+    if (manifest.published === false) {
+      download.textContent = "暂无可用版本";
+      download.classList.add("disabled");
+      download.removeAttribute("href");
+    } else {
+      download.textContent = "下载最新 APK · v" + version + "（" + formatSize(manifest.apk_size).split("（")[0] + "）";
+      // ?v=<versionCode> 绕过 Pages CDN 的缓存，保证拿到刚发布的 APK。
+      download.href = apkPath + "?v=" + encodeURIComponent(code || "latest");
+    }
+
+    if (manifest.apk_url_alt) {
+      document.getElementById("release-link").href = manifest.apk_url_alt;
+    }
+  }
+
+  function showError(error) {
+    text("published", "无法读取更新清单");
+    text("notes",
+      "更新清单读取失败（" + (error && error.message ? error.message : "网络错误") + "）。\n" +
+      "你仍可以直接下载 latest.apk，或打开 stable.json / raw 清单查看最新版本信息。");
+    text("version", "—");
+    document.getElementById("notice").classList.add("error");
+    document.getElementById("notice").textContent =
+      "注意：清单不可用时无法展示校验值，请优先通过 GitHub Release 页面下载。";
+  }
+
+  if (window.fetch) {
+    fetch(manifestUrl, { cache: "no-store" })
+      .then(function (response) {
+        if (!response.ok) { throw new Error("HTTP " + response.status); }
+        return response.json();
+      })
+      .then(render)
+      .catch(showError);
+  } else {
+    showError(new Error("浏览器不支持 fetch"));
+  }
+})();
+</script>
+</body>
+</html>

@@ -1,6 +1,7 @@
 import 'package:flutter/foundation.dart';
 
 import '../models/app_state.dart';
+import 'update_service.dart';
 
 /// The UI-facing contract shared by every FusionPlay backend.
 ///
@@ -36,6 +37,22 @@ abstract class FusionPlayController extends ChangeNotifier {
   Future<void> exportLogs();
 
   Future<void> clearError();
+
+  /// Checks for an in-app update.
+  ///
+  /// Defaults to "unavailable"; only Android overrides this (see
+  /// [AndroidUpdateService]).
+  Future<UpdateCheckResult> checkForUpdate() async =>
+      const UpdateCheckResult(status: UpdateCheckStatus.unavailable);
+
+  /// Downloads and starts the system installer for an available update.
+  ///
+  /// Platforms without an installer (Windows) report an error.
+  Future<UpdateInstallResult> downloadAndInstallUpdate() async =>
+      const UpdateInstallResult(
+        status: UpdateInstallStatus.error,
+        message: '当前平台不支持在线更新',
+      );
 
   @override
   void dispose();

@@ -1,0 +1,198 @@
+name: Sync Android update to GitHub Pages
+
+# 两条触发路径：
+#   1. release: published —— 手工在 GitHub UI 发布 Release 时自动同步；
+#   2. workflow_dispatch   —— android.yml 在 tag 构建里创建 Release 后用
+#      `gh workflow run` 显式触发（GITHUB_TOKEN 创建的 Release 不会触发
+#      release: published 事件，这是 GitHub 的防递归限制），也可手工重跑。
+#
+# 本工作流做四件事：
+#   - 从 Release 下载 update-manifest.json 与 APK，校验 SHA-256 / 大小；
+#   - 组装 Pages artifact（_site）：index.html + update/android/stable.json +
+#     update/android/dl/latest.apk + SHA256SUMS-<ver>.txt；
+#   - 把清单提交到 main 的 updates/android/stable.json（raw fallback），
+#     APK 永远不提交进 git；
+#   - 通过 actions/deploy-pages 发布 Pages。
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Release tag to sync (android-v<version>); empty = latest android release'
+        required: false
+        type: string
+
+permissions:
+  contents: write
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    # pre-release 不推送 stable；非 android-v* 的 Release（例如 windows-v*）直接忽略。
+    if: |
+      github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'release' &&
+       github.event.release.prerelease == false &&
+       startsWith(github.event.release.tag_name, 'android-v'))
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout main (manifest commit target)
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Resolve release tag
+        id: rel
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          INPUT_TAG: ${{ inputs.tag }}
+          EVENT_TAG: ${{ github.event.release.tag_name }}
+        run: |
+          set -euo pipefail
+          tag=""
+          if [ "${GITHUB_EVENT_NAME}" = "release" ]; then
+            tag="${EVENT_TAG}"
+          elif [ -n "${INPUT_TAG:-}" ]; then
+            tag="${INPUT_TAG}"
+          else
+            # latest non-prerelease android-v* release；不能用 `gh release view`
+            # （仓库里还有 windows-v* Release，最新 Release 可能不是 Android）。
+            tag="$(gh release list --repo "$GITHUB_REPOSITORY" --limit 100 \
+              --json tagName,isPrerelease \
+              --jq '[.[] | select(.isPrerelease == false) | .tagName | select(startswith("android-v"))][0] // empty')"
+          fi
+          if [ -z "$tag" ]; then
+            echo "::error::could not resolve an android-v* release tag"
+            exit 1
+          fi
+          case "$tag" in
+            android-v*) ;;
+            *)
+              echo "::error::release tag '$tag' is not an android-v* tag"
+              exit 1
+              ;;
+          esac
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "Resolved release tag: $tag"
+
+      - name: Download release update assets
+        id: assets
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ steps.rel.outputs.tag }}
+        run: |
+          set -euo pipefail
+          rel="${RUNNER_TEMP}/rel"
+          rm -rf "$rel"
+          mkdir -p "$rel"
+          gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --dir "$rel" --clobber \
+            --pattern 'update-manifest.json' \
+            --pattern 'FusionPlay-Android-*.apk'
+          manifest="$rel/update-manifest.json"
+          apk="$(find "$rel" -maxdepth 1 -type f -name 'FusionPlay-Android-*.apk' -print -quit)"
+          if [ ! -f "$manifest" ]; then
+            echo "::error::release $TAG has no update-manifest.json asset"
+            exit 1
+          fi
+          if [ -z "$apk" ] || [ ! -f "$apk" ]; then
+            echo "::error::release $TAG has no FusionPlay-Android-*.apk asset"
+            exit 1
+          fi
+          echo "manifest=$manifest" >> "$GITHUB_OUTPUT"
+          echo "apk=$apk" >> "$GITHUB_OUTPUT"
+          echo "Downloaded:"
+          ls -l "$rel"
+
+      - name: Verify release assets and stage Pages artifact
+        env:
+          MANIFEST: ${{ steps.assets.outputs.manifest }}
+          APK: ${{ steps.assets.outputs.apk }}
+          TAG: ${{ steps.rel.outputs.tag }}
+        run: |
+          set -euo pipefail
+          python3 .github/scripts/android_prepare_pages.py \
+            --manifest "$MANIFEST" \
+            --apk "$APK" \
+            --index docs/update/index.html \
+            --output-dir _site \
+            --tag "$TAG" \
+            --meta-env "$RUNNER_TEMP/pages-meta.env"
+          echo "--- Pages artifact tree ---"
+          find _site -type f -printf '%P  %s bytes\n' | sort
+
+      - name: Update updates/android/stable.json on main
+        env:
+          TAG: ${{ steps.rel.outputs.tag }}
+          MANIFEST: ${{ steps.assets.outputs.manifest }}
+        run: |
+          set -euo pipefail
+          # shellcheck disable=SC1091
+          source "$RUNNER_TEMP/pages-meta.env"
+          mkdir -p updates/android
+          cp "$MANIFEST" updates/android/stable.json
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add updates/android/stable.json
+          if git diff --cached --quiet; then
+            echo "updates/android/stable.json already up to date for ${VERSION}"
+            exit 0
+          fi
+          git commit -m "android: sync update manifest ${VERSION} [skip ci]"
+          # [skip ci] 避免机器提交触发 main push 的 APK 构建。
+          if ! git push origin HEAD:main; then
+            echo "::warning::push rejected; retrying on top of latest main"
+            git fetch origin main
+            git rebase origin/main
+            git push origin HEAD:main
+          fi
+          echo "committed updates/android/stable.json for ${VERSION} (${TAG})"
+
+      - name: Write sync summary
+        env:
+          TAG: ${{ steps.rel.outputs.tag }}
+        run: |
+          set -euo pipefail
+          # shellcheck disable=SC1091
+          source "$RUNNER_TEMP/pages-meta.env"
+          {
+            echo "## FusionPlay Android Pages sync"
+            echo ""
+            echo "- Release: \`${TAG}\`"
+            echo "- Version: \`${VERSION}\` (versionCode \`${VERSION_CODE}\`)"
+            echo "- APK SHA-256: \`${SHA256}\`"
+            echo "- APK size: ${APK_SIZE} bytes"
+            echo "- Manifest: /FusionPlay/update/android/stable.json"
+            echo "- APK: /FusionPlay/update/android/dl/latest.apk"
+            echo "- Raw fallback: https://raw.githubusercontent.com/${GITHUB_REPOSITORY}/main/updates/android/stable.json"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Configure GitHub Pages
+        uses: actions/configure-pages@v5
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+
+  deploy:
+    needs: sync
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    permissions:
+      pages: write
+      id-token: write
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4

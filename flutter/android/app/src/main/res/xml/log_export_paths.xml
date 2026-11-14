@@ -3,4 +3,8 @@
     <cache-path
         name="log_exports"
         path="log-exports/" />
+    <!-- 在线更新下载的 APK（FileProvider 需要显式声明 cache 子目录） -->
+    <cache-path
+        name="update_apks"
+        path="updates/" />
 </paths>

@@ -1,9 +1,24 @@
 name: Build Android APK
 
+# 触发：
+#   - push main：构建 APK 并上传原本的 workflow artifact（不发布）；
+#   - push tags `android-v*`：构建 + 校验签名 + 创建 GitHub Release
+#     （APK / .sha256 / update-manifest.json）+ 触发 Pages 同步；
+#   - workflow_dispatch：手动构建（仅 artifact，不发布）。
 on:
   push:
     branches: [main]
+    tags:
+      - 'android-v*'
   workflow_dispatch:
+
+# tag 构建需要创建 GitHub Release（contents: write）；
+# 还需要 actions: write，因为 GITHUB_TOKEN 创建的 Release 不会触发
+# `release: published` 事件，必须用 `gh workflow run` 显式 dispatch
+# android-pages.yml（workflow_dispatch 是 GITHUB_TOKEN 事件限制的例外）。
+permissions:
+  contents: write
+  actions: write
 
 jobs:
   build-apk:
@@ -16,6 +31,11 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      - name: Resolve version and validate release tag
+        id: version
+        run: |
+          python3 .github/scripts/android_check_tag.py --ref "$GITHUB_REF" --version-file VERSION
 
       - name: Set up JDK 21
         uses: actions/setup-java@v4
@@ -55,6 +75,12 @@ jobs:
         run: |
           KEY_PATH="$RUNNER_TEMP/fusionplay-release.jks"
           if [ -z "$ANDROID_KEYSTORE_BASE64" ]; then
+            case "$GITHUB_REF" in
+              refs/tags/android-v*)
+                echo "::error::ANDROID_KEYSTORE_BASE64 must be configured for android-v* tag builds: release APKs must be signed with the stable FusionPlay key so users can upgrade in place."
+                exit 1
+                ;;
+            esac
             echo "::warning::ANDROID_KEYSTORE_BASE64 is not configured; the APK will be debug-signed and NOT upgradeable over release builds."
             exit 0
           fi
@@ -68,14 +94,14 @@ jobs:
           ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
           ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
           ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+          VERSION: ${{ steps.version.outputs.version }}
+          VERSION_CODE: ${{ steps.version.outputs.version_code }}
         run: |
-          VERSION="$(tr -d '[:space:]' < ../VERSION)"
-          CODE="$(echo "$VERSION" | awk -F. '{print $1*10000+$2*100+$3}')"
           flutter pub get --enforce-lockfile
           mkdir -p build/symbols
           flutter build apk --release --no-pub \
             --build-name="$VERSION" \
-            --build-number="$CODE" \
+            --build-number="$VERSION_CODE" \
             --target-platform android-arm,android-arm64,android-x64 \
             --obfuscate \
             --dart-define="FUSIONPLAY_VERSION=$VERSION" \
@@ -84,15 +110,27 @@ jobs:
           cp build/app/outputs/flutter-apk/app-release.apk "../artifacts/releases/FusionPlay-Android-$VERSION.apk"
 
       - name: Verify APK signing certificate
+        id: signing
         working-directory: flutter
         env:
           EXPECTED_CERT: ${{ secrets.ANDROID_CERT_SHA256 }}
+          IS_RELEASE: ${{ steps.version.outputs.is_release }}
         run: |
-          APK="$(ls ../artifacts/releases/*.apk | head -1)"
+          APK="$(find ../artifacts/releases -maxdepth 1 -type f -name '*.apk' -print -quit)"
           APKSIGNER="${ANDROID_HOME:-$ANDROID_SDK_ROOT}/build-tools/36.0.0/apksigner"
           "$APKSIGNER" verify --print-certs "$APK" > /tmp/apk-certs.txt
           CERT="$(grep -m1 'SHA-256 digest' /tmp/apk-certs.txt | awk -F': ' '{print $2}' | tr -d ':' | tr 'a-f' 'A-F')"
+          CERT_LOWER="$(printf '%s' "$CERT" | tr 'A-F' 'a-f')"
           echo "APK signer SHA-256: $CERT"
+          echo "signer_sha256=$CERT_LOWER" >> "$GITHUB_OUTPUT"
+          if [ -z "$CERT_LOWER" ]; then
+            echo "::error::could not read the APK signer SHA-256 (is the APK signed?)"
+            exit 1
+          fi
+          if [ "$IS_RELEASE" = "true" ] && [ -z "$EXPECTED_CERT" ]; then
+            echo "::error::ANDROID_CERT_SHA256 must be configured for android-v* tag builds to verify the release signing certificate."
+            exit 1
+          fi
           if [ -n "$EXPECTED_CERT" ]; then
             WANT="$(printf '%s' "$EXPECTED_CERT" | tr -d ':' | tr 'a-f' 'A-F')"
             if [ "$CERT" != "$WANT" ]; then
@@ -104,9 +142,114 @@ jobs:
             echo "::warning::ANDROID_CERT_SHA256 not configured; skipping certificate comparison."
           fi
 
-      - name: Upload APK
+      - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
           name: FusionPlay-Android-APK
           path: artifacts/releases/*.apk
           if-no-files-found: error
+
+      # ---------------------------------------------------------------------
+      # Release-only steps (android-v* tag builds)
+      # ---------------------------------------------------------------------
+      - name: Package release assets (APK sha256 + update manifest)
+        if: startsWith(github.ref, 'refs/tags/android-v')
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+          VERSION_CODE: ${{ steps.version.outputs.version_code }}
+          RELEASE_TAG: ${{ steps.version.outputs.tag }}
+          SIGNER_SHA256: ${{ steps.signing.outputs.signer_sha256 }}
+        run: |
+          set -euo pipefail
+          if [ -z "$SIGNER_SHA256" ]; then
+            echo "::error::missing signer SHA-256 from the signing verification step"
+            exit 1
+          fi
+          APK="artifacts/releases/FusionPlay-Android-${VERSION}.apk"
+          if [ ! -f "$APK" ]; then
+            echo "::error::expected APK not found: $APK"
+            exit 1
+          fi
+          ( cd "$(dirname "$APK")" && sha256sum "$(basename "$APK")" > "$(basename "$APK").sha256" )
+          cat "$APK.sha256"
+
+          python3 .github/scripts/android_write_manifest.py \
+            --version "$VERSION" \
+            --version-code "$VERSION_CODE" \
+            --apk "$APK" \
+            --signer-sha256 "$SIGNER_SHA256" \
+            --source-commit "$GITHUB_SHA" \
+            --notes-file docs/update/android/notes.md \
+            --tag "$RELEASE_TAG" \
+            --repository "$GITHUB_REPOSITORY" \
+            --output artifacts/releases/update-manifest.json \
+            --meta-env "$RUNNER_TEMP/android-release-meta.env"
+
+          python3 - <<'PY'
+          import json
+          import pathlib
+
+          manifest = json.loads(pathlib.Path("artifacts/releases/update-manifest.json").read_text(encoding="utf-8"))
+          required = (
+              "schema_version", "channel", "published", "version_name", "version_code",
+              "sha256", "signer_sha256", "apk_url", "apk_url_alt", "apk_size",
+              "source_commit", "notes", "published_at",
+          )
+          missing = [field for field in required if field not in manifest]
+          assert not missing, f"manifest missing fields: {missing}"
+          assert manifest["schema_version"] == 1
+          assert manifest["channel"] == "stable"
+          assert manifest["published"] is True
+          assert manifest["sha256"] == manifest["sha256"].lower()
+          print("manifest OK:", manifest["version_name"], manifest["version_code"], manifest["apk_url"])
+          PY
+
+      - name: Create GitHub Release
+        if: startsWith(github.ref, 'refs/tags/android-v')
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ steps.version.outputs.version }}
+          RELEASE_TAG: ${{ steps.version.outputs.tag }}
+        run: |
+          set -euo pipefail
+          APK="artifacts/releases/FusionPlay-Android-${VERSION}.apk"
+          ASSETS=("$APK" "$APK.sha256" "artifacts/releases/update-manifest.json")
+          NOTES="docs/update/android/notes.md"
+          if [ ! -f "$NOTES" ] || [ ! -s "$NOTES" ]; then
+            echo "::error::release notes file is missing or empty: $NOTES"
+            exit 1
+          fi
+          if gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" > /dev/null 2>&1; then
+            echo "Release $RELEASE_TAG already exists; updating assets and notes."
+            gh release upload "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --clobber "${ASSETS[@]}"
+            gh release edit "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" \
+              --title "FusionPlay Android ${VERSION}" \
+              --notes-file "$NOTES"
+          else
+            gh release create "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" \
+              --title "FusionPlay Android ${VERSION}" \
+              --notes-file "$NOTES" \
+              "${ASSETS[@]}"
+          fi
+          gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" \
+            --json tagName,name,url,assets --jq '{tag: .tagName, title: .name, url: .url, assets: [.assets[].name]}'
+
+      - name: Trigger Android Pages sync
+        if: startsWith(github.ref, 'refs/tags/android-v')
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_TAG: ${{ steps.version.outputs.tag }}
+        run: |
+          set -euo pipefail
+          # GITHUB_TOKEN 创建的 Release 不会触发 `release: published`，因此这里
+          # 通过 workflow_dispatch（GITHUB_TOKEN 事件限制的例外）显式触发 Pages
+          # 同步：下载 Release 资产 -> 校验 -> 提交 updates/android/stable.json ->
+          # 部署 _site（index.html / stable.json / dl/latest.apk）。
+          if ! gh workflow run android-pages.yml \
+            --repo "$GITHUB_REPOSITORY" \
+            --ref main \
+            --field tag="$RELEASE_TAG"; then
+            echo "::error::could not dispatch android-pages.yml automatically; run it manually: gh workflow run android-pages.yml --ref main --field tag=$RELEASE_TAG"
+            exit 1
+          fi
+          echo "Dispatched android-pages.yml for $RELEASE_TAG (check Actions for the Pages run)."

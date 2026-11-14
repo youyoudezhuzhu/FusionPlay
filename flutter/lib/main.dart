@@ -388,6 +388,9 @@ class _FusionPlayHomeState extends State<FusionPlayHome> {
                     onDlna: (value) =>
                         widget.controller.setProtocolEnabled('dlna', value),
                     onExportLogs: widget.controller.exportLogs,
+                    isAndroid: Platform.isAndroid,
+                    onCheckUpdate: widget.controller.checkForUpdate,
+                    onInstallUpdate: widget.controller.downloadAndInstallUpdate,
                   ),
                 ),
               ),
