@@ -26,11 +26,16 @@ object UpdateVerifier {
      * 返回错误信息；null 表示通过。
      */
     fun verifyApk(context: Context, file: File, manifest: UpdateManifest): String? {
+        // Keep the API-28 constant inside a version check so Android Lint's
+        // NewApi check does not reject the release build on older devices.
+        val flags = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+            PackageManager.GET_SIGNING_CERTIFICATES
+        } else {
+            0
+        }
         @Suppress("DEPRECATION")
-        val info = context.packageManager.getPackageArchiveInfo(
-            file.absolutePath,
-            PackageManager.GET_SIGNING_CERTIFICATES,
-        ) ?: return "APK 无法解析"
+        val info = context.packageManager.getPackageArchiveInfo(file.absolutePath, flags)
+            ?: return "APK 无法解析"
 
         if (info.packageName != context.packageName) {
             return "APK 包名不匹配"
