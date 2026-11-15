@@ -87,5 +87,5 @@ void main() {
   // Very small lift so the material reads as glass rather than a plain blur.
   color = mix(color, color * 1.05 + 0.012, 0.55);
 
-  fragColor = vec4(color, alpha);
+  fragColor = vec4(color, 1.0);
 }

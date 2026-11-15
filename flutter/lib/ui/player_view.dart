@@ -344,6 +344,10 @@ class _PlayerViewState extends State<PlayerView> {
     return LayoutBuilder(
       builder: (context, outer) {
         final landscape = outer.maxWidth > outer.maxHeight;
+        // Phones in landscape are only ~350-420 logical px tall; the regular
+        // dock alone is ~130px and used to push the empty/centered content
+        // under it. Use a denser chrome below 430px.
+        final compactChrome = outer.maxHeight < 430;
         final reduceMotion = _reduceMotion;
         final showLyrics = _showLyricsLayout;
         final body = showLyrics
@@ -351,43 +355,48 @@ class _PlayerViewState extends State<PlayerView> {
             : _centeredBody(landscape: landscape);
         return Column(
           children: [
-            _topBar(landscape: landscape),
+            _topBar(landscape: landscape, compact: compactChrome),
             Expanded(
-              child: AnimatedSwitcher(
-                key: const ValueKey('player-body-switcher'),
-                duration: reduceMotion
-                    ? Duration.zero
-                    : const Duration(milliseconds: 300),
-                reverseDuration: reduceMotion
-                    ? Duration.zero
-                    : const Duration(milliseconds: 240),
-                switchInCurve: Curves.easeOutCubic,
-                switchOutCurve: Curves.easeInCubic,
-                layoutBuilder: (current, previous) => Stack(
-                  fit: StackFit.expand,
-                  children: [...previous, ?current],
-                ),
-                transitionBuilder: (child, animation) {
-                  if (reduceMotion) return child;
-                  final curved = CurvedAnimation(
-                    parent: animation,
-                    curve: Curves.easeOutCubic,
-                  );
-                  return FadeTransition(
-                    opacity: curved,
-                    child: ScaleTransition(
-                      scale: Tween<double>(begin: .98, end: 1).animate(curved),
-                      child: child,
-                    ),
-                  );
-                },
-                child: KeyedSubtree(
-                  key: ValueKey<bool>(showLyrics),
-                  child: body,
+              child: ClipRect(
+                child: AnimatedSwitcher(
+                  key: const ValueKey('player-body-switcher'),
+                  duration: reduceMotion
+                      ? Duration.zero
+                      : const Duration(milliseconds: 300),
+                  reverseDuration: reduceMotion
+                      ? Duration.zero
+                      : const Duration(milliseconds: 240),
+                  switchInCurve: Curves.easeOutCubic,
+                  switchOutCurve: Curves.easeInCubic,
+                  layoutBuilder: (current, previous) => Stack(
+                    fit: StackFit.expand,
+                    children: [...previous, ?current],
+                  ),
+                  transitionBuilder: (child, animation) {
+                    if (reduceMotion) return child;
+                    final curved = CurvedAnimation(
+                      parent: animation,
+                      curve: Curves.easeOutCubic,
+                    );
+                    return FadeTransition(
+                      opacity: curved,
+                      child: ScaleTransition(
+                        scale: Tween<double>(
+                          begin: .98,
+                          end: 1,
+                        ).animate(curved),
+                        child: child,
+                      ),
+                    );
+                  },
+                  child: KeyedSubtree(
+                    key: ValueKey<bool>(showLyrics),
+                    child: body,
+                  ),
                 ),
               ),
             ),
-            _dock(),
+            _dock(compact: compactChrome),
           ],
         );
       },
@@ -398,7 +407,7 @@ class _PlayerViewState extends State<PlayerView> {
   // Top bar
   // ------------------------------------------------------------------
 
-  Widget _topBar({required bool landscape}) {
+  Widget _topBar({required bool landscape, required bool compact}) {
     final playback = widget.state.playback;
     final protocol = playbackProtocolLabel(playback.protocol);
     final quality = playback.qualityText?.trim();
@@ -408,10 +417,10 @@ class _PlayerViewState extends State<PlayerView> {
         : const Duration(milliseconds: 240);
     return Padding(
       padding: EdgeInsets.fromLTRB(
-        landscape ? 30 : 18,
-        landscape ? 16 : 12,
-        landscape ? 22 : 12,
-        6,
+        compact ? (landscape ? 16 : 12) : (landscape ? 30 : 18),
+        compact ? 6 : (landscape ? 16 : 12),
+        compact ? 12 : (landscape ? 22 : 12),
+        compact ? 2 : 6,
       ),
       child: Row(
         children: [
@@ -460,7 +469,6 @@ class _PlayerViewState extends State<PlayerView> {
 
   Widget _lyricsToggleButton() {
     final active = _lyricsVisible;
-    final reduceMotion = _reduceMotion;
     final focusVisible = _menuVisible;
     return AnimatedPressScale(
       key: const ValueKey('playback-lyrics-toggle-button'),
@@ -498,7 +506,6 @@ class _PlayerViewState extends State<PlayerView> {
           borderRadius: 999,
           blurSigma: 16,
           tint: active ? const Color(0x3DFFFFFF) : const Color(0x1FFFFFFF),
-          animate: !reduceMotion,
           forceFallback: widget.forceGlassFallback,
           child: Material(
             color: Colors.transparent,
@@ -821,97 +828,123 @@ class _PlayerViewState extends State<PlayerView> {
     final hint = hiddenByUser ? null : _centeredHint(playback);
     return LayoutBuilder(
       builder: (context, content) {
-        final veryDense = content.maxHeight < 180;
-        final dense = content.maxHeight < 240;
-        // Reserve room for title, artist and the channel hint so the hint is
-        // never clipped at the bottom of the viewport (especially at 16:9).
-        final reservedText = veryDense
-            ? 48.0
-            : (dense ? 80.0 : (hint == null ? 96.0 : 140.0));
-        final artwork = math
-            .min(
-              math.min(
-                content.maxWidth * .40,
-                content.maxHeight - reservedText,
-              ),
-              420.0,
-            )
-            .clamp(veryDense ? 28.0 : (dense ? 40.0 : 96.0), 420.0)
-            .toDouble();
-        final titleSize = (artwork / 10.5).clamp(
-          veryDense ? 13.0 : (dense ? 15.0 : 22.0),
-          32.0,
-        );
+        final available = content.maxHeight;
+        // Phone landscape is roughly 350-420 logical px tall once the dock and
+        // status bar are accounted for. Size the cover from the space that is
+        // actually left after the text block instead of letting it overflow
+        // under the dock (which used to clip the channel hint).
+        final ultra = available < 230;
+        final compact = available < 360;
+        final titleSize = ultra
+            ? 17.0
+            : (compact ? 21.0 : (available < 520 ? 26.0 : 30.0));
+        final artistSize = compact ? 12.0 : 15.0;
+        final hintSize = compact ? 11.0 : 12.5;
+        final showArtist = artist != null && artist.isNotEmpty && !ultra;
+        final titleGap = compact ? 10.0 : 18.0;
+        final hintGap = compact ? 4.0 : 8.0;
+
+        var textHeight = titleSize * 1.2;
+        if (showArtist) textHeight += (compact ? 3 : 5) + artistSize * 1.2;
+        if (hint != null) textHeight += hintGap + hintSize * 1.4;
+        final maxArtwork = available - textHeight - titleGap - 16;
+        final artwork = maxArtwork >= 72
+            ? math
+                  .min(
+                    math.min(
+                      content.maxWidth * (compact ? .30 : .38),
+                      maxArtwork,
+                    ),
+                    360.0,
+                  )
+                  .clamp(72.0, 360.0)
+                  .toDouble()
+            : 0.0;
+
         final column = Column(
           key: const ValueKey('player-centered-layout'),
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.center,
           children: [
-            _breathingArtwork(size: artwork, child: _artworkCard(artwork)),
-            SizedBox(height: dense ? 8 : 18),
-            Text(
-              title,
-              maxLines: veryDense ? 1 : 2,
-              overflow: TextOverflow.ellipsis,
-              textAlign: TextAlign.center,
-              style: TextStyle(
-                fontSize: titleSize,
-                height: 1.2,
-                color: Colors.white,
-                fontWeight: FusionTypography.semiBoldFontWeight,
-                fontVariations: FusionTypography.semiBold,
-                shadows: const [
-                  Shadow(blurRadius: 20, color: Color(0x66000000)),
-                ],
+            if (artwork > 0)
+              _breathingArtwork(size: artwork, child: _artworkCard(artwork))
+            else
+              Icon(
+                Icons.music_note_rounded,
+                size: compact ? 40 : 64,
+                color: Colors.white.withValues(alpha: .24),
               ),
-            ),
-            if (!veryDense && artist != null && artist.isNotEmpty) ...[
-              const SizedBox(height: 4),
-              Text(
-                artist,
-                maxLines: 1,
+            SizedBox(height: artwork > 0 ? titleGap : (compact ? 6 : 10)),
+            Padding(
+              padding: EdgeInsets.symmetric(horizontal: content.maxWidth * .08),
+              child: Text(
+                title,
+                maxLines: compact || ultra ? 1 : 2,
                 overflow: TextOverflow.ellipsis,
                 textAlign: TextAlign.center,
                 style: TextStyle(
-                  fontSize: dense ? 12 : 16,
-                  color: Colors.white.withValues(alpha: .68),
-                  fontWeight: FusionTypography.regularFontWeight,
-                  fontVariations: FusionTypography.regular,
+                  fontSize: titleSize,
+                  height: 1.2,
+                  color: Colors.white,
+                  fontWeight: FusionTypography.semiBoldFontWeight,
+                  fontVariations: FusionTypography.semiBold,
+                  shadows: const [
+                    Shadow(blurRadius: 20, color: Color(0x66000000)),
+                  ],
+                ),
+              ),
+            ),
+            if (showArtist) ...[
+              SizedBox(height: compact ? 3 : 5),
+              Padding(
+                padding: EdgeInsets.symmetric(
+                  horizontal: content.maxWidth * .10,
+                ),
+                child: Text(
+                  artist,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                    fontSize: artistSize,
+                    color: Colors.white.withValues(alpha: .68),
+                    fontWeight: FusionTypography.regularFontWeight,
+                    fontVariations: FusionTypography.regular,
+                  ),
                 ),
               ),
             ],
             if (hint != null) ...[
-              SizedBox(height: dense ? 6 : 12),
-              Text(
-                hint,
-                maxLines: 2,
-                overflow: TextOverflow.ellipsis,
-                textAlign: TextAlign.center,
-                style: TextStyle(
-                  fontSize: dense ? 11 : 13,
-                  height: 1.4,
-                  color: Colors.white.withValues(alpha: .56),
-                  fontWeight: FusionTypography.regularFontWeight,
-                  fontVariations: FusionTypography.regular,
+              SizedBox(height: hintGap),
+              Padding(
+                padding: EdgeInsets.symmetric(
+                  horizontal: content.maxWidth * .10,
+                ),
+                child: Text(
+                  hint,
+                  maxLines: ultra ? 1 : 2,
+                  overflow: TextOverflow.ellipsis,
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                    fontSize: hintSize,
+                    height: 1.4,
+                    color: Colors.white.withValues(alpha: .56),
+                    fontWeight: FusionTypography.regularFontWeight,
+                    fontVariations: FusionTypography.regular,
+                  ),
                 ),
               ),
             ],
           ],
         );
-        return SingleChildScrollView(
+        return SizedBox.expand(
           key: ValueKey(
             landscape ? 'player-layout-horizontal' : 'player-layout-compact',
           ),
-          padding: const EdgeInsets.fromLTRB(20, 4, 20, 8),
-          child: ConstrainedBox(
-            constraints: BoxConstraints(
-              minHeight: math.max(0, content.maxHeight - 12),
-            ),
-            child: Center(
-              child: Padding(
-                padding: const EdgeInsets.symmetric(vertical: 6),
-                child: column,
-              ),
+          child: Center(
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(16, 2, 16, 6),
+              child: column,
             ),
           ),
         );
@@ -968,7 +1001,7 @@ class _PlayerViewState extends State<PlayerView> {
   // Bottom dock
   // ------------------------------------------------------------------
 
-  Widget _dock() {
+  Widget _dock({required bool compact}) {
     final playback = widget.state.playback;
     final duration = _durationMs;
     final position = seekPositionMs?.round() ?? playback.positionMs;
@@ -979,13 +1012,24 @@ class _PlayerViewState extends State<PlayerView> {
     final progress = duration > 0 ? clampedPosition / duration : 0.0;
     final reduceMotion = _reduceMotion;
     return Padding(
-      padding: const EdgeInsets.fromLTRB(22, 0, 22, 18),
+      key: const ValueKey('player-dock'),
+      padding: EdgeInsets.fromLTRB(
+        compact ? 10 : 22,
+        0,
+        compact ? 10 : 22,
+        compact ? 8 : 18,
+      ),
       child: LiquidGlass(
-        borderRadius: 28,
-        blurSigma: 18,
+        borderRadius: compact ? 22 : 28,
+        blurSigma: compact ? 14 : 18,
         tint: const Color(0x59101318),
         forceFallback: widget.forceGlassFallback,
-        padding: const EdgeInsets.fromLTRB(20, 8, 20, 12),
+        padding: EdgeInsets.fromLTRB(
+          compact ? 12 : 20,
+          compact ? 2 : 8,
+          compact ? 12 : 20,
+          compact ? 4 : 12,
+        ),
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
@@ -993,8 +1037,9 @@ class _PlayerViewState extends State<PlayerView> {
               children: [
                 _timeLabel(
                   _hasPlayback ? _formatDuration(clampedPosition) : '0:00',
+                  compact: compact,
                 ),
-                const SizedBox(width: 10),
+                SizedBox(width: compact ? 6 : 10),
                 Expanded(
                   child: TweenAnimationBuilder<double>(
                     tween: Tween(end: progress),
@@ -1049,25 +1094,31 @@ class _PlayerViewState extends State<PlayerView> {
                         ),
                   ),
                 ),
-                const SizedBox(width: 10),
-                _timeLabel(_hasPlayback ? _formatDuration(duration) : '0:00'),
+                SizedBox(width: compact ? 6 : 10),
+                _timeLabel(
+                  _hasPlayback ? _formatDuration(duration) : '0:00',
+                  compact: compact,
+                ),
               ],
             ),
-            const SizedBox(height: 4),
+            SizedBox(height: compact ? 0 : 4),
             LayoutBuilder(
               builder: (context, dock) {
-                final wide = dock.maxWidth >= 460;
-                final transport = _transport();
-                final volume = _volumeControls();
+                final wide = dock.maxWidth >= 420;
+                final transport = _transport(compact: compact);
+                final volume = _volumeControls(compact: compact);
                 if (wide) {
                   return Row(
                     children: [
-                      Expanded(
-                        child: Align(
-                          alignment: Alignment.centerLeft,
-                          child: _dockStatus(),
-                        ),
-                      ),
+                      if (!compact)
+                        Expanded(
+                          child: Align(
+                            alignment: Alignment.centerLeft,
+                            child: _dockStatus(),
+                          ),
+                        )
+                      else
+                        const Spacer(),
                       transport,
                       Expanded(
                         child: Align(
@@ -1094,13 +1145,13 @@ class _PlayerViewState extends State<PlayerView> {
     );
   }
 
-  Widget _timeLabel(String text) => SizedBox(
-    width: 46,
+  Widget _timeLabel(String text, {required bool compact}) => SizedBox(
+    width: compact ? 36 : 46,
     child: Text(
       text,
       textAlign: TextAlign.center,
       style: TextStyle(
-        fontSize: 12,
+        fontSize: compact ? 10 : 12,
         color: Colors.white.withValues(alpha: .62),
         fontWeight: FusionTypography.mediumFontWeight,
         fontVariations: FusionTypography.medium,
@@ -1126,7 +1177,7 @@ class _PlayerViewState extends State<PlayerView> {
     );
   }
 
-  Widget _transport() {
+  Widget _transport({required bool compact}) {
     final reduceMotion = _reduceMotion;
     final children = <Widget>[];
     if (_previousVisible) {
@@ -1146,22 +1197,27 @@ class _PlayerViewState extends State<PlayerView> {
             rightFocusNode: _playVisible
                 ? _playPauseFocus
                 : (_nextVisible ? _nextFocus : null),
+            compact: compact,
           ),
         ),
       );
     }
     if (_playVisible) {
-      if (children.isNotEmpty) children.add(const SizedBox(width: 16));
+      if (children.isNotEmpty) {
+        children.add(SizedBox(width: compact ? 10 : 16));
+      }
       children.add(
         _ControlEntrance(
           index: 1,
           reduceMotion: reduceMotion,
-          child: _playPauseButton(reduceMotion),
+          child: _playPauseButton(reduceMotion, compact: compact),
         ),
       );
     }
     if (_nextVisible) {
-      if (children.isNotEmpty) children.add(const SizedBox(width: 16));
+      if (children.isNotEmpty) {
+        children.add(SizedBox(width: compact ? 10 : 16));
+      }
       children.add(
         _ControlEntrance(
           index: 2,
@@ -1176,6 +1232,7 @@ class _PlayerViewState extends State<PlayerView> {
             leftFocusNode: _playVisible ? _playPauseFocus : null,
             rightFocusNode: _volumeFocus,
             downFocusNode: _volumeFocus,
+            compact: compact,
           ),
         ),
       );
@@ -1184,7 +1241,10 @@ class _PlayerViewState extends State<PlayerView> {
     return Row(mainAxisSize: MainAxisSize.min, children: children);
   }
 
-  Widget _playPauseButton(bool reduceMotion) {
+  Widget _playPauseButton(bool reduceMotion, {required bool compact}) {
+    final dimension = compact ? 46.0 : 58.0;
+    final radius = compact ? 23.0 : 29.0;
+    final glyph = compact ? 22.0 : 28.0;
     final hasPlayback = _hasPlayback;
     final background = hasPlayback ? Colors.white : const Color(0x1AFFFFFF);
     final foreground = hasPlayback
@@ -1202,7 +1262,7 @@ class _PlayerViewState extends State<PlayerView> {
             : null,
         onPressChange: (pressed) => _playPausePressed.value = pressed,
         borderColor: Colors.white,
-        shape: G2ContinuousBorder(radius: 29),
+        shape: G2ContinuousBorder(radius: radius),
         shortcuts: <ShortcutActivator, Intent>{
           const SingleActivator(LogicalKeyboardKey.arrowUp):
               const DirectionalFocusIntent(TraversalDirection.up),
@@ -1237,7 +1297,7 @@ class _PlayerViewState extends State<PlayerView> {
           ),
         },
         child: SizedBox.square(
-          dimension: 58,
+          dimension: dimension,
           child: Material(
             color: background,
             shape: const CircleBorder(),
@@ -1269,7 +1329,7 @@ class _PlayerViewState extends State<PlayerView> {
                       ? FusionIcons.pause
                       : FusionIcons.play,
                   key: ValueKey<bool>(widget.state.playback.isPlaying),
-                  size: 28,
+                  size: glyph,
                   color: foreground,
                 ),
               ),
@@ -1289,8 +1349,11 @@ class _PlayerViewState extends State<PlayerView> {
     FocusNode? leftFocusNode,
     FocusNode? rightFocusNode,
     FocusNode? downFocusNode,
+    bool compact = false,
   }) {
-    final reduceMotion = _reduceMotion;
+    final dimension = compact ? 38.0 : 46.0;
+    final radius = compact ? 19.0 : 23.0;
+    final glyph = compact ? 18.0 : 22.0;
     return AnimatedPressScale(
       key: key,
       externalPressed: remotePressed,
@@ -1299,7 +1362,7 @@ class _PlayerViewState extends State<PlayerView> {
         onActivate: onPressed,
         onPressChange: (pressed) => remotePressed.value = pressed,
         borderColor: Colors.white,
-        shape: G2ContinuousBorder(radius: 23),
+        shape: G2ContinuousBorder(radius: radius),
         shortcuts: <ShortcutActivator, Intent>{
           const SingleActivator(LogicalKeyboardKey.arrowUp):
               const DirectionalFocusIntent(TraversalDirection.up),
@@ -1333,12 +1396,11 @@ class _PlayerViewState extends State<PlayerView> {
           ),
         },
         child: SizedBox.square(
-          dimension: 46,
+          dimension: dimension,
           child: LiquidGlass(
             borderRadius: 999,
             blurSigma: 14,
             tint: const Color(0x26FFFFFF),
-            animate: !reduceMotion,
             forceFallback: widget.forceGlassFallback,
             child: Material(
               color: Colors.transparent,
@@ -1349,7 +1411,7 @@ class _PlayerViewState extends State<PlayerView> {
                 child: Center(
                   child: FusionVectorIcon(
                     icon,
-                    size: 22,
+                    size: glyph,
                     color: Colors.white.withValues(alpha: .92),
                   ),
                 ),
@@ -1375,7 +1437,7 @@ class _PlayerViewState extends State<PlayerView> {
     return ((optimistic ?? _externalVolume).clamp(0, 100)) / 100;
   }
 
-  Widget _volumeControls() {
+  Widget _volumeControls({required bool compact}) {
     final volume = _displayVolume;
     final percent = (volume * 100).round();
     final icon = percent == 0
@@ -1391,13 +1453,13 @@ class _PlayerViewState extends State<PlayerView> {
             child: InkResponse(
               key: const ValueKey('volume-mute-button'),
               onTap: _toggleMute,
-              radius: 22,
+              radius: compact ? 18 : 22,
               child: SizedBox.square(
-                dimension: 40,
+                dimension: compact ? 32 : 40,
                 child: Center(
                   child: Icon(
                     icon,
-                    size: 20,
+                    size: compact ? 17 : 20,
                     color: Colors.white.withValues(alpha: .82),
                   ),
                 ),
@@ -1405,9 +1467,9 @@ class _PlayerViewState extends State<PlayerView> {
             ),
           ),
         ),
-        const SizedBox(width: 6),
+        SizedBox(width: compact ? 4 : 6),
         SizedBox(
-          width: 96,
+          width: compact ? 78 : 96,
           child: RoundedProgressBar(
             key: const ValueKey('volume-slider'),
             value: volume,
@@ -1427,7 +1489,7 @@ class _PlayerViewState extends State<PlayerView> {
           ),
         ),
         SizedBox(
-          width: 34,
+          width: compact ? 28 : 34,
           child: Text(
             '$percent',
             textAlign: TextAlign.right,

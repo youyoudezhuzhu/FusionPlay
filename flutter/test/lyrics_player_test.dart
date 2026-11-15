@@ -617,6 +617,23 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
+  testWidgets('手机横屏空态完整显示在 dock 上方（不被裁切/重叠）', (tester) async {
+    await _pumpPlayer(
+      tester,
+      const AppState(initialized: true),
+      size: const Size(800, 360),
+    );
+
+    expect(find.text('暂无音乐'), findsOneWidget);
+    expect(find.text('暂无歌词'), findsOneWidget);
+    final hintBottom = tester.getBottomRight(find.text('暂无歌词')).dy;
+    final dockTop = tester
+        .getTopLeft(find.byKey(const ValueKey('player-dock')))
+        .dy;
+    expect(hintBottom, lessThanOrEqualTo(dockTop), reason: '空态提示不能被底部 dock 覆盖');
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets('播放中本地时钟/呼吸动画不抛异常，退出后释放', (tester) async {
     await _pumpPlayer(tester, _state(lyrics: _lyrics(), playing: true));
     await tester.pump(const Duration(milliseconds: 120));

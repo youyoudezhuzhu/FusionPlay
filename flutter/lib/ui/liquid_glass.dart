@@ -31,7 +31,7 @@ class LiquidGlass extends StatefulWidget {
     this.specular = 1.0,
     this.thickness = 16.0,
     this.absorption = 0.35,
-    this.animate = true,
+    this.animate = false,
     this.forceFallback = false,
     this.padding,
     this.clipBehavior = Clip.antiAlias,
@@ -60,8 +60,11 @@ class LiquidGlass extends StatefulWidget {
   /// Beer-Lambert rim darkening, 0 (flat) .. 1 (fully dark edge).
   final double absorption;
 
-  /// Animate the liquid wobble/sheen. Disabled under reduce-motion by the
-  /// call site or automatically when [forceFallback] is used.
+  /// Animate the liquid wobble/sheen. Off by default: a continuously updating
+  /// backdrop shader on several glass surfaces at once is expensive and was
+  /// observed to flicker on some Android Impeller builds. The static glass
+  /// keeps refraction, edge and rim highlights; press/focus animations are
+  /// separate.
   final bool animate;
 
   /// Force the non-shader frosted fallback (tests, Windows).
@@ -77,8 +80,11 @@ class LiquidGlass extends StatefulWidget {
 class _LiquidGlassState extends State<LiquidGlass>
     with SingleTickerProviderStateMixin {
   static Future<ui.FragmentProgram?>? _programFuture;
-  static ui.FragmentShader? _sharedShader;
 
+  /// Per-widget shader instance. A shared [ui.FragmentShader] would let every
+  /// surface overwrite the others' uniforms during build, which makes several
+  /// glass panels flash as the paint order changes.
+  ui.FragmentShader? _shader;
   Ticker? _ticker;
   double _time = 0;
   ui.ImageFilter? _shaderFilter;
@@ -104,10 +110,13 @@ class _LiquidGlassState extends State<LiquidGlass>
     if (!ui.ImageFilter.isShaderFilterSupported) return;
     final program = await _loadProgram();
     if (!mounted || program == null) return;
-    final shader = _sharedShader ??= program.fragmentShader();
     try {
+      final shader = program.fragmentShader();
       final filter = ui.ImageFilter.shader(shader);
-      setState(() => _shaderFilter = filter);
+      setState(() {
+        _shader = shader;
+        _shaderFilter = filter;
+      });
       _startTicker();
     } catch (_) {
       // Fall through to the frosted fallback.
@@ -166,7 +175,7 @@ class _LiquidGlassState extends State<LiquidGlass>
     final radius = BorderRadius.circular(widget.borderRadius);
     ui.ImageFilter? filter;
     if (_shaderFilter != null && !widget.forceFallback) {
-      final shader = _sharedShader;
+      final shader = _shader;
       if (shader != null) {
         _paintShaderUniforms(
           shader,

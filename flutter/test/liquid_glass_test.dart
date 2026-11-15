@@ -23,6 +23,10 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
+  test('glass animation is opt-in (static by default, avoids flicker)', () {
+    expect(const LiquidGlass(child: SizedBox()).animate, isFalse);
+  });
+
   testWidgets('supports capsule radius and disable animations', (tester) async {
     await tester.pumpWidget(
       host(

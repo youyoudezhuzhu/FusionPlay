@@ -16,7 +16,10 @@
 - 有歌词时右上角提供「歌词」切换按钮（默认显示；换曲/换来源后恢复显示；同曲内可手动隐藏），
   隐藏后同样进入封面居中布局并保留播放控制。
 - **底部悬浮 dock**：进度条 + 时间；上一曲/播放/下一曲；右侧音量图标 + 滑杆（0–100，静音切换）。
-- **紧凑/矮屏**：<260px 内容高度进入 dense 模式（隐藏艺人/chip、单行标题），620x320 不溢出。
+- **手机横屏适配**：高度 <430px 时启用紧凑 chrome——dock 内边距/按钮/音量滑杆缩小、顶部留白收紧；
+  无歌词居中布局按剩余高度动态决定封面尺寸（空间不足时退化为小图标），并保证标题/渠道提示
+  完整显示在 dock 上方，不再被裁切或重叠。
+- **紧凑/矮屏**：<260px 内容高度进入 dense 模式（隐藏艺人/chip、单行标题），620x320/800x360 不溢出。
 
 ## 交互与能力 gating
 
@@ -51,6 +54,9 @@ Flutter 3.32.8。因此这里自研实现，参考了以下开源项目的做法
   缓慢流动的 sheen；
 - `ImageFilter.shader` 仅在 Impeller 后端可用（Android 默认 Impeller；Windows/Skia/测试环境
   自动退化为毛玻璃 + 同样的 tint/描边/高光叠层，外观接近）；
+- 玻璃默认**静态**（折射/边缘/高光始终在，但不再每帧运行 shader ticker）：多个玻璃面板共享同一个
+  `FragmentShader` 实例并各自每帧改 uniform 时，Android Impeller 会出现闪烁；现在每个面板使用独立
+  shader 实例且默认不跑时间动画，需要流动高光时可用 `animate: true` 显式开启。
 - 组件会对 `MediaQuery.disableAnimations` 关闭时间动画；
 - 可调参数：`borderRadius`、`blurSigma`、`tint`、`refraction`、`specular`、`thickness`、
   `absorption`、`animate`。
