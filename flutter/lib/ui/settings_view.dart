@@ -14,7 +14,7 @@ import 'vector_icon.dart';
 
 const fusionPlayVersion = String.fromEnvironment(
   'FUSIONPLAY_VERSION',
-  defaultValue: '1.3.4',
+  defaultValue: '1.3.5',
 );
 
 class SettingsView extends StatefulWidget {
