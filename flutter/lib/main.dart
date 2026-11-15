@@ -125,8 +125,12 @@ class _FusionPlayHomeState extends State<FusionPlayHome> {
     debugLabel: 'player-progress',
   );
   final FocusNode _settingsInitialFocus = FocusNode(
-    debugLabel: 'settings-name',
+    debugLabel: 'settings-miplay',
   );
+  final FocusNode _settingsTvInitialFocus = FocusNode(
+    debugLabel: 'settings-miplay',
+  );
+  final FocusNode _settingsNameFocus = FocusNode(debugLabel: 'settings-name');
   final List<FocusNode> _menuItemFocus = List<FocusNode>.generate(
     4,
     (index) => FocusNode(debugLabel: 'menu-item-$index'),
@@ -185,6 +189,8 @@ class _FusionPlayHomeState extends State<FusionPlayHome> {
     _menuButtonFocus.dispose();
     _playerProgressFocus.dispose();
     _settingsInitialFocus.dispose();
+    _settingsTvInitialFocus.dispose();
+    _settingsNameFocus.dispose();
     for (final node in _menuItemFocus) {
       node.dispose();
     }
@@ -297,7 +303,11 @@ class _FusionPlayHomeState extends State<FusionPlayHome> {
   void _handleMorphTransitionCompleted(MorphStage stage) {
     if (!mounted) return;
     if (stage == MorphStage.settings) {
-      _settingsInitialFocus.requestFocus();
+      if (widget.state.isTelevision) {
+        _settingsTvInitialFocus.requestFocus();
+      } else {
+        _settingsNameFocus.requestFocus();
+      }
     } else if (stage == MorphStage.menu) {
       _menuItemFocus.first.requestFocus();
     }
@@ -487,6 +497,7 @@ class _FusionPlayHomeState extends State<FusionPlayHome> {
         (playback.title?.trim().isNotEmpty ?? false) ||
         (playback.artist?.trim().isNotEmpty ?? false) ||
         playback.durationMs != null;
+    final isTelevision = state.isTelevision;
 
     final playerSurface = Stack(
       children: [
@@ -508,112 +519,125 @@ class _FusionPlayHomeState extends State<FusionPlayHome> {
           ),
         ),
         SafeArea(
-          child: Stack(
-            key: _playerStackKey,
-            children: [
-              Positioned.fill(
-                child: ExcludeFocus(
-                  excluding: menuOpen || settingsOpen,
-                  child: PlayerView(
-                    state: state,
-                    artworkSource: artwork,
-                    artworkIdentity: _displayedArtworkIdentity,
-                    progressFocusNode: _playerProgressFocus,
-                    menuFocusNode: _menuButtonFocus,
-                    menuButtonKey: _menuButtonKey,
-                    onOpenMenu: _openMenu,
-                    menuOpen: menuOpen,
-                    forceGlassFallback: widget.forceGlassFallback,
-                    onPlayback: widget.controller.playback,
-                    onSeek: widget.controller.seek,
-                    onVolume: widget.controller.volume,
-                  ),
-                ),
-              ),
-              if (_morphOpen && _anchorRect != null)
+          child: Padding(
+            key: const ValueKey('player-overscan'),
+            padding: EdgeInsets.symmetric(
+              horizontal: isTelevision ? 28 : 0,
+              vertical: isTelevision ? 14 : 0,
+            ),
+            child: Stack(
+              key: _playerStackKey,
+              children: [
                 Positioned.fill(
-                  child: FusionMorphOverlay(
-                    key: const ValueKey('morph-overlay'),
-                    stage: _morphStage!,
-                    anchorRect: _anchorRect!,
-                    menuItems: _menuItems(),
-                    menuFocusNodes: _menuItemFocus,
-                    settingsTitle: '设置',
-                    settingsChild: SettingsView(
+                  child: ExcludeFocus(
+                    excluding: menuOpen || settingsOpen,
+                    child: PlayerView(
                       state: state,
-                      showHeader: false,
-                      initialFocusNode: _settingsInitialFocus,
-                      onClose: _closeSettings,
-                      onReceiverName: widget.controller.setReceiverName,
-                      onStartup: widget.controller.setStartupEnabled,
-                      onAutoWake: widget.controller.setAutoWakeEnabled,
-                      onAdvancedEffects:
-                          widget.controller.setAdvancedEffectsEnabled,
-                      onMiPlay: (value) =>
-                          widget.controller.setProtocolEnabled('miplay', value),
-                      onMiPlayIdentity:
-                          widget.controller.setMiPlayDeviceIdentity,
-                      onAirPlay: (value) => widget.controller
-                          .setProtocolEnabled('airplay', value),
-                      onDlna: (value) =>
-                          widget.controller.setProtocolEnabled('dlna', value),
-                      onExportLogs: widget.controller.exportLogs,
-                      isAndroid: _isAndroid,
-                      onCheckUpdate: widget.controller.checkForUpdate,
-                      onInstallUpdate:
-                          widget.controller.downloadAndInstallUpdate,
+                      artworkSource: artwork,
+                      artworkIdentity: _displayedArtworkIdentity,
+                      progressFocusNode: _playerProgressFocus,
+                      menuFocusNode: _menuButtonFocus,
+                      menuButtonKey: _menuButtonKey,
+                      onOpenMenu: _openMenu,
+                      menuOpen: menuOpen,
+                      overlayOpen: _morphOpen,
+                      forceGlassFallback: widget.forceGlassFallback,
+                      onPlayback: widget.controller.playback,
+                      onSeek: widget.controller.seek,
+                      onVolume: widget.controller.volume,
                     ),
-                    onDismiss: _dismissOverlay,
-                    onSettingsClose: _closeSettings,
-                    onClosed: _finishMorphClose,
-                    onTransitionCompleted: _handleMorphTransitionCompleted,
-                    forceFallback: widget.forceGlassFallback,
                   ),
                 ),
-              if (state.lastError != null)
-                SafeArea(
-                  child: Align(
-                    alignment: Alignment.topCenter,
-                    child: Padding(
-                      padding: const EdgeInsets.all(16),
-                      child: Material(
-                        color: const Color(0xFFE3E3E3),
-                        borderRadius: BorderRadius.circular(22),
-                        child: Padding(
-                          padding: const EdgeInsets.only(
-                            left: 18,
-                            right: 6,
-                            top: 6,
-                            bottom: 6,
-                          ),
-                          child: Row(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              Flexible(
-                                child: Text(
-                                  state.lastError!,
-                                  maxLines: 2,
-                                  overflow: TextOverflow.ellipsis,
-                                ),
-                              ),
-                              RemoteFocusFrame(
-                                onActivate: widget.controller.clearError,
-                                shape: const CircleBorder(),
-                                child: IconButton(
-                                  onPressed: widget.controller.clearError,
-                                  icon: const FusionVectorIcon(
-                                    FusionIcons.close,
+                if (_morphOpen && _anchorRect != null)
+                  Positioned.fill(
+                    child: FusionMorphOverlay(
+                      key: const ValueKey('morph-overlay'),
+                      stage: _morphStage!,
+                      anchorRect: _anchorRect!,
+                      menuItems: _menuItems(),
+                      menuFocusNodes: _menuItemFocus,
+                      settingsTitle: '设置',
+                      settingsChild: SettingsView(
+                        state: state,
+                        showHeader: false,
+                        initialFocusNode: _settingsInitialFocus,
+                        nameFocusNode: _settingsNameFocus,
+                        miPlayFocusNode: isTelevision
+                            ? _settingsTvInitialFocus
+                            : _settingsInitialFocus,
+                        onClose: _closeSettings,
+                        onReceiverName: widget.controller.setReceiverName,
+                        onStartup: widget.controller.setStartupEnabled,
+                        onAutoWake: widget.controller.setAutoWakeEnabled,
+                        onAdvancedEffects:
+                            widget.controller.setAdvancedEffectsEnabled,
+                        onMiPlay: (value) => widget.controller
+                            .setProtocolEnabled('miplay', value),
+                        onMiPlayIdentity:
+                            widget.controller.setMiPlayDeviceIdentity,
+                        onAirPlay: (value) => widget.controller
+                            .setProtocolEnabled('airplay', value),
+                        onDlna: (value) =>
+                            widget.controller.setProtocolEnabled('dlna', value),
+                        onExportLogs: widget.controller.exportLogs,
+                        isAndroid: _isAndroid,
+                        onCheckUpdate: widget.controller.checkForUpdate,
+                        onInstallUpdate:
+                            widget.controller.downloadAndInstallUpdate,
+                      ),
+                      onDismiss: _dismissOverlay,
+                      onSettingsClose: _closeSettings,
+                      onClosed: _finishMorphClose,
+                      onTransitionCompleted: _handleMorphTransitionCompleted,
+                      settingsMaxWidth: isTelevision ? 720 : 560,
+                      forceFallback: widget.forceGlassFallback,
+                    ),
+                  ),
+                if (state.lastError != null)
+                  SafeArea(
+                    child: Align(
+                      alignment: Alignment.topCenter,
+                      child: Padding(
+                        padding: const EdgeInsets.all(16),
+                        child: Material(
+                          color: const Color(0xFFE3E3E3),
+                          borderRadius: BorderRadius.circular(22),
+                          child: Padding(
+                            padding: const EdgeInsets.only(
+                              left: 18,
+                              right: 6,
+                              top: 6,
+                              bottom: 6,
+                            ),
+                            child: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Flexible(
+                                  child: Text(
+                                    state.lastError!,
+                                    maxLines: 2,
+                                    overflow: TextOverflow.ellipsis,
                                   ),
                                 ),
-                              ),
-                            ],
+                                RemoteFocusFrame(
+                                  onActivate: widget.controller.clearError,
+                                  shape: const CircleBorder(),
+                                  child: IconButton(
+                                    onPressed: widget.controller.clearError,
+                                    icon: const FusionVectorIcon(
+                                      FusionIcons.close,
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ),
                           ),
                         ),
                       ),
                     ),
                   ),
-                ),
-            ],
+              ],
+            ),
           ),
         ),
       ],
@@ -646,7 +670,11 @@ class _FusionPlayHomeState extends State<FusionPlayHome> {
             mediaQuery.disableAnimations ||
             !state.settings.advancedEffectsEnabled,
       ),
-      child: content,
+      child: FusionFocusStyle(
+        borderWidth: isTelevision ? 4 : 3,
+        focusScale: isTelevision ? 1.02 : 1,
+        child: content,
+      ),
     );
   }
 }

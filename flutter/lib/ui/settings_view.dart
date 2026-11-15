@@ -33,6 +33,8 @@ class SettingsView extends StatefulWidget {
     required this.onAirPlay,
     required this.onDlna,
     required this.onExportLogs,
+    this.nameFocusNode,
+    this.miPlayFocusNode,
     this.isAndroid,
     this.onCheckUpdate,
     this.onInstallUpdate,
@@ -41,6 +43,14 @@ class SettingsView extends StatefulWidget {
 
   final AppState state;
   final FocusNode initialFocusNode;
+
+  /// Focus node for the receiver-name field (defaults to an internal
+  /// `settings-name` node). The host requests it for non-TV initial focus.
+  final FocusNode? nameFocusNode;
+
+  /// Focus node for the MiPlay row (defaults to [initialFocusNode]). Android TV
+  /// requests this row for initial focus.
+  final FocusNode? miPlayFocusNode;
   final VoidCallback onClose;
   final ValueChanged<String> onReceiverName;
   final ValueChanged<bool> onStartup;
@@ -71,6 +81,8 @@ class SettingsView extends StatefulWidget {
 
 class _SettingsViewState extends State<SettingsView> {
   late final TextEditingController _name;
+  late final FocusNode _nameFocus;
+  late final bool _ownsNameFocus;
   late String _savedName;
   bool _exportingLogs = false;
   bool _checkingUpdate = false;
@@ -79,9 +91,14 @@ class _SettingsViewState extends State<SettingsView> {
   @override
   void initState() {
     super.initState();
+    _ownsNameFocus = widget.nameFocusNode == null;
+    _nameFocus = widget.nameFocusNode ?? FocusNode(debugLabel: 'settings-name');
     _savedName = widget.state.settings.receiverName ?? '';
     _name = TextEditingController(text: _savedName)..addListener(_refresh);
   }
+
+  FocusNode get _miPlayFocus =>
+      widget.miPlayFocusNode ?? widget.initialFocusNode;
 
   @override
   void didUpdateWidget(covariant SettingsView oldWidget) {
@@ -99,6 +116,7 @@ class _SettingsViewState extends State<SettingsView> {
   void dispose() {
     _name.removeListener(_refresh);
     _name.dispose();
+    if (_ownsNameFocus) _nameFocus.dispose();
     super.dispose();
   }
 
@@ -152,6 +170,7 @@ class _SettingsViewState extends State<SettingsView> {
                       preserveAssetColors: true,
                       title: 'MiPlay',
                       value: settings.miPlayEnabled,
+                      focusNode: _miPlayFocus,
                       focusNameOnUp: true,
                       onChanged: widget.onMiPlay,
                     ),
@@ -430,13 +449,13 @@ class _SettingsViewState extends State<SettingsView> {
             onKeyEvent: (_, event) {
               if (event is KeyDownEvent &&
                   event.logicalKey == LogicalKeyboardKey.arrowDown) {
-                widget.initialFocusNode.nextFocus();
+                _miPlayFocus.requestFocus();
                 return KeyEventResult.handled;
               }
               return KeyEventResult.ignored;
             },
             child: TextField(
-              focusNode: widget.initialFocusNode,
+              focusNode: _nameFocus,
               controller: _name,
               maxLength: 63,
               textInputAction: TextInputAction.done,
@@ -660,7 +679,7 @@ class _SettingsViewState extends State<SettingsView> {
         ? <Type, Action<Intent>>{
             _FocusReceiverNameIntent: CallbackAction<_FocusReceiverNameIntent>(
               onInvoke: (_) {
-                widget.initialFocusNode.requestFocus();
+                _nameFocus.requestFocus();
                 return null;
               },
             ),

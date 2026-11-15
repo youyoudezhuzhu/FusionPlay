@@ -3,6 +3,28 @@ import 'package:flutter/services.dart';
 
 import 'g2_shape.dart';
 
+/// Host-wide remote-focus styling. Android TV uses a thicker ring and a slight
+/// focus scale; phones/desktop keep the defaults.
+class FusionFocusStyle extends InheritedWidget {
+  const FusionFocusStyle({
+    super.key,
+    this.borderWidth = 3,
+    this.focusScale = 1,
+    required super.child,
+  });
+
+  final double borderWidth;
+  final double focusScale;
+
+  static FusionFocusStyle? maybeOf(BuildContext context) =>
+      context.dependOnInheritedWidgetOfExactType<FusionFocusStyle>();
+
+  @override
+  bool updateShouldNotify(FusionFocusStyle oldWidget) =>
+      borderWidth != oldWidget.borderWidth ||
+      focusScale != oldWidget.focusScale;
+}
+
 class RemoteFocusFrame extends StatefulWidget {
   const RemoteFocusFrame({
     super.key,
@@ -14,6 +36,7 @@ class RemoteFocusFrame extends StatefulWidget {
     this.onPressChange,
     this.onFocusChange,
     this.borderColor = Colors.black,
+    this.borderWidth,
     this.shape = const G2ContinuousBorder(radius: 20),
     this.showBorder = true,
     this.shortcuts = const <ShortcutActivator, Intent>{},
@@ -28,6 +51,10 @@ class RemoteFocusFrame extends StatefulWidget {
   final ValueChanged<bool>? onPressChange;
   final ValueChanged<bool>? onFocusChange;
   final Color borderColor;
+
+  /// Focus-ring width override; defaults to [FusionFocusStyle.borderWidth].
+  final double? borderWidth;
+
   final OutlinedBorder shape;
   final bool showBorder;
   final Map<ShortcutActivator, Intent> shortcuts;
@@ -85,6 +112,11 @@ class _RemoteFocusFrameState extends State<RemoteFocusFrame> {
 
   @override
   Widget build(BuildContext context) {
+    final focusStyle = FusionFocusStyle.maybeOf(context);
+    final ringWidth = widget.borderWidth ?? focusStyle?.borderWidth ?? 3;
+    final focusScale = focusStyle?.focusScale ?? 1;
+    final reduceMotion =
+        MediaQuery.maybeOf(context)?.disableAnimations ?? false;
     final shortcuts = <ShortcutActivator, Intent>{
       const SingleActivator(LogicalKeyboardKey.select): const ActivateIntent(),
       const SingleActivator(LogicalKeyboardKey.enter): const ActivateIntent(),
@@ -133,27 +165,38 @@ class _RemoteFocusFrameState extends State<RemoteFocusFrame> {
           );
         });
       },
-      child: AnimatedContainer(
-        duration: MediaQuery.maybeOf(context)?.disableAnimations ?? false
-            ? Duration.zero
-            : const Duration(milliseconds: 100),
-        curve: Curves.easeOut,
-        foregroundDecoration: ShapeDecoration(
-          shape: widget.shape.copyWith(
-            side: widget.showBorder
-                ? BorderSide(
-                    color: widget.borderColor.withValues(
-                      alpha: _showFocus ? widget.borderColor.a : 0,
-                    ),
-                    width: 3,
-                  )
-                : BorderSide.none,
-          ),
-        ),
-        child: widget.child,
-      ),
+      child: focusScale == 1
+          ? _focusSurface(ringWidth)
+          : AnimatedScale(
+              scale: _showFocus ? focusScale : 1,
+              duration: reduceMotion
+                  ? Duration.zero
+                  : const Duration(milliseconds: 120),
+              curve: Curves.easeOutCubic,
+              child: _focusSurface(ringWidth),
+            ),
     );
   }
+
+  Widget _focusSurface(double ringWidth) => AnimatedContainer(
+    duration: MediaQuery.maybeOf(context)?.disableAnimations ?? false
+        ? Duration.zero
+        : const Duration(milliseconds: 100),
+    curve: Curves.easeOut,
+    foregroundDecoration: ShapeDecoration(
+      shape: widget.shape.copyWith(
+        side: widget.showBorder
+            ? BorderSide(
+                color: widget.borderColor.withValues(
+                  alpha: _showFocus ? widget.borderColor.a : 0,
+                ),
+                width: ringWidth,
+              )
+            : BorderSide.none,
+      ),
+    ),
+    child: widget.child,
+  );
 }
 
 class RemoteAdjustIntent extends Intent {

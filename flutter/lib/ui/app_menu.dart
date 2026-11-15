@@ -222,6 +222,7 @@ class FusionMorphOverlay extends StatefulWidget {
     required this.onSettingsClose,
     required this.onClosed,
     this.onTransitionCompleted,
+    this.settingsMaxWidth = 560,
     this.forceFallback = false,
   });
 
@@ -237,6 +238,9 @@ class FusionMorphOverlay extends StatefulWidget {
   final VoidCallback onSettingsClose;
   final VoidCallback onClosed;
   final ValueChanged<MorphStage>? onTransitionCompleted;
+
+  /// Upper bound of the settings panel width (still clamped to half screen).
+  final double settingsMaxWidth;
   final bool forceFallback;
 
   @override
@@ -338,7 +342,7 @@ class _FusionMorphOverlayState extends State<FusionMorphOverlay>
 
   Rect _settingsRect(Size size) {
     const side = 16.0;
-    final width = math.min(560.0, size.width * .5);
+    final width = math.min(widget.settingsMaxWidth, size.width * .5);
     final height = math.max(120.0, size.height - side * 2);
     return Rect.fromLTWH(size.width - side - width, side, width, height);
   }

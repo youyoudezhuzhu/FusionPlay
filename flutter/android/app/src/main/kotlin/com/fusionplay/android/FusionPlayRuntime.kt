@@ -2,6 +2,8 @@ package com.fusionplay.android
 
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
+import android.content.res.Configuration
 import com.airplayreceiver.desktop.backend.AppEvent
 import com.airplayreceiver.desktop.backend.AppState
 import com.airplayreceiver.desktop.backend.LyricsDocument
@@ -71,6 +73,21 @@ class FusionPlayRuntime(
         parentScope = scope,
     )
     private val bridge = WindowsBridgeClient(parentScope = scope, stopXiaomiOnClose = false)
+
+
+    /**
+     * Android TV / Google TV / leanback boxes: the UI opens with D-pad focus
+     * instead of the text field and uses extra safe margins for overscan.
+     */
+    val isTelevision: Boolean by lazy {
+        val pm = context.packageManager
+        val leanback = pm.hasSystemFeature(PackageManager.FEATURE_LEANBACK)
+        val television = pm.hasSystemFeature(PackageManager.FEATURE_TELEVISION)
+        val uiModeTelevision =
+            (context.resources.configuration.uiMode and Configuration.UI_MODE_TYPE_MASK) ==
+                Configuration.UI_MODE_TYPE_TELEVISION
+        leanback || television || uiModeTelevision
+    }
     private val xiaomiReducer = XiaomiPlaybackReducer()
     private val xiaomiTakeoverGate = XiaomiTakeoverGate()
     private val mediaSourceArbiter = MediaSourceArbiter()
@@ -1145,6 +1162,7 @@ class FusionPlayRuntime(
         "activeMediaSource" to state.activeMediaSource?.name?.lowercase(),
         "selectedCoreMediaSource" to state.selectedCoreMediaSource?.name?.lowercase(),
         "receiverName" to viewModel.receiverName,
+        "isTelevision" to isTelevision,
         "settings" to mapOf(
             "schemaVersion" to state.settings.schemaVersion,
             "receiverName" to state.settings.receiverName,

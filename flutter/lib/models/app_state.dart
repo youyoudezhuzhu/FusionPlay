@@ -326,6 +326,7 @@ class AppState {
     this.playback = const PlaybackSnapshot(),
     this.remoteControl = const RemoteControlState(),
     this.controls = const PlaybackControls(),
+    this.isTelevision = false,
     this.lastError,
   });
 
@@ -345,6 +346,9 @@ class AppState {
 
   /// Capabilities of the current source (skip/seek/play-pause gating).
   final PlaybackControls controls;
+
+  /// True when the host runs on an Android TV / leanback device.
+  final bool isTelevision;
 
   final String? lastError;
 
@@ -386,6 +390,7 @@ class AppState {
       playback: playback,
       remoteControl: remoteControl,
       controls: controls,
+      isTelevision: map['isTelevision'] as bool? ?? false,
       lastError: _string(map['lastError']),
     );
   }
@@ -405,6 +410,7 @@ class AppState {
     playback: playback,
     remoteControl: remoteControl,
     controls: controls,
+    isTelevision: isTelevision,
     lastError: lastError ?? this.lastError,
   );
 
@@ -426,6 +432,7 @@ class AppState {
           playback == other.playback &&
           remoteControl == other.remoteControl &&
           controls == other.controls &&
+          isTelevision == other.isTelevision &&
           lastError == other.lastError;
 
   @override
@@ -444,6 +451,7 @@ class AppState {
     playback,
     remoteControl,
     controls,
+    isTelevision,
     lastError,
   ]);
 }
