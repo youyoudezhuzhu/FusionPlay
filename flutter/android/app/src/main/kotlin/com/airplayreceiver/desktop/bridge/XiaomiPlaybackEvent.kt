@@ -30,6 +30,8 @@ data class XiaomiMediaInfo(
     val bitsPerSample: Int? = null,
     val channels: Int? = null,
     val metadataChangeType: Int? = null,
+    /** Raw lyric text supplied by the phone (Xiaomi yrc or LRC). */
+    val lyrics: String? = null,
 )
 
 fun WindowsBridgeXiaomiEvent.toVolumePercentOrNull(): Int? {
@@ -80,11 +82,11 @@ fun WindowsBridgeXiaomiEvent.toMediaInfoOrNull(): XiaomiMediaInfo? {
         return null
     }
     val objectPayload = payload as? JsonObject ?: return null
-    fun string(name: String): String? = objectPayload[name]
-        ?.jsonPrimitive
-        ?.contentOrNull
-        ?.trim()
-        ?.takeIf(String::isNotEmpty)
+    fun string(vararg names: String): String? = names.asSequence()
+        .mapNotNull { objectPayload[it] }
+        .mapNotNull { it.jsonPrimitive.contentOrNull }
+        .map(String::trim)
+        .firstOrNull(String::isNotEmpty)
 
     return XiaomiMediaInfo(
         title = string("title"),

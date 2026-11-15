@@ -4,6 +4,8 @@ import android.content.Context
 import android.content.Intent
 import com.airplayreceiver.desktop.backend.AppEvent
 import com.airplayreceiver.desktop.backend.AppState
+import com.airplayreceiver.desktop.backend.LyricsDocument
+import com.airplayreceiver.desktop.backend.toStateMap
 import com.airplayreceiver.desktop.backend.AppViewModel
 import com.airplayreceiver.desktop.backend.CorePlaybackStateSideEffect
 import com.airplayreceiver.desktop.backend.FusionPlayDiagnosticLogger
@@ -840,6 +842,7 @@ class FusionPlayRuntime(
                         sampleRate = media.sampleRate,
                         bitsPerSample = media.bitsPerSample,
                         channels = media.channels,
+                        lyrics = media.lyrics,
                     )
                 }
             }
@@ -1090,6 +1093,21 @@ class FusionPlayRuntime(
         }
     }
 
+    // Lyrics rarely change but the whole state map is re-sent on every
+    // position tick (~10 Hz); cache the serialized document by identity to
+    // avoid rebuilding hundreds of line/word maps per emit.
+    private var cachedLyrics: LyricsDocument? = null
+    private var cachedLyricsMap: Map<String, Any?>? = null
+
+    private fun lyricsStateMap(lyrics: LyricsDocument?): Map<String, Any?>? {
+        if (lyrics == null) return null
+        if (lyrics === cachedLyrics) return cachedLyricsMap
+        val serialized = lyrics.toStateMap()
+        cachedLyrics = lyrics
+        cachedLyricsMap = serialized
+        return serialized
+    }
+
     private fun stateMap(state: AppState): Map<String, Any?> = mapOf(
         "initialized" to state.initialized,
         "busy" to state.busy,
@@ -1131,6 +1149,8 @@ class FusionPlayRuntime(
             "trackChangeDirection" to xiaomiTrackChangeDirection.takeIf {
                 state.playback.protocol.equals(XIAOMI_PROTOCOL, ignoreCase = true)
             },
+            "lyricsLoading" to state.playback.lyricsLoading,
+            "lyrics" to lyricsStateMap(state.playback.lyrics),
         ),
         "remoteControl" to mapOf(
             "available" to state.remoteControl.available,

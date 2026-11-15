@@ -627,7 +627,13 @@ class AppViewModel(
         sampleRate: Int? = null,
         bitsPerSample: Int? = null,
         channels: Int? = null,
+        lyrics: String? = null,
     ) {
+        // Xiaomi sends the lyric text with the media info; yrc/enhanced-LRC
+        // parsing is synchronous, so there is no loading state to expose.
+        val parsedLyrics = lyrics
+            ?.takeIf(String::isNotBlank)
+            ?.let { value -> LrcParser.parse(value = value, origin = LyricsOrigin.EMBEDDED) }
         _state.update { current ->
             SourcePlaybackProjection.updatePlayback(
                 current = current,
@@ -647,6 +653,7 @@ class AppViewModel(
                     sampleRate = sampleRate,
                     bitsPerSample = bitsPerSample,
                     channels = channels,
+                    lyrics = parsedLyrics,
                 )
             }
         }

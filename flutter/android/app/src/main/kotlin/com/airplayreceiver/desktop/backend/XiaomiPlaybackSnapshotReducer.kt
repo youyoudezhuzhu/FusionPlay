@@ -154,6 +154,7 @@ internal fun PlaybackSnapshot.applyXiaomiMediaInfo(
     sampleRate: Int? = null,
     bitsPerSample: Int? = null,
     channels: Int? = null,
+    lyrics: LyricsDocument? = null,
 ): PlaybackSnapshot {
     if (!protocol.equals(XIAOMI_PROTOCOL, ignoreCase = true)) {
         return this
@@ -200,6 +201,9 @@ internal fun PlaybackSnapshot.applyXiaomiMediaInfo(
         positionMs = effectivePosition,
         qualityText = incomingQuality
             ?: this.qualityText.takeUnless { replaceTrack },
+        lyrics = lyrics
+            ?: if (replaceTrack) null else this.lyrics,
+        lyricsLoading = false,
     )
 }
 

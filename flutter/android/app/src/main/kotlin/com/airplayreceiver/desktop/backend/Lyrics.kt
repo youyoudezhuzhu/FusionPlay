@@ -20,10 +20,37 @@ enum class LyricsOrigin {
     SIDECAR_URI,
 }
 
+data class LyricWord(
+    val startMs: Long,
+    val endMs: Long?,
+    val text: String,
+)
+
 data class LyricLine(
     val startMs: Long?,
     val text: String,
-)
+    /** Word-level timestamps (yrc / enhanced LRC). Empty for plain LRC. */
+    val words: List<LyricWord> = emptyList(),
+) {
+    /** Index of the word being sung at [positionMs], if word timing is known. */
+    fun activeWordIndex(positionMs: Long): Int? {
+        if (words.isEmpty()) return null
+        var low = 0
+        var high = words.lastIndex
+        var match = -1
+        val target = positionMs.coerceAtLeast(0L)
+        while (low <= high) {
+            val middle = (low + high).ushr(1)
+            if (words[middle].startMs > target) {
+                high = middle - 1
+            } else {
+                match = middle
+                low = middle + 1
+            }
+        }
+        return match.takeIf { it >= 0 }
+    }
+}
 
 data class LyricsDocument(
     val lines: List<LyricLine>,
@@ -74,6 +101,14 @@ object LrcParser {
     private val enhancedWordTimestamp = Regex(
         """<\d{1,3}:\d{2}(?:[.:]\d{1,3})?>""",
     )
+    private val yrcToken = Regex(
+        """\[(\d{1,3}):(\d{1,3})(?:[.:](\d{1,3}))?]\{([^}]*)}""",
+    )
+    private val enhancedToken = Regex(
+        """<(\d{1,3}):(\d{1,3})(?:[.:](\d{1,3}))?>""",
+    )
+    private val qrcHeader = Regex("""^\[(\d{1,9}),(\d{1,9})]""")
+    private val qrcWord = Regex("""([^()]*?)\((\d{1,9}),(\d{1,9})\)""")
 
     fun parse(
         value: String,
@@ -95,7 +130,7 @@ object LrcParser {
             .lastOrNull()
             ?: 0L
 
-        val timed = mutableListOf<Pair<Long, String>>()
+        val timed = mutableListOf<LyricLine>()
         val untimed = mutableListOf<String>()
         normalized.lineSequence().forEach { rawLine ->
             val line = rawLine.trim()
@@ -104,6 +139,13 @@ object LrcParser {
                 offset.matches(line) ||
                 metadata.matches(line)
             ) {
+                return@forEach
+            }
+
+            // Word-level formats first: Xiaomi yrc `[mm:ss.xxx]{word}` tokens
+            // and enhanced LRC `[mm:ss.xx]<mm:ss.xx>word` segments.
+            parseWordLevelLine(line, offsetMs)?.let { parsed ->
+                timed += parsed
                 return@forEach
             }
 
@@ -123,31 +165,39 @@ object LrcParser {
 
             matches.forEach { match ->
                 parseTimestamp(match)?.let { timestampMs ->
-                    timed += (timestampMs + offsetMs).coerceAtLeast(0L) to text
+                    timed += LyricLine(
+                        startMs = (timestampMs + offsetMs).coerceAtLeast(0L),
+                        text = text,
+                    )
                 }
             }
         }
 
         val lines = if (timed.isNotEmpty()) {
+            val sorted = timed.withIndex()
+                .sortedWith(
+                    compareBy<IndexedValue<LyricLine>> { it.value.startMs }
+                        .thenBy { it.index },
+                )
+                .map { it.value }
+                .toMutableList()
+            inferWordEnds(sorted)
             // Translations commonly repeat the same timestamp. Keeping them in
             // one visual line prevents binary-search selection from highlighting
-            // only the translation while hiding the original.
-            timed.withIndex()
-                .sortedWith(
-                    compareBy<IndexedValue<Pair<Long, String>>> {
-                        it.value.first
-                    }.thenBy { it.index },
-                )
-                .groupBy(
-                    keySelector = { it.value.first },
-                    valueTransform = { it.value.second },
-                )
-                .map { (startMs, texts) ->
-                    LyricLine(
-                        startMs = startMs,
-                        text = texts.distinct().joinToString("\n"),
-                    )
+            // only the translation while hiding the original. Word timing is
+            // only meaningful for a single line, so merged lines drop it.
+            sorted.groupBy { it.startMs }
+                .map { (startMs, group) ->
+                    if (group.size == 1) {
+                        group.first()
+                    } else {
+                        LyricLine(
+                            startMs = startMs,
+                            text = group.map { it.text }.distinct().joinToString("\n"),
+                        )
+                    }
                 }
+                .sortedBy { it.startMs ?: Long.MAX_VALUE }
         } else {
             untimed.map { text -> LyricLine(startMs = null, text = text) }
         }
@@ -161,6 +211,159 @@ object LrcParser {
                     sourceUri = sourceUri,
                 )
             }
+    }
+
+    /**
+     * Parses yrc / enhanced-LRC word timings.
+     *
+     * Supported shapes:
+     * - Xiaomi yrc token stream: `[00:01.000]{Hello }[00:01.500]{world}`
+     * - Enhanced LRC: `[00:01.00]<00:01.00>Hello <00:01.50>world`
+     *
+     * Returns null when the line has no word-level timing so the caller can
+     * fall back to plain LRC handling.
+     */
+    private fun parseWordLevelLine(line: String, offsetMs: Long): LyricLine? {
+        // QQ-Music-style QRC: `[startMs,durationMs]word(startMs,durationMs)...`
+        // Xiaomi's yrc tokens are close to this family, so accept it too.
+        qrcHeader.find(line)?.let { header ->
+            val lineStart = header.groupValues[1].toLongOrNull() ?: return@let
+            val rest = line.substring(header.range.last + 1)
+            val tokens = qrcWord.findAll(rest).toList()
+            val words = tokens.mapNotNull { match ->
+                val start = match.groupValues[2].toLongOrNull() ?: return@mapNotNull null
+                val duration = match.groupValues[3].toLongOrNull() ?: 0L
+                val text = match.groupValues[1]
+                if (text.isEmpty()) return@mapNotNull null
+                LyricWord(
+                    startMs = (start + offsetMs).coerceAtLeast(0L),
+                    endMs = if (duration > 0L) {
+                        (start + duration + offsetMs).coerceAtLeast(0L)
+                    } else {
+                        null
+                    },
+                    text = text,
+                )
+            }
+            if (words.isNotEmpty()) {
+                return LyricLine(
+                    startMs = (lineStart + offsetMs).coerceAtLeast(0L),
+                    text = words.joinToString("") { it.text },
+                    words = words,
+                )
+            }
+            val plain = qrcWord.replace(rest, "").trim()
+            if (plain.isNotEmpty()) {
+                return LyricLine(
+                    startMs = (lineStart + offsetMs).coerceAtLeast(0L),
+                    text = plain,
+                )
+            }
+        }
+
+        val yrcMatches = yrcToken.findAll(line).toList()
+        if (yrcMatches.isNotEmpty()) {
+            val words = yrcMatches.mapNotNull { match ->
+                parseYrcTimestamp(match)?.let { timestampMs ->
+                    LyricWord(
+                        startMs = (timestampMs + offsetMs).coerceAtLeast(0L),
+                        endMs = null,
+                        text = match.groupValues[4],
+                    )
+                }
+            }.filter { it.text.isNotEmpty() }
+            if (words.isNotEmpty()) {
+                val text = buildString {
+                    // Preserve text outside the token stream (rare) as a prefix.
+                    append(yrcToken.replace(line, ""))
+                    words.forEach { append(it.text) }
+                }
+                return LyricLine(
+                    startMs = words.first().startMs,
+                    text = text.ifBlank { words.joinToString("") { it.text } },
+                    words = words,
+                )
+            }
+        }
+
+        val enhancedMatches = enhancedToken.findAll(line).toList()
+        if (enhancedMatches.isNotEmpty()) {
+            val lineTimestamp = timestamp.find(line)
+                ?.let(::parseTimestamp)
+                ?.let { (it + offsetMs).coerceAtLeast(0L) }
+            val words = mutableListOf<LyricWord>()
+            enhancedMatches.forEachIndexed { index, match ->
+                val start = parseEnhancedTimestamp(match)?.plus(offsetMs) ?: return@forEachIndexed
+                val end = enhancedMatches.getOrNull(index + 1)
+                    ?.let(::parseEnhancedTimestamp)
+                    ?.plus(offsetMs)
+                val textStart = match.range.last + 1
+                val textEnd = enhancedMatches.getOrNull(index + 1)
+                    ?.range?.first
+                    ?: line.length
+                val text = line.substring(textStart, textEnd)
+                if (text.isNotEmpty()) {
+                    words += LyricWord(
+                        startMs = start.coerceAtLeast(0L),
+                        endMs = end?.coerceAtLeast(0L),
+                        text = text,
+                    )
+                }
+            }
+            if (words.isNotEmpty()) {
+                return LyricLine(
+                    startMs = lineTimestamp ?: words.first().startMs,
+                    text = words.joinToString("") { it.text },
+                    words = words,
+                )
+            }
+        }
+        return null
+    }
+
+    /** Fill missing word end times from the next word / next line start. */
+    private fun inferWordEnds(lines: MutableList<LyricLine>) {
+        for (lineIndex in lines.indices) {
+            val line = lines[lineIndex]
+            if (line.words.isEmpty()) continue
+            val nextLineStart = lines.getOrNull(lineIndex + 1)?.startMs
+            val words = line.words.toMutableList()
+            var changed = false
+            words.forEachIndexed { wordIndex, word ->
+                if (word.endMs != null) return@forEachIndexed
+                val nextWordStart = words.getOrNull(wordIndex + 1)?.startMs
+                val end = nextWordStart ?: nextLineStart
+                if (end != null && end > word.startMs) {
+                    words[wordIndex] = word.copy(endMs = end)
+                    changed = true
+                }
+            }
+            if (changed) {
+                lines[lineIndex] = line.copy(words = words)
+            }
+        }
+    }
+
+    private fun parseYrcTimestamp(match: MatchResult): Long? {
+        val minutes = match.groupValues[1].toLongOrNull() ?: return null
+        val seconds = match.groupValues[2].toLongOrNull() ?: return null
+        if (seconds >= 60) return null
+        val fraction = match.groupValues[3]
+        return minutes * 60_000L + seconds * 1_000L + fractionToMillis(fraction)
+    }
+
+    private fun parseEnhancedTimestamp(match: MatchResult): Long? {
+        val minutes = match.groupValues[1].toLongOrNull() ?: return null
+        val seconds = match.groupValues[2].toLongOrNull() ?: return null
+        if (seconds >= 60) return null
+        return minutes * 60_000L + seconds * 1_000L + fractionToMillis(match.groupValues[3])
+    }
+
+    private fun fractionToMillis(fraction: String): Long = when (fraction.length) {
+        0 -> 0L
+        1 -> fraction.toLongOrNull()?.times(100L) ?: 0L
+        2 -> fraction.toLongOrNull()?.times(10L) ?: 0L
+        else -> fraction.take(3).toLongOrNull() ?: 0L
     }
 
     private fun parseTimestamp(match: MatchResult): Long? {
@@ -526,3 +729,30 @@ class JvmLyricsContentLoader(
         const val DEFAULT_MAX_BYTES = 2 * 1024 * 1024
     }
 }
+
+/**
+ * Serializes a lyrics document for the Flutter layer (MethodChannel / event
+ * channel maps must only contain JSON-friendly primitives).
+ *
+ * Layout:
+ * {"origin": "embedded", "synced": true,
+ *  "lines": [{"startMs": 1000, "text": "line",
+ *             "words": [{"startMs": 1000, "endMs": 1500, "text": "word"}]}]}
+ */
+fun LyricsDocument.toStateMap(): Map<String, Any?> = mapOf(
+    "origin" to origin.name.lowercase(),
+    "synced" to isSynchronized,
+    "lines" to lines.map { line ->
+        mapOf(
+            "startMs" to line.startMs,
+            "text" to line.text,
+            "words" to line.words.map { word ->
+                mapOf(
+                    "startMs" to word.startMs,
+                    "endMs" to word.endMs,
+                    "text" to word.text,
+                )
+            },
+        )
+    },
+)

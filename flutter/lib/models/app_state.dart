@@ -1,3 +1,7 @@
+import 'lyrics.dart';
+
+export 'lyrics.dart';
+
 enum PlaybackCommand { playPause, previous, next }
 
 enum TrackChangeDirection {
@@ -146,6 +150,8 @@ class PlaybackSnapshot {
     this.sourceEpoch,
     this.trackIdentity,
     this.trackChangeDirection,
+    this.lyrics,
+    this.lyricsLoading = false,
   });
 
   final String? title;
@@ -164,6 +170,12 @@ class PlaybackSnapshot {
   final int? sourceEpoch;
   final String? trackIdentity;
   final TrackChangeDirection? trackChangeDirection;
+
+  /// Parsed lyrics attached to the current track (null when unavailable).
+  final LyricsDocument? lyrics;
+
+  /// True while the sender/host is still fetching lyrics.
+  final bool lyricsLoading;
 
   String? get artworkTransitionIdentity {
     String? normalized(String? value) {
@@ -204,6 +216,8 @@ class PlaybackSnapshot {
         trackChangeDirection: TrackChangeDirection.parse(
           map['trackChangeDirection'],
         ),
+        lyrics: parseLyrics(map['lyrics']),
+        lyricsLoading: map['lyricsLoading'] as bool? ?? false,
       );
 
   @override
@@ -225,7 +239,9 @@ class PlaybackSnapshot {
           streamActive == other.streamActive &&
           sourceEpoch == other.sourceEpoch &&
           trackIdentity == other.trackIdentity &&
-          trackChangeDirection == other.trackChangeDirection;
+          trackChangeDirection == other.trackChangeDirection &&
+          lyrics == other.lyrics &&
+          lyricsLoading == other.lyricsLoading;
 
   @override
   int get hashCode => Object.hashAll([
@@ -245,6 +261,8 @@ class PlaybackSnapshot {
     sourceEpoch,
     trackIdentity,
     trackChangeDirection,
+    lyrics,
+    lyricsLoading,
   ]);
 }
 
