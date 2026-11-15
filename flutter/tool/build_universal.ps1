@@ -1,7 +1,9 @@
 param(
     [string]$ToolsRoot = $env:FUSIONPLAY_TOOLS_ROOT,
     [string]$FlutterSdk,
-    [string]$AndroidSdk
+    [string]$AndroidSdk,
+    [ValidateSet('arm64-v8a', 'armeabi-v7a', 'all')]
+    [string]$Abis = 'arm64-v8a'
 )
 
 $ErrorActionPreference = 'Stop'
@@ -85,6 +87,17 @@ if ($fusionPlayVersion -notmatch '^(\d+)\.(\d+)\.(\d+)(?:[ -].*)?$') {
 $fusionPlayVersionCode =
     [int]$Matches[1] * 10000 + [int]$Matches[2] * 100 + [int]$Matches[3]
 
+$env:FUSIONPLAY_ABIS = switch ($Abis) {
+    'all' { 'armeabi-v7a,arm64-v8a,x86_64' }
+    'arm64-v8a' { 'arm64-v8a' }
+    'armeabi-v7a' { 'armeabi-v7a' }
+}
+$targetPlatform = switch ($Abis) {
+    'all' { 'android-arm,android-arm64,android-x64' }
+    'arm64-v8a' { 'android-arm64' }
+    'armeabi-v7a' { 'android-arm' }
+}
+
 $mappedDrives = [System.Collections.Generic.List[string]]::new()
 function Add-DriveMapping([string]$Path) {
     foreach ($letter in @('Z', 'Y', 'X', 'W', 'V', 'U')) {
@@ -159,11 +172,11 @@ try {
         & $flutter build apk --release --no-pub `
             --build-name=$fusionPlayVersion `
             --build-number=$fusionPlayVersionCode `
-            --target-platform android-arm,android-arm64,android-x64 `
+            --target-platform $targetPlatform `
             --obfuscate `
             "--dart-define=FUSIONPLAY_VERSION=$fusionPlayVersion" `
             --split-debug-info=$symbolsPath
-        if ($LASTEXITCODE -ne 0) { throw 'Flutter universal APK build failed.' }
+        if ($LASTEXITCODE -ne 0) { throw 'Flutter APK build failed.' }
 
         $releaseDirectory = Join-Path $repositoryRoot 'artifacts\releases'
         [System.IO.Directory]::CreateDirectory($releaseDirectory) | Out-Null

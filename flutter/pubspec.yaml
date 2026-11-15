@@ -46,4 +46,4 @@ flutter:
   fonts:
     - family: MiSans
       fonts:
-        - asset: assets/fonts/MiSansVF.ttf
+        - asset: assets/fonts/MiSansUI.ttf

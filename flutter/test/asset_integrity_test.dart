@@ -11,7 +11,7 @@ void main() {
       expect(pubspec, contains('- $asset'));
     }
 
-    const font = 'assets/fonts/MiSansVF.ttf';
+    const font = 'assets/fonts/MiSansUI.ttf';
     expect(File(font).existsSync(), isTrue);
     expect(File(font).lengthSync(), greaterThan(0));
     expect(pubspec, contains('- asset: $font'));

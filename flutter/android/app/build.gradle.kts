@@ -12,6 +12,20 @@ plugins {
 val repositoryRoot = layout.projectDirectory.dir("../../..")
 val generatedNativeLibs = layout.buildDirectory.dir("generated/fusionPlayJniLibs")
 
+// Release builds default to a single 64-bit ABI: the universal APK bundled
+// three copies of the Flutter engine and the Rust core (~68 MB uncompressed),
+// which is unnecessary for modern phones/TVs. CI sets FUSIONPLAY_ABIS=arm64-v8a.
+// Local debug builds keep every ABI unless the environment says otherwise.
+val allAndroidAbis = listOf("armeabi-v7a", "arm64-v8a", "x86_64")
+val requestedAndroidAbis: List<String> = System.getenv("FUSIONPLAY_ABIS")
+    ?.split(',', ';', ' ')
+    ?.map { it.trim() }
+    ?.filter { it.isNotEmpty() && it in allAndroidAbis }
+    ?.distinct()
+    ?.takeIf { it.isNotEmpty() }
+    ?: allAndroidAbis
+val nativeAbis = requestedAndroidAbis
+
 // Stable release signing: CI (and maintainers) provide a fixed keystore through
 // environment variables so every release APK has the same certificate and can
 // be installed over the previous version. Without the variables (plain local
@@ -38,8 +52,11 @@ android {
         versionCode = flutter.versionCode
         versionName = flutter.versionName
         ndk {
-            abiFilters += setOf("armeabi-v7a", "arm64-v8a", "x86_64")
+            abiFilters += nativeAbis.toSet()
         }
+        // The app has no translated resources beyond Chinese; keep the APK's
+        // resource table small.
+        resourceConfigurations += setOf("zh", "en")
     }
 
     signingConfigs {
@@ -115,7 +132,6 @@ dependencies {
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.10.2")
     implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.9.0")
     implementation("androidx.media3:media3-exoplayer:1.8.0")
-    implementation("androidx.media3:media3-exoplayer-hls:1.8.0")
     implementation("androidx.media:media:1.7.0")
     testImplementation("junit:junit:4.13.2")
 }
@@ -126,7 +142,6 @@ tasks.withType<Test>().configureEach {
     jvmArgs("-XX:+UseSerialGC")
 }
 
-val nativeAbis = listOf("armeabi-v7a", "arm64-v8a", "x86_64")
 val nativeTriples = mapOf(
     "armeabi-v7a" to "arm-linux-androideabi",
     "arm64-v8a" to "aarch64-linux-android",

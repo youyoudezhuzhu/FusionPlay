@@ -64,13 +64,18 @@ Kotlin 单元测试可通过 Flutter Android 工程的 Gradle Wrapper 执行：
 
 Rust 模块可分别运行 `cargo test` 和 `cargo clippy`。Android 原生库需要通过完整 APK 构建验证对应 NDK 目标；Windows 侧车在 `windows/backend` 下执行 `cargo test`，并用 `cargo check --target x86_64-pc-windows-msvc` 检查 Windows 专有代码。
 
-## 构建通用 APK（Android）
+## 构建 Android APK
 
 ```powershell
+# 默认：只构建 arm64-v8a，安装包约 14 MB
 .\flutter\tool\build_universal.ps1
+# 需要兼容 32 位设备时：
+.\flutter\tool\build_universal.ps1 -Abis armeabi-v7a
+# 需要包含所有 ABI 的调试/兼容包：
+.\flutter\tool\build_universal.ps1 -Abis all
 ```
 
-脚本读取根目录 `VERSION`，计算 Android `versionCode`，构建包含 32 位 ARM、64 位 ARM 与 x86_64 的单一 APK，并将 APK 与 Dart 混淆符号保存到 `artifacts/releases/`。该目录不进入版本控制。
+脚本读取根目录 `VERSION`，计算 Android `versionCode`，按 `-Abis` 选择 ABI，并将 APK 与 Dart 混淆符号保存到 `artifacts/releases/`。该目录不进入版本控制。默认单 ABI 是为了避免把三份 Flutter engine 和 Rust core 打进安装包；32 位设备请用 `-Abis armeabi-v7a` 单独构建。
 
 当前 Release 配置在没有私有签名配置时使用 Android 调试签名，公开发布商店版本前应替换为自己的安全签名流程，且不得提交密钥文件。
 
