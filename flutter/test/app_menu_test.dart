@@ -284,9 +284,15 @@ void main() {
       find.byKey(const ValueKey('morph-container')),
     );
     expect(menuRect.width, 240);
-    expect(menuRect.right, closeTo(1000 - 18, .01));
-    expect(menuRect.top, closeTo(buttonRect.bottom + 8, .01));
+    // The expanded menu keeps the trigger's top-right corner and top edge;
+    // only its left/bottom edges grow.
+    expect(menuRect.right, closeTo(buttonRect.right, .01));
+    expect(menuRect.top, closeTo(buttonRect.top, .01));
     expect(menuRect.height, closeTo(3 * 46 + 14, .01));
+    final container = tester.widget<LiquidGlass>(
+      find.byKey(const ValueKey('morph-container')),
+    );
+    expect(container.borderRadius, closeTo(buttonRect.height / 2, .01));
   });
 
   testWidgets('设置面板 morph 到右半边：宽 ≤ 屏宽/2，右/上留 16', (tester) async {
@@ -351,7 +357,7 @@ void main() {
     );
 
     expect(firstFrameRect.width, 240);
-    expect(firstFrameRect.top, closeTo(buttonRect.bottom + 8, .01));
+    expect(firstFrameRect.top, closeTo(buttonRect.top, .01));
     await tester.pumpAndSettle();
     expect(find.byKey(const ValueKey('app-menu')), findsOneWidget);
   });

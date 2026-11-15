@@ -249,7 +249,6 @@ class FusionMorphOverlay extends StatefulWidget {
 
 class _FusionMorphOverlayState extends State<FusionMorphOverlay>
     with SingleTickerProviderStateMixin {
-  static const menuRadius = 22.0;
   static const settingsRadius = 28.0;
   static const menuTint = Color(0xE014171C);
   static const settingsTint = Color(0xECF2F4F7);
@@ -325,18 +324,22 @@ class _FusionMorphOverlayState extends State<FusionMorphOverlay>
   double get _settingsOpacity =>
       ((_settingsAmount - .35) / .65).clamp(0.0, 1.0);
 
+  /// The menu grows out of the trigger without moving its top-right corner:
+  /// the trigger is anchored to the top-right corner of the screen, so the
+  /// expanded panel keeps the same top-right inset and top edge. Its corner
+  /// radius is the trigger circle radius, which keeps the arc the user sees on
+  /// the three-dot button exactly the same when the circle becomes the panel.
   Rect _menuRect(Size size) {
     final width = size.width < 480 ? 220.0 : 240.0;
     final height = widget.menuItems.length * 46.0 + 14.0;
     final anchor = widget.anchorRect;
-    var top = anchor.bottom + 8;
+    var left = anchor.right - width;
+    left = left.clamp(8.0, math.max(8.0, size.width - width - 8)).toDouble();
+    var top = anchor.top;
     if (top + height > size.height - 8) {
-      top = anchor.top - height - 8;
+      top = size.height - height - 8;
     }
-    top = top.clamp(8.0, math.max(8.0, size.height - height - 8)).toDouble();
-    final left = (size.width - 18 - width)
-        .clamp(8.0, math.max(8.0, size.width - width - 8))
-        .toDouble();
+    top = math.max(0.0, top);
     return Rect.fromLTWH(left, top, width, height);
   }
 
@@ -374,7 +377,9 @@ class _FusionMorphOverlayState extends State<FusionMorphOverlay>
     _toRect = _targetRect(stage);
     _fromRadius = currentRadius;
     _toRadius = switch (stage) {
-      MorphStage.menu => menuRadius,
+      // Keep the trigger's arc: the top-right corner of the expanded menu has
+      // exactly the circle radius of the three-dot button.
+      MorphStage.menu => _circleRadius(widget.anchorRect),
       MorphStage.settings => settingsRadius,
       MorphStage.closing => _circleRadius(widget.anchorRect),
     };
