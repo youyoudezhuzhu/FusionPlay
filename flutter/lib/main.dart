@@ -13,6 +13,7 @@ import 'ui/app_menu.dart';
 import 'ui/artwork.dart';
 import 'ui/player_view.dart';
 import 'ui/remote_focus.dart';
+import 'ui/liquid_glass.dart';
 import 'ui/settings_view.dart';
 import 'ui/update_dialogs.dart';
 import 'ui/vector_icon.dart';
@@ -303,10 +304,12 @@ class _FusionPlayHomeState extends State<FusionPlayHome> {
   void _handleMorphTransitionCompleted(MorphStage stage) {
     if (!mounted) return;
     if (stage == MorphStage.settings) {
+      // Never focus the receiver-name field automatically: that would open the
+      // keyboard and select text on entry. TV and phone both start on MiPlay.
       if (widget.state.isTelevision) {
         _settingsTvInitialFocus.requestFocus();
       } else {
-        _settingsNameFocus.requestFocus();
+        _settingsInitialFocus.requestFocus();
       }
     } else if (stage == MorphStage.menu) {
       _menuItemFocus.first.requestFocus();
@@ -346,40 +349,54 @@ class _FusionPlayHomeState extends State<FusionPlayHome> {
   }
 
   Future<void> _showAboutDialog() async {
-    await showDialog<void>(
+    await showGlassDialog<void>(
       context: context,
-      builder: (dialogContext) => AlertDialog(
-        backgroundColor: Colors.white,
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
-        title: const Text(
-          'FusionPlay',
-          style: TextStyle(
-            fontSize: 20,
-            fontWeight: FusionTypography.semiBoldFontWeight,
-            fontVariations: FusionTypography.semiBold,
-            color: SettingsStyle.primaryText,
+      dialogKey: const ValueKey('about-dialog'),
+      builder: (dialogContext) => Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text(
+            'FusionPlay',
+            style: TextStyle(
+              fontSize: 20,
+              fontWeight: FusionTypography.semiBoldFontWeight,
+              fontVariations: FusionTypography.semiBold,
+              color: Color(0xEBFFFFFF),
+            ),
           ),
-        ),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            _aboutRow('版本', fusionPlayVersion),
-            _aboutRow(
-              '协议',
-              playbackProtocolLabel(widget.state.playback.protocol) ?? '—',
-            ),
-            _aboutRow('设备名', widget.state.receiverName),
-          ],
-        ),
-        actions: [
-          FilledButton(
-            style: FilledButton.styleFrom(
-              backgroundColor: Colors.black,
-              foregroundColor: Colors.white,
-            ),
-            onPressed: () => Navigator.of(dialogContext).pop(),
-            child: const Text('好'),
+          const SizedBox(height: 14),
+          _aboutRow('版本', fusionPlayVersion),
+          _aboutRow(
+            '协议',
+            playbackProtocolLabel(widget.state.playback.protocol) ?? '—',
+          ),
+          _aboutRow('设备名', widget.state.receiverName),
+          const SizedBox(height: 14),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.end,
+            children: [
+              FilledButton(
+                style: FilledButton.styleFrom(
+                  backgroundColor: const Color(0xE6FFFFFF),
+                  foregroundColor: const Color(0xFF16181B),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 20,
+                    vertical: 12,
+                  ),
+                  shape: const StadiumBorder(),
+                ),
+                onPressed: () => Navigator.of(dialogContext).pop(),
+                child: const Text(
+                  '好',
+                  style: TextStyle(
+                    fontSize: 14,
+                    fontWeight: FusionTypography.mediumFontWeight,
+                    fontVariations: FusionTypography.medium,
+                  ),
+                ),
+              ),
+            ],
           ),
         ],
       ),
@@ -395,10 +412,7 @@ class _FusionPlayHomeState extends State<FusionPlayHome> {
           width: 64,
           child: Text(
             label,
-            style: const TextStyle(
-              fontSize: 13,
-              color: SettingsStyle.secondaryText,
-            ),
+            style: const TextStyle(fontSize: 13, color: Color(0x8CFFFFFF)),
           ),
         ),
         Expanded(
@@ -406,10 +420,7 @@ class _FusionPlayHomeState extends State<FusionPlayHome> {
             value,
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
-            style: const TextStyle(
-              fontSize: 13,
-              color: SettingsStyle.primaryText,
-            ),
+            style: const TextStyle(fontSize: 13, color: Color(0xEBFFFFFF)),
           ),
         ),
       ],

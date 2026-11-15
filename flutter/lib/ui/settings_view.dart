@@ -15,7 +15,7 @@ import 'vector_icon.dart';
 
 const fusionPlayVersion = String.fromEnvironment(
   'FUSIONPLAY_VERSION',
-  defaultValue: '1.3.8',
+  defaultValue: '1.4.0',
 );
 
 /// Dark liquid-glass palette used by the settings panel. The outer
@@ -121,6 +121,11 @@ class _SettingsViewState extends State<SettingsView> {
   late final FocusNode _nameFocus;
   late final bool _ownsNameFocus;
   late String _savedName;
+  bool _editingName = false;
+  bool _submittingName = false;
+  late final FocusNode _editNameFocus = FocusNode(
+    debugLabel: 'settings-name-edit',
+  );
   bool _exportingLogs = false;
   bool _checkingUpdate = false;
   bool _downloadingUpdate = false;
@@ -143,7 +148,7 @@ class _SettingsViewState extends State<SettingsView> {
     final incoming = widget.state.settings.receiverName ?? '';
     if (incoming != _savedName && _name.text == _savedName) {
       _savedName = incoming;
-      _name.text = incoming;
+      if (!_editingName) _name.text = incoming;
     }
   }
 
@@ -153,6 +158,7 @@ class _SettingsViewState extends State<SettingsView> {
   void dispose() {
     _name.removeListener(_refresh);
     _name.dispose();
+    _editNameFocus.dispose();
     if (_ownsNameFocus) _nameFocus.dispose();
     super.dispose();
   }
@@ -496,9 +502,10 @@ class _SettingsViewState extends State<SettingsView> {
   // ------------------------------------------------------------------
 
   Widget _nameEditor() {
+    if (!_editingName) return _nameDisplay();
+
     final dirty = _name.text.trim() != _savedName.trim();
-    final restoreEnabled =
-        !widget.state.busy && (_savedName.isNotEmpty || dirty);
+    final restoreEnabled = !widget.state.busy && _name.text.isNotEmpty;
     return Padding(
       padding: const EdgeInsets.fromLTRB(20, 16, 20, 16),
       child: Column(
@@ -522,12 +529,14 @@ class _SettingsViewState extends State<SettingsView> {
               focusNode: _nameFocus,
               controller: _name,
               maxLength: 63,
+              autofocus: true,
               textInputAction: TextInputAction.done,
               cursorColor: Colors.white,
               style: const TextStyle(
                 fontSize: 16,
                 color: _GlassStyle.textPrimary,
               ),
+              onSubmitted: (_) => _applyName(),
               decoration: InputDecoration(
                 counterText: '',
                 hintText: widget.state.receiverName,
@@ -561,14 +570,20 @@ class _SettingsViewState extends State<SettingsView> {
             mainAxisAlignment: MainAxisAlignment.end,
             children: [
               _actionButton(
+                label: '取消',
+                primary: false,
+                active: true,
+                onPressed: _cancelNameEdit,
+              ),
+              const SizedBox(width: 10),
+              _actionButton(
                 label: '恢复默认',
                 primary: false,
                 active: restoreEnabled,
                 onPressed: restoreEnabled
                     ? () {
                         _name.clear();
-                        widget.onReceiverName('');
-                        setState(() => _savedName = '');
+                        setState(() {});
                       }
                     : null,
               ),
@@ -577,19 +592,112 @@ class _SettingsViewState extends State<SettingsView> {
                 label: '应用',
                 primary: true,
                 active: !widget.state.busy && dirty,
-                onPressed: !widget.state.busy && dirty
-                    ? () {
-                        final value = _name.text.trim();
-                        widget.onReceiverName(value);
-                        setState(() => _savedName = value);
-                      }
-                    : null,
+                onPressed: !widget.state.busy && dirty ? _applyName : null,
               ),
             ],
           ),
         ],
       ),
     );
+  }
+
+  /// Read-only presentation: current receiver name + an explicit edit button.
+  /// Entering settings never focuses a text field, so no keyboard pops up.
+  Widget _nameDisplay() {
+    final name = _savedName.trim();
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(20, 16, 16, 16),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              const Expanded(
+                child: _SectionTitle(
+                  asset: FusionIcons.customName,
+                  text: '自定义名称',
+                ),
+              ),
+              RemoteFocusFrame(
+                focusNode: _editNameFocus,
+                onActivate: _beginNameEdit,
+                borderColor: Colors.white,
+                shape: const CircleBorder(),
+                child: InkWell(
+                  key: const ValueKey('edit-name'),
+                  customBorder: const CircleBorder(),
+                  onTap: _beginNameEdit,
+                  child: Semantics(
+                    label: '编辑名称',
+                    button: true,
+                    child: SizedBox.square(
+                      dimension: 40,
+                      child: Center(
+                        child: Icon(
+                          Icons.edit_rounded,
+                          size: 19,
+                          color: Colors.white.withValues(alpha: .86),
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          Padding(
+            padding: const EdgeInsets.only(right: 4),
+            child: Text(
+              name.isEmpty ? '未设置名称' : name,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                fontSize: 17,
+                color: name.isEmpty
+                    ? _GlassStyle.hint
+                    : _GlassStyle.textPrimary,
+                fontWeight: FusionTypography.mediumFontWeight,
+                fontVariations: FusionTypography.medium,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _beginNameEdit() {
+    _name.text = _savedName;
+    _name.selection = TextSelection.collapsed(offset: _name.text.length);
+    setState(() => _editingName = true);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) _nameFocus.requestFocus();
+    });
+  }
+
+  void _cancelNameEdit() {
+    _name.text = _savedName;
+    _nameFocus.unfocus();
+    setState(() => _editingName = false);
+  }
+
+  void _applyName() {
+    if (_submittingName || widget.state.busy) return;
+    final value = _name.text.trim();
+    if (value == _savedName.trim()) {
+      _cancelNameEdit();
+      return;
+    }
+    _submittingName = true;
+    try {
+      widget.onReceiverName(value);
+      _savedName = value;
+      _nameFocus.unfocus();
+      setState(() => _editingName = false);
+    } finally {
+      _submittingName = false;
+    }
   }
 
   Widget _actionButton({
@@ -769,7 +877,11 @@ class _SettingsViewState extends State<SettingsView> {
               _FocusReceiverNameIntent:
                   CallbackAction<_FocusReceiverNameIntent>(
                     onInvoke: (_) {
-                      _nameFocus.requestFocus();
+                      if (_editingName) {
+                        _nameFocus.requestFocus();
+                      } else {
+                        _editNameFocus.requestFocus();
+                      }
                       return null;
                     },
                   ),

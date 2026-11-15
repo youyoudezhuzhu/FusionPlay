@@ -1,32 +1,126 @@
-import 'dart:async';
+import 'dart:math' as math;
 import 'dart:ui' as ui;
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter/scheduler.dart';
 
-/// Real liquid-glass surface: backdrop blur + a shader pass that bends the
-/// backdrop like a lens, adds chromatic fringing, a rim light and a slow sheen.
+import 'remote_focus.dart';
+
+/// Unified liquid-glass material levels.
 ///
-/// The shader path requires Impeller (Android/iOS on current Flutter). When it
-/// is unavailable (e.g. Windows/Skia, tests, shader load failure) the widget
-/// falls back to a frosted-blur surface with the same tint/edge treatment so
-/// call sites look identical.
+/// All glass surfaces in the app resolve their tint/blur/edge/sheen parameters
+/// from these tokens so pages no longer hard-code their own glass colours.
 ///
-/// Typical use:
-/// ```dart
-/// LiquidGlass(
-///   borderRadius: 999,
-///   blurSigma: 14,
-///   child: IconButton(...),
-/// )
-/// ```
+/// - [card]    Level 1: plain content cards / small chips (light tint, soft rim)
+/// - [control] Level 2: interactive controls (buttons, toggles, dock controls)
+/// - [panel]   Level 3: menus, sheets, dialogs (deep tint, stronger rim)
+enum GlassLevel { card, control, panel }
+
+@immutable
+class GlassSpec {
+  const GlassSpec({
+    required this.tint,
+    required this.blur,
+    required this.radius,
+    required this.borderAlpha,
+    required this.rimAlpha,
+    required this.edgeAlpha,
+    required this.sheenAlpha,
+    required this.shadowAlpha,
+    required this.shadowBlur,
+    required this.shadowOffsetY,
+    this.gradient,
+  });
+
+  final Color tint;
+  final double blur;
+  final double radius;
+  final double borderAlpha;
+
+  /// Strength of the inner rim highlight along the top/left edge.
+  final double rimAlpha;
+
+  /// Strength of the inner dark edge along the bottom/right edge.
+  final double edgeAlpha;
+
+  /// Dynamic pointer/press sheen strength.
+  final double sheenAlpha;
+  final double shadowAlpha;
+  final double shadowBlur;
+  final double shadowOffsetY;
+  final Gradient? gradient;
+
+  static const card = GlassSpec(
+    tint: Color(0x1FFFFFFF),
+    blur: 18,
+    radius: 22,
+    borderAlpha: .14,
+    rimAlpha: .34,
+    edgeAlpha: .10,
+    sheenAlpha: .30,
+    shadowAlpha: .16,
+    shadowBlur: 20,
+    shadowOffsetY: 6,
+  );
+
+  static const control = GlassSpec(
+    tint: Color(0x24FFFFFF),
+    blur: 16,
+    radius: 22,
+    borderAlpha: .22,
+    rimAlpha: .52,
+    edgeAlpha: .14,
+    sheenAlpha: .42,
+    shadowAlpha: .22,
+    shadowBlur: 24,
+    shadowOffsetY: 8,
+  );
+
+  static const panel = GlassSpec(
+    tint: Color(0xE014191F),
+    blur: 24,
+    radius: 26,
+    borderAlpha: .20,
+    rimAlpha: .40,
+    edgeAlpha: .22,
+    sheenAlpha: .30,
+    shadowAlpha: .34,
+    shadowBlur: 30,
+    shadowOffsetY: 12,
+    gradient: LinearGradient(
+      begin: Alignment.topLeft,
+      end: Alignment.bottomRight,
+      colors: [Color(0x16FFFFFF), Color(0x04000000)],
+    ),
+  );
+
+  static GlassSpec of(GlassLevel level) => switch (level) {
+    GlassLevel.card => card,
+    GlassLevel.control => control,
+    GlassLevel.panel => panel,
+  };
+}
+
+/// Stable frosted liquid-glass surface.
+///
+/// Implementation note: this intentionally uses a single [BackdropFilter]
+/// (Gaussian blur) plus painted tint/rim/sheen — **not** `ImageFilter.shader`
+/// refraction. The experimental shader path caused white-frame feedback on
+/// Android Impeller (flutter/flutter#187820, #170820) and stays disabled; this
+/// widget must not be described as real screen-space refraction.
+///
+/// The dynamic highlight is pointer/press driven only: pointer events update a
+/// [ValueNotifier] consumed by a [CustomPaint], so no ticker/setState runs
+/// while idle or during animations.
 class LiquidGlass extends StatefulWidget {
   const LiquidGlass({
     super.key,
     required this.child,
+    this.level = GlassLevel.control,
+    this.interactive = false,
     this.borderRadius = 24,
-    this.blurSigma = 16,
-    this.tint = const Color(0x1FFFFFFF),
+    this.blurSigma,
+    this.tint,
     this.tintGradient,
     this.refraction = 1.0,
     this.specular = 1.0,
@@ -40,40 +134,41 @@ class LiquidGlass extends StatefulWidget {
 
   final Widget child;
 
+  /// Material level; supplies tint/blur/edge/sheen defaults.
+  final GlassLevel level;
+
+  /// Tracks pointer position/press for the dynamic specular sheen. Keep false
+  /// for large panels whose content is expensive, unless the sheen is wanted.
+  final bool interactive;
+
   /// Radius in logical pixels; use a large value (e.g. 999) for capsules.
   final double borderRadius;
 
-  /// Backdrop blur sigma. The shader receives the blurred backdrop.
-  final double blurSigma;
+  /// Backdrop blur sigma; defaults to the [level] token.
+  final double? blurSigma;
 
-  /// Glass tint painted over the refracted backdrop.
-  final Color tint;
+  /// Glass tint; defaults to the [level] token.
+  final Color? tint;
 
-  /// Optional gradient painted over [tint]. Defaults to the light diagonal
-  /// sheen used by the player/menu. Settings passes a dark gradient so a large
-  /// panel does not wash its translucent rows with a bright diagonal band.
+  /// Optional gradient painted over [tint] (e.g. the morph panel's dark sheen).
   final Gradient? tintGradient;
 
-  /// 0 disables lens bending, 1 is the tuned default, >1 exaggerates.
+  /// Kept for API compatibility with the (disabled) shader prototype.
   final double refraction;
 
-  /// Rim light / sheen strength, 0 disables highlights.
+  /// Rim/sheen strength multiplier, 0 disables highlights.
   final double specular;
 
-  /// Bevel depth in logical pixels: how far the rim refracts the backdrop.
+  /// Kept for API compatibility with the (disabled) shader prototype.
   final double thickness;
 
-  /// Beer-Lambert rim darkening, 0 (flat) .. 1 (fully dark edge).
+  /// Beer-Lambert-style bottom/right edge darkening, 0..1.
   final double absorption;
 
-  /// Animate the liquid wobble/sheen. Off by default: a continuously updating
-  /// backdrop shader on several glass surfaces at once is expensive and was
-  /// observed to flicker on some Android Impeller builds. The static glass
-  /// keeps refraction, edge and rim highlights; press/focus animations are
-  /// separate.
+  /// Kept for API compatibility; glass is static (no ticker) by design.
   final bool animate;
 
-  /// Force the non-shader frosted fallback (tests, Windows).
+  /// Kept for API compatibility: stable blur fallback is the only path now.
   final bool forceFallback;
 
   final EdgeInsetsGeometry? padding;
@@ -83,145 +178,52 @@ class LiquidGlass extends StatefulWidget {
   State<LiquidGlass> createState() => _LiquidGlassState();
 }
 
-class _LiquidGlassState extends State<LiquidGlass>
-    with SingleTickerProviderStateMixin {
-  static Future<ui.FragmentProgram?>? _programFuture;
+@immutable
+class _Sheen {
+  const _Sheen({this.pointer, this.pressed = false});
 
-  /// Flutter 3.32's `ImageFilter.shader` + `BackdropFilter` can feed the
-  /// previous frame back into the next one when two glass surfaces overlap
-  /// (flutter/flutter#187820, #170820). On Android the whole glass layer then
-  /// flashes an opaque white wash whenever any animation schedules a repaint.
-  /// Keep the experimental lens shader off by default; the blurred fallback
-  /// below is stable and looks the same. Opt in only for experiments:
-  /// `--dart-define=FUSIONPLAY_GLASS_SHADER=true`.
-  static const bool _enableExperimentalShader = bool.fromEnvironment(
-    'FUSIONPLAY_GLASS_SHADER',
-    defaultValue: false,
-  );
+  final Offset? pointer;
+  final bool pressed;
 
-  /// Per-widget shader instance. A shared [ui.FragmentShader] would let every
-  /// surface overwrite the others' uniforms during build, which makes several
-  /// glass panels flash as the paint order changes.
-  ui.FragmentShader? _shader;
-  Ticker? _ticker;
-  double _time = 0;
-  ui.ImageFilter? _shaderFilter;
+  _Sheen copyWith({Offset? pointer, bool? pressed, bool clear = false}) =>
+      _Sheen(
+        pointer: clear ? null : (pointer ?? this.pointer),
+        pressed: pressed ?? this.pressed,
+      );
+}
 
-  static Future<ui.FragmentProgram?> _loadProgram() {
-    return _programFuture ??= () async {
-      try {
-        return await ui.FragmentProgram.fromAsset('shaders/liquid_glass.frag');
-      } catch (_) {
-        return null;
-      }
-    }();
-  }
-
-  @override
-  void initState() {
-    super.initState();
-    if (widget.forceFallback || !_enableExperimentalShader) return;
-    _initialiseShader();
-  }
-
-  Future<void> _initialiseShader() async {
-    if (!ui.ImageFilter.isShaderFilterSupported) return;
-    final program = await _loadProgram();
-    if (!mounted || program == null) return;
-    try {
-      final shader = program.fragmentShader();
-      final filter = ui.ImageFilter.shader(shader);
-      setState(() {
-        _shader = shader;
-        _shaderFilter = filter;
-      });
-      _startTicker();
-    } catch (_) {
-      // Fall through to the frosted fallback.
-    }
-  }
-
-  void _startTicker() {
-    if (!widget.animate || _ticker != null) return;
-    final reduceMotion = MediaQuery.maybeDisableAnimationsOf(context) ?? false;
-    if (reduceMotion) return;
-    _ticker = createTicker((elapsed) {
-      if (!mounted) return;
-      setState(() {
-        _time = elapsed.inMilliseconds / 1000.0;
-      });
-    })..start();
-  }
-
-  @override
-  void didUpdateWidget(covariant LiquidGlass oldWidget) {
-    super.didUpdateWidget(oldWidget);
-    if (oldWidget.animate && !widget.animate) {
-      _ticker?.dispose();
-      _ticker = null;
-    } else if (!oldWidget.animate && widget.animate) {
-      _startTicker();
-    }
-  }
+class _LiquidGlassState extends State<LiquidGlass> {
+  final ValueNotifier<_Sheen> _sheen = ValueNotifier(const _Sheen());
 
   @override
   void dispose() {
-    _ticker?.dispose();
+    _sheen.dispose();
     super.dispose();
   }
 
-  void _paintShaderUniforms(ui.FragmentShader shader, Size size, double dpr) {
-    // The engine fills uniform 0 (vec2 size) and the sampler automatically for
-    // ImageFilter.shader; the rest follow declaration order.
-    // Flat float indices: uSize occupies 0/1, then the scalars, then uLight.
-    // ImageFilter.shader textures are sized in physical pixels; the radius must
-    // use the same unit so the lens rim stays at the visible corner.
-    shader.setFloat(0, size.width * dpr);
-    shader.setFloat(1, size.height * dpr);
-    shader.setFloat(2, dpr);
-    shader.setFloat(3, widget.borderRadius);
-    shader.setFloat(4, widget.refraction);
-    shader.setFloat(5, widget.specular);
-    shader.setFloat(6, _time);
-    shader.setFloat(7, 0.42);
-    shader.setFloat(8, 0.86);
-    shader.setFloat(9, widget.thickness);
-    shader.setFloat(10, widget.absorption);
+  void _pointer(Offset local, {bool? pressed}) {
+    _sheen.value = _sheen.value.copyWith(pointer: local, pressed: pressed);
   }
 
-  Widget _buildSurface(Size size) {
+  @override
+  Widget build(BuildContext context) {
+    final spec = GlassSpec.of(widget.level);
+    final focused = FusionFocusHighlight.of(context);
+    final tint = widget.tint ?? spec.tint;
+    final blur = widget.blurSigma ?? spec.blur;
     final radius = BorderRadius.circular(widget.borderRadius);
-    ui.ImageFilter? filter;
-    if (_shaderFilter != null && !widget.forceFallback) {
-      final shader = _shader;
-      if (shader != null) {
-        _paintShaderUniforms(
-          shader,
-          size,
-          MediaQuery.devicePixelRatioOf(context),
-        );
-      }
-      filter = ui.ImageFilter.compose(
-        inner: ui.ImageFilter.blur(
-          sigmaX: widget.blurSigma,
-          sigmaY: widget.blurSigma,
-        ),
-        outer: _shaderFilter!,
-      );
-    }
-
-    final content = widget.padding == null
+    final child = widget.padding == null
         ? widget.child
         : Padding(padding: widget.padding!, child: widget.child);
 
-    return DecoratedBox(
+    Widget surface = DecoratedBox(
       decoration: BoxDecoration(
         borderRadius: radius,
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withValues(alpha: 0.22),
-            blurRadius: 28,
-            offset: const Offset(0, 10),
+            color: Colors.black.withValues(alpha: spec.shadowAlpha),
+            blurRadius: spec.shadowBlur,
+            offset: Offset(0, spec.shadowOffsetY),
           ),
         ],
       ),
@@ -231,84 +233,282 @@ class _LiquidGlassState extends State<LiquidGlass>
         child: Stack(
           fit: StackFit.passthrough,
           children: [
-            if (filter != null)
-              Positioned.fill(
-                child: BackdropFilter(filter: filter, child: const SizedBox()),
-              )
-            else
-              Positioned.fill(
-                child: BackdropFilter(
-                  filter: ui.ImageFilter.blur(
-                    sigmaX: widget.blurSigma,
-                    sigmaY: widget.blurSigma,
-                  ),
-                  child: const SizedBox(),
-                ),
-              ),
             Positioned.fill(
-              child: DecoratedBox(
-                decoration: BoxDecoration(
-                  borderRadius: radius,
-                  color: widget.tint,
-                  gradient:
-                      widget.tintGradient ??
-                      const LinearGradient(
-                        begin: Alignment.topLeft,
-                        end: Alignment.bottomRight,
-                        colors: [Color(0x26FFFFFF), Color(0x08FFFFFF)],
-                      ),
-                ),
+              child: BackdropFilter(
+                filter: ui.ImageFilter.blur(sigmaX: blur, sigmaY: blur),
+                child: const SizedBox(),
               ),
             ),
             Positioned.fill(
               child: IgnorePointer(
-                child: DecoratedBox(
-                  decoration: BoxDecoration(
-                    borderRadius: radius,
-                    border: Border.all(
-                      color: Colors.white.withValues(alpha: 0.22),
-                      width: 1.2,
+                child: RepaintBoundary(
+                  child: CustomPaint(
+                    painter: _GlassPaint(
+                      sheen: _sheen,
+                      spec: spec,
+                      tint: tint,
+                      gradient: widget.tintGradient ?? spec.gradient,
+                      borderRadius: widget.borderRadius,
+                      specular: widget.specular,
+                      absorption: widget.absorption,
+                      focused: focused,
                     ),
                   ),
                 ),
               ),
             ),
-            // Inner highlight along the top edge.
-            Positioned(
-              left: 8,
-              right: 8,
-              top: 1,
-              height: 1.2,
-              child: DecoratedBox(
-                decoration: BoxDecoration(
-                  borderRadius: BorderRadius.circular(999),
-                  gradient: LinearGradient(
-                    colors: [
-                      Colors.white.withValues(alpha: 0.0),
-                      Colors.white.withValues(alpha: 0.55),
-                      Colors.white.withValues(alpha: 0.0),
-                    ],
-                  ),
-                ),
-              ),
-            ),
-            content,
+            child,
           ],
         ),
       ),
     );
-  }
 
-  @override
-  Widget build(BuildContext context) {
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        final size = Size(
-          constraints.hasBoundedWidth ? constraints.maxWidth : 200,
-          constraints.hasBoundedHeight ? constraints.maxHeight : 200,
-        );
-        return _buildSurface(size);
-      },
+    if (!widget.interactive) return surface;
+
+    return Listener(
+      behavior: HitTestBehavior.translucent,
+      onPointerDown: (event) => _pointer(event.localPosition, pressed: true),
+      onPointerMove: (event) => _pointer(event.localPosition),
+      onPointerUp: (event) => _pointer(event.localPosition, pressed: false),
+      onPointerCancel: (_) => _pointer(const Offset(-1, -1), pressed: false),
+      child: MouseRegion(
+        onHover: (event) => _pointer(event.localPosition),
+        onExit: (_) => _sheen.value = _sheen.value.copyWith(clear: true),
+        child: surface,
+      ),
     );
   }
 }
+
+class _GlassPaint extends CustomPainter {
+  _GlassPaint({
+    required this.sheen,
+    required this.spec,
+    required this.tint,
+    required this.gradient,
+    required this.borderRadius,
+    required this.specular,
+    required this.absorption,
+    required this.focused,
+  }) : super(repaint: sheen);
+
+  final ValueListenable<_Sheen> sheen;
+  final GlassSpec spec;
+  final Color tint;
+  final Gradient? gradient;
+  final double borderRadius;
+  final double specular;
+  final double absorption;
+  final bool focused;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    if (size.isEmpty) return;
+    final rect = Offset.zero & size;
+    final rrect = RRect.fromRectAndRadius(rect, Radius.circular(borderRadius));
+    final strength = (specular * (focused ? 1.25 : 1.0)).clamp(0.0, 2.0);
+
+    // 1. Tint / gradient body.
+    canvas.drawRRect(rrect, Paint()..color = tint);
+    final gradient = this.gradient;
+    if (gradient != null) {
+      canvas.drawRRect(rrect, Paint()..shader = gradient.createShader(rect));
+    }
+
+    // 2. Dynamic specular highlight: follows the pointer; brightens on press.
+    final state = sheen.value;
+    final pointer = state.pointer;
+    final highlightCenter = pointer != null && pointer.dx >= 0
+        ? pointer
+        : Offset(size.width * .22, size.height * .06);
+    final intensity =
+        (spec.sheenAlpha * strength * (state.pressed ? 1.45 : 1.0)).clamp(
+          0.0,
+          .8,
+        );
+    if (intensity > 0.001) {
+      final radius = size.longestSide * .95;
+      final paint = Paint()
+        ..shader =
+            RadialGradient(
+              colors: [
+                Colors.white.withValues(alpha: intensity),
+                Colors.white.withValues(alpha: intensity * .22),
+                Colors.white.withValues(alpha: 0),
+              ],
+              stops: const [0.0, .45, 1.0],
+            ).createShader(
+              Rect.fromCircle(center: highlightCenter, radius: radius),
+            );
+      canvas.drawRRect(rrect, paint);
+    }
+
+    // 3. Rim: bright inner edge top/left, fading to a faint bottom/right.
+    final rimPaint = Paint()
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 1.1
+      ..shader = LinearGradient(
+        begin: Alignment.topLeft,
+        end: Alignment.bottomRight,
+        colors: [
+          Colors.white.withValues(alpha: .58 * strength),
+          Colors.white.withValues(alpha: .10 * strength),
+          Colors.white.withValues(alpha: .30 * strength),
+        ],
+        stops: const [0.0, .55, 1.0],
+      ).createShader(rect);
+    canvas.drawRRect(rrect.deflate(0.55), rimPaint);
+
+    // 4. Subtle bottom/right inner dark edge (depth without a plastic shadow).
+    final edgeAlpha = (spec.edgeAlpha * absorption).clamp(0.0, .5);
+    final edgePaint = Paint()
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 1.4
+      ..shader = LinearGradient(
+        begin: Alignment.topLeft,
+        end: Alignment.bottomRight,
+        colors: [
+          Colors.transparent,
+          Colors.transparent,
+          Colors.black.withValues(alpha: edgeAlpha),
+        ],
+        stops: const [0.0, .55, 1.0],
+      ).createShader(rect);
+    canvas.drawRRect(rrect.deflate(0.9), edgePaint);
+  }
+
+  @override
+  bool shouldRepaint(_GlassPaint oldDelegate) =>
+      oldDelegate.spec != spec ||
+      oldDelegate.tint != tint ||
+      oldDelegate.gradient != gradient ||
+      oldDelegate.borderRadius != borderRadius ||
+      oldDelegate.specular != specular ||
+      oldDelegate.absorption != absorption ||
+      oldDelegate.focused != focused;
+}
+
+/// Token-based translucent glass surface **without** its own backdrop blur.
+///
+/// Use it for nested layers (headers, rows, chips) that already sit on top of a
+/// [LiquidGlass]; stacking another [BackdropFilter] would double-blur and cost
+/// performance.
+class GlassSurface extends StatelessWidget {
+  const GlassSurface({
+    super.key,
+    required this.child,
+    this.level = GlassLevel.card,
+    this.borderRadius = 20,
+    this.tint,
+    this.borderAlpha,
+    this.raise = false,
+    this.padding,
+  });
+
+  final Widget child;
+  final GlassLevel level;
+  final double borderRadius;
+  final Color? tint;
+  final double? borderAlpha;
+  final bool raise;
+  final EdgeInsetsGeometry? padding;
+
+  @override
+  Widget build(BuildContext context) {
+    final spec = GlassSpec.of(level);
+    final radius = BorderRadius.circular(borderRadius);
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: tint ?? spec.tint.withValues(alpha: .10),
+        borderRadius: radius,
+        border: Border.all(
+          color: Colors.white.withValues(alpha: borderAlpha ?? .10),
+          width: 1,
+        ),
+        boxShadow: raise
+            ? <BoxShadow>[
+                BoxShadow(
+                  color: Colors.black.withValues(alpha: .18),
+                  blurRadius: 18,
+                  offset: const Offset(0, 6),
+                ),
+              ]
+            : null,
+      ),
+      child: padding == null ? child : Padding(padding: padding!, child: child),
+    );
+  }
+}
+
+/// Full-bleed glass dialog surface used by the about/update dialogs.
+///
+/// Only transform/opacity animate; the glass itself is static.
+class GlassDialog extends StatelessWidget {
+  const GlassDialog({
+    super.key,
+    required this.child,
+    this.maxWidth = 400,
+    this.padding = const EdgeInsets.fromLTRB(24, 22, 24, 18),
+  });
+
+  final Widget child;
+  final double maxWidth;
+  final EdgeInsetsGeometry padding;
+
+  @override
+  Widget build(BuildContext context) {
+    final reduceMotion =
+        MediaQuery.maybeOf(context)?.disableAnimations ?? false;
+    final screen = MediaQuery.maybeSizeOf(context) ?? const Size(400, 800);
+    return Center(
+      child: ConstrainedBox(
+        constraints: BoxConstraints(
+          maxWidth: maxWidth,
+          maxHeight: math.max(160, screen.height - 40),
+        ),
+        child: TweenAnimationBuilder<double>(
+          tween: Tween(begin: 0, end: 1),
+          duration: reduceMotion
+              ? Duration.zero
+              : const Duration(milliseconds: 180),
+          curve: Curves.easeOutCubic,
+          builder: (context, value, child) => Opacity(
+            opacity: value,
+            child: Transform.scale(scale: .97 + .03 * value, child: child),
+          ),
+          child: RepaintBoundary(
+            child: LiquidGlass(
+              level: GlassLevel.panel,
+              interactive: true,
+              borderRadius: 26,
+              padding: padding,
+              child: Material(
+                color: Colors.transparent,
+                child: DefaultTextStyle.merge(
+                  style: const TextStyle(color: Color(0xEBFFFFFF)),
+                  child: child,
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// Shows a [GlassDialog] with the app's glass styling.
+Future<T?> showGlassDialog<T>({
+  required BuildContext context,
+  required WidgetBuilder builder,
+  Key? dialogKey,
+  bool barrierDismissible = true,
+}) => showDialog<T>(
+  context: context,
+  barrierDismissible: barrierDismissible,
+  barrierColor: Colors.black.withValues(alpha: .42),
+  builder: (dialogContext) => GlassDialog(
+    key: dialogKey,
+    child: Builder(builder: builder),
+  ),
+);

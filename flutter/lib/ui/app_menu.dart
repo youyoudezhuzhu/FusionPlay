@@ -136,57 +136,109 @@ class FusionSettingsSheet extends StatelessWidget {
   final Widget child;
   final VoidCallback onClose;
 
+  /// Height reserved for the pinned header placeholder. The real header is an
+  /// overlay above the scroll view so the body really scrolls underneath it.
+  static const headerHeight = 58.0;
+
+  /// Extra distance below the header over which content fades out.
+  static const topFadeHeight = 30.0;
+
   @override
-  Widget build(BuildContext context) => CustomScrollView(
-    key: const ValueKey('settings-scroll'),
-    slivers: [
-      // Official sticky-header primitive (same pattern as Flutter's iOS
-      // Settings example): the title bar is pinned and the body really scrolls
-      // underneath it instead of being clipped at a hard boundary and covered
-      // by a mask. The header surface is a top-to-transparent gradient so the
-      // content fades into it naturally and there is no 1px divider.
-      PinnedHeaderSliver(
-        key: const ValueKey('settings-pinned-header'),
-        child: DecoratedBox(
-          decoration: const BoxDecoration(
-            gradient: LinearGradient(
+  Widget build(BuildContext context) => ClipRect(
+    child: Stack(
+      children: [
+        Positioned.fill(
+          child: ShaderMask(
+            // Fade only the top of the scrolling body; the header overlay is
+            // painted above the mask so the title/close button stay crisp.
+            shaderCallback: (bounds) => LinearGradient(
               begin: Alignment.topCenter,
               end: Alignment.bottomCenter,
-              colors: [Color(0xFF14191F), Color(0xFF14191F), Color(0x0014191F)],
-              stops: [0.0, 0.72, 1.0],
-            ),
-          ),
-          child: Padding(
-            padding: const EdgeInsets.fromLTRB(20, 10, 10, 8),
-            child: Row(
-              children: [
-                const FusionVectorIcon(
-                  FusionIcons.settings,
-                  size: 20,
-                  color: Color(0xB8FFFFFF),
+              colors: const [
+                Color(0x00FFFFFF),
+                Color(0x00FFFFFF),
+                Color(0xFFFFFFFF),
+              ],
+              stops: [
+                0.0,
+                (headerHeight / bounds.height).clamp(0.0, .9),
+                ((headerHeight + topFadeHeight) / bounds.height).clamp(.01, 1),
+              ],
+            ).createShader(bounds),
+            blendMode: BlendMode.dstIn,
+            child: CustomScrollView(
+              key: const ValueKey('settings-scroll'),
+              slivers: [
+                // Layout spacer only: no background, no black gradient. The
+                // content slivers scroll behind it and the overlay header.
+                const PinnedHeaderSliver(
+                  key: ValueKey('settings-pinned-header'),
+                  child: SizedBox(height: headerHeight),
                 ),
-                const SizedBox(width: 10),
-                Expanded(
-                  child: Text(
-                    title,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(
-                      fontSize: 20,
-                      color: Color(0xEBFFFFFF),
-                      fontWeight: FusionTypography.semiBoldFontWeight,
-                      fontVariations: FusionTypography.semiBold,
-                    ),
-                  ),
-                ),
-                _CloseSettingsButton(onClose: onClose),
+                SliverList.list(children: [child]),
               ],
             ),
           ),
         ),
+        Positioned(
+          top: 0,
+          left: 0,
+          right: 0,
+          height: headerHeight,
+          child: _GlassSettingsHeader(title: title, onClose: onClose),
+        ),
+      ],
+    ),
+  );
+}
+
+/// Real header: token-based translucent surface (no backdrop filter of its own,
+/// the outer morph glass already blurs) with a soft top sheen and no hard
+/// divider or opaque black band.
+class _GlassSettingsHeader extends StatelessWidget {
+  const _GlassSettingsHeader({required this.title, required this.onClose});
+
+  final String title;
+  final VoidCallback onClose;
+
+  @override
+  Widget build(BuildContext context) => DecoratedBox(
+    key: const ValueKey('settings-glass-header'),
+    decoration: const BoxDecoration(
+      gradient: LinearGradient(
+        begin: Alignment.topCenter,
+        end: Alignment.bottomCenter,
+        colors: [Color(0x1FFFFFFF), Color(0x0AFFFFFF), Color(0x00FFFFFF)],
+        stops: [0.0, .55, 1.0],
       ),
-      SliverList.list(children: [child]),
-    ],
+    ),
+    child: Padding(
+      padding: const EdgeInsets.fromLTRB(20, 10, 10, 8),
+      child: Row(
+        children: [
+          const FusionVectorIcon(
+            FusionIcons.settings,
+            size: 20,
+            color: Color(0xB8FFFFFF),
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Text(
+              title,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(
+                fontSize: 20,
+                color: Color(0xEBFFFFFF),
+                fontWeight: FusionTypography.semiBoldFontWeight,
+                fontVariations: FusionTypography.semiBold,
+              ),
+            ),
+          ),
+          _CloseSettingsButton(onClose: onClose),
+        ],
+      ),
+    ),
   );
 }
 
@@ -271,8 +323,7 @@ class _FusionMorphOverlayState extends State<FusionMorphOverlay>
   static const menuTint = Color(0xE014171C);
   static const settingsTint = Color(0xF214191F);
 
-  late final AnimationController _controller = AnimationController(vsync: this)
-    ..addListener(() => setState(() {}));
+  late final AnimationController _controller = AnimationController(vsync: this);
 
   late MorphStage _fromStage = widget.stage;
   late MorphStage _toStage = widget.stage;
@@ -442,105 +493,120 @@ class _FusionMorphOverlayState extends State<FusionMorphOverlay>
   Widget build(BuildContext context) => LayoutBuilder(
     builder: (context, constraints) {
       _size = Size(constraints.maxWidth, constraints.maxHeight);
-      final rect = _currentRect;
-      final radius = _currentRadius;
-      final settingsAmount = _settingsAmount;
-      final menuOpacity = _menuOpacity;
-      final settingsOpacity = _settingsOpacity;
-      final dim =
-          (.18 * math.max(menuOpacity, settingsOpacity) + .12 * settingsOpacity)
-              .clamp(0.0, .42);
-      final menuSize = _menuRect(_size).size;
-      final settingsSize = _settingsRect(_size).size;
-      final tint = Color.lerp(menuTint, settingsTint, settingsAmount)!;
-      final glass = LiquidGlass(
-        key: const ValueKey('morph-container'),
-        borderRadius: radius,
-        blurSigma: settingsAmount > .5 ? 24 : 20,
-        tint: tint,
-        // A large settings panel is nearly opaque; a light diagonal sheen over
-        // the translucent rows looked like a glare band. Deepen it instead.
-        tintGradient: settingsAmount > .35
-            ? const LinearGradient(
-                begin: Alignment.topLeft,
-                end: Alignment.bottomRight,
-                colors: [Color(0x1A000000), Color(0x04000000)],
-              )
-            : null,
-        animate: false,
-        forceFallback: widget.forceFallback,
-        child: ClipRect(
-          child: Stack(
-            children: [
-              Positioned(
-                left: 0,
-                top: 0,
-                width: menuSize.width,
-                height: menuSize.height,
-                child: Offstage(
-                  offstage: menuOpacity <= .001,
-                  child: IgnorePointer(
-                    ignoring: settingsAmount > .05,
-                    child: ExcludeFocus(
-                      excluding: settingsAmount > .05,
-                      child: Opacity(
-                        opacity: menuOpacity,
-                        child: FusionAppMenu(
-                          key: const ValueKey('app-menu'),
-                          items: widget.menuItems,
-                          focusNodes: widget.menuFocusNodes,
+      // Local rebuild: only the morph layer rebuilds per tick; the settings
+      // subtree is passed by identity so Flutter skips rebuilding it, and the
+      // glass surface is isolated with a RepaintBoundary.
+      return AnimatedBuilder(
+        animation: _controller,
+        builder: (context, _) {
+          final rect = _currentRect;
+          final radius = _currentRadius;
+          final settingsAmount = _settingsAmount;
+          final menuOpacity = _menuOpacity;
+          final settingsOpacity = _settingsOpacity;
+          final dim =
+              (.18 * math.max(menuOpacity, settingsOpacity) +
+                      .12 * settingsOpacity)
+                  .clamp(0.0, .42);
+          final menuSize = _menuRect(_size).size;
+          final settingsSize = _settingsRect(_size).size;
+          final tint = Color.lerp(menuTint, settingsTint, settingsAmount)!;
+          final glass = RepaintBoundary(
+            child: LiquidGlass(
+              key: const ValueKey('morph-container'),
+              level: GlassLevel.panel,
+              interactive: false,
+              borderRadius: radius,
+              blurSigma: settingsAmount > .5 ? 24 : 20,
+              tint: tint,
+              tintGradient: settingsAmount > .35
+                  ? const LinearGradient(
+                      begin: Alignment.topLeft,
+                      end: Alignment.bottomRight,
+                      colors: [Color(0x1A000000), Color(0x04000000)],
+                    )
+                  : null,
+              animate: false,
+              forceFallback: widget.forceFallback,
+              child: ClipRect(
+                child: Stack(
+                  children: [
+                    Positioned(
+                      left: 0,
+                      top: 0,
+                      width: menuSize.width,
+                      height: menuSize.height,
+                      child: Offstage(
+                        offstage: menuOpacity <= .001,
+                        child: IgnorePointer(
+                          ignoring: settingsAmount > .05,
+                          child: ExcludeFocus(
+                            excluding: settingsAmount > .05,
+                            child: Opacity(
+                              opacity: menuOpacity,
+                              child: RepaintBoundary(
+                                child: FusionAppMenu(
+                                  key: const ValueKey('app-menu'),
+                                  items: widget.menuItems,
+                                  focusNodes: widget.menuFocusNodes,
+                                ),
+                              ),
+                            ),
+                          ),
                         ),
                       ),
                     ),
-                  ),
+                    Positioned(
+                      left: 0,
+                      top: 0,
+                      width: settingsSize.width,
+                      height: settingsSize.height,
+                      child: Offstage(
+                        offstage: settingsOpacity <= .001,
+                        child: IgnorePointer(
+                          ignoring: settingsOpacity < .5,
+                          child: ExcludeFocus(
+                            excluding: settingsOpacity < .5,
+                            child: Opacity(
+                              opacity: settingsOpacity,
+                              child: RepaintBoundary(
+                                child: FusionSettingsSheet(
+                                  key: const ValueKey('settings-sheet'),
+                                  title: widget.settingsTitle,
+                                  onClose: widget.onSettingsClose,
+                                  child: widget.settingsChild,
+                                ),
+                              ),
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                  ],
                 ),
               ),
-              Positioned(
-                left: 0,
-                top: 0,
-                width: settingsSize.width,
-                height: settingsSize.height,
-                child: Offstage(
-                  offstage: settingsOpacity <= .001,
-                  child: IgnorePointer(
-                    ignoring: settingsOpacity < .5,
-                    child: ExcludeFocus(
-                      excluding: settingsOpacity < .5,
-                      child: Opacity(
-                        opacity: settingsOpacity,
-                        child: FusionSettingsSheet(
-                          key: const ValueKey('settings-sheet'),
-                          title: widget.settingsTitle,
-                          onClose: widget.onSettingsClose,
-                          child: widget.settingsChild,
-                        ),
-                      ),
-                    ),
-                  ),
+            ),
+          );
+          return Stack(
+            children: [
+              Positioned.fill(
+                child: GestureDetector(
+                  behavior: HitTestBehavior.opaque,
+                  onTap: widget.onDismiss,
+                  child: ColoredBox(color: Colors.black.withValues(alpha: dim)),
+                ),
+              ),
+              Positioned.fromRect(
+                rect: rect,
+                child: GestureDetector(
+                  behavior: HitTestBehavior.opaque,
+                  onTap: () {},
+                  child: glass,
                 ),
               ),
             ],
-          ),
-        ),
-      );
-      return Stack(
-        children: [
-          Positioned.fill(
-            child: GestureDetector(
-              behavior: HitTestBehavior.opaque,
-              onTap: widget.onDismiss,
-              child: ColoredBox(color: Colors.black.withValues(alpha: dim)),
-            ),
-          ),
-          Positioned.fromRect(
-            rect: rect,
-            child: GestureDetector(
-              behavior: HitTestBehavior.opaque,
-              onTap: () {},
-              child: glass,
-            ),
-          ),
-        ],
+          );
+        },
       );
     },
   );

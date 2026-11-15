@@ -498,9 +498,10 @@ class _PlayerViewState extends State<PlayerView> {
           ),
         },
         child: LiquidGlass(
+          level: GlassLevel.control,
+          interactive: true,
           borderRadius: 999,
-          blurSigma: 16,
-          tint: active ? const Color(0x3DFFFFFF) : const Color(0x1FFFFFFF),
+          tint: active ? const Color(0x3DFFFFFF) : null,
           forceFallback: widget.forceGlassFallback,
           child: Material(
             color: Colors.transparent,
@@ -606,11 +607,10 @@ class _PlayerViewState extends State<PlayerView> {
           child: SizedBox.square(
             dimension: 46,
             child: LiquidGlass(
+              level: GlassLevel.control,
+              interactive: true,
               borderRadius: 999,
-              blurSigma: 16,
-              tint: widget.menuOpen
-                  ? const Color(0x40FFFFFF)
-                  : const Color(0x1FFFFFFF),
+              tint: widget.menuOpen ? const Color(0x40FFFFFF) : null,
               forceFallback: widget.forceGlassFallback,
               child: Material(
                 color: Colors.transparent,
@@ -1049,9 +1049,10 @@ class _PlayerViewState extends State<PlayerView> {
         compact ? 2 : 4,
       ),
       child: LiquidGlass(
+        level: GlassLevel.panel,
         borderRadius: compact ? 22 : 28,
         blurSigma: compact ? 14 : 18,
-        tint: const Color(0x59101318),
+        tint: const Color(0x6B101318),
         forceFallback: widget.forceGlassFallback,
         padding: EdgeInsets.fromLTRB(
           compact ? 12 : 20,
@@ -1430,8 +1431,9 @@ class _PlayerViewState extends State<PlayerView> {
         child: SizedBox.square(
           dimension: dimension,
           child: LiquidGlass(
+            level: GlassLevel.control,
+            interactive: true,
             borderRadius: 999,
-            blurSigma: 14,
             tint: const Color(0x26FFFFFF),
             forceFallback: widget.forceGlassFallback,
             child: Material(

@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:fusionplay_android_flutter/backend/update_service.dart';
 import 'package:fusionplay_android_flutter/models/app_state.dart';
+import 'package:fusionplay_android_flutter/ui/liquid_glass.dart';
 import 'package:fusionplay_android_flutter/ui/settings_view.dart';
 
 Future<void> _pumpSettings(
@@ -139,6 +140,8 @@ void main() {
     );
     await tester.pumpAndSettle();
     expect(find.text('安装器已打开'), findsOneWidget);
+    expect(find.byType(GlassDialog), findsOneWidget);
+    expect(find.byType(AlertDialog), findsNothing);
   });
 
   testWidgets('横屏窄高度下长 notes 在对话框内滚动且不溢出', (tester) async {
@@ -191,6 +194,8 @@ void main() {
     await _tapCheckUpdate(tester);
     await tester.pumpAndSettle();
     expect(find.textContaining('发现新版本'), findsOneWidget);
+    expect(find.byType(GlassDialog), findsOneWidget);
+    expect(find.byType(AlertDialog), findsNothing);
 
     await tester.tap(find.text('取消'));
     await tester.pumpAndSettle();
@@ -213,6 +218,8 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('已是最新版本'), findsOneWidget);
+    expect(find.byType(GlassDialog), findsOneWidget);
+    expect(find.byType(AlertDialog), findsNothing);
   });
 
   testWidgets('error：展示侧车返回的 message', (tester) async {
@@ -231,6 +238,7 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('检查更新失败'), findsOneWidget);
+    expect(find.byType(GlassDialog), findsOneWidget);
     expect(find.text('网络连接失败'), findsOneWidget);
   });
 
@@ -250,6 +258,7 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('当前无法检查更新'), findsOneWidget);
+    expect(find.byType(GlassDialog), findsOneWidget);
     expect(find.text('服务器暂不可达'), findsOneWidget);
   });
 
@@ -271,6 +280,8 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('需要安装权限'), findsOneWidget);
+    expect(find.byType(GlassDialog), findsOneWidget);
+    expect(find.byType(AlertDialog), findsNothing);
     expect(find.textContaining('允许'), findsWidgets);
   });
 

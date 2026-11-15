@@ -164,8 +164,10 @@ void main() {
     expect(find.byKey(const ValueKey('app-menu')), findsNothing);
     expect(find.text('自定义名称'), findsOneWidget);
     expect(find.byKey(const ValueKey('export-logs')), findsOneWidget);
-    // 焦点进入设置内容（MiPlay 行），而不是关闭按钮。
-    expect(FocusManager.instance.primaryFocus?.debugLabel, 'settings-name');
+    // 焦点进入设置内容（MiPlay 行），不会聚焦名称输入框/弹键盘。
+    expect(FocusManager.instance.primaryFocus?.debugLabel, 'settings-miplay');
+    expect(find.byType(TextField), findsNothing);
+    expect(find.byKey(const ValueKey('edit-name')), findsOneWidget);
 
     // 第一次 Escape：设置收回菜单（不是直接回播放页），焦点回菜单首项。
     await tester.sendKeyEvent(LogicalKeyboardKey.escape);
@@ -193,6 +195,25 @@ void main() {
       findsOneWidget,
     );
     expect(find.byKey(const ValueKey('settings-scroll')), findsOneWidget);
+
+    // 顶栏是透明玻璃表面：pinned sliver 只占位，没有深色实色渐变遮挡。
+    expect(
+      find.descendant(
+        of: find.byKey(const ValueKey('settings-pinned-header')),
+        matching: find.byType(DecoratedBox),
+      ),
+      findsNothing,
+    );
+    final header = tester.widget<DecoratedBox>(
+      find.byKey(const ValueKey('settings-glass-header')),
+    );
+    final decoration = header.decoration as BoxDecoration;
+    final gradient = decoration.gradient as LinearGradient;
+    expect(
+      gradient.colors.every((color) => color.a < 1),
+      isTrue,
+      reason: 'header must not paint an opaque/dark band',
+    );
 
     await tester.drag(
       find.byKey(const ValueKey('settings-scroll')),
@@ -241,6 +262,9 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.byKey(const ValueKey('app-menu')), findsNothing);
+    expect(find.byType(GlassDialog), findsOneWidget);
+    expect(find.byKey(const ValueKey('about-dialog')), findsOneWidget);
+    expect(find.byType(AlertDialog), findsNothing);
     expect(find.text('FusionPlay'), findsWidgets);
     expect(find.text('版本'), findsOneWidget);
     expect(find.text(fusionPlayVersion), findsOneWidget);

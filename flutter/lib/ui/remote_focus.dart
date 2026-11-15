@@ -25,6 +25,28 @@ class FusionFocusStyle extends InheritedWidget {
       focusScale != oldWidget.focusScale;
 }
 
+/// Exposes the remote-focus highlight state to descendants (e.g. glass
+/// surfaces can brighten their rim when the containing control is focused).
+class FusionFocusHighlight extends InheritedWidget {
+  const FusionFocusHighlight({
+    super.key,
+    required this.focused,
+    required super.child,
+  });
+
+  final bool focused;
+
+  static bool of(BuildContext context) =>
+      context
+          .dependOnInheritedWidgetOfExactType<FusionFocusHighlight>()
+          ?.focused ??
+      false;
+
+  @override
+  bool updateShouldNotify(FusionFocusHighlight oldWidget) =>
+      focused != oldWidget.focused;
+}
+
 class RemoteFocusFrame extends StatefulWidget {
   const RemoteFocusFrame({
     super.key,
@@ -165,16 +187,19 @@ class _RemoteFocusFrameState extends State<RemoteFocusFrame> {
           );
         });
       },
-      child: focusScale == 1
-          ? _focusSurface(ringWidth)
-          : AnimatedScale(
-              scale: _showFocus ? focusScale : 1,
-              duration: reduceMotion
-                  ? Duration.zero
-                  : const Duration(milliseconds: 120),
-              curve: Curves.easeOutCubic,
-              child: _focusSurface(ringWidth),
-            ),
+      child: FusionFocusHighlight(
+        focused: _showFocus,
+        child: focusScale == 1
+            ? _focusSurface(ringWidth)
+            : AnimatedScale(
+                scale: _showFocus ? focusScale : 1,
+                duration: reduceMotion
+                    ? Duration.zero
+                    : const Duration(milliseconds: 120),
+                curve: Curves.easeOutCubic,
+                child: _focusSurface(ringWidth),
+              ),
+      ),
     );
   }
 

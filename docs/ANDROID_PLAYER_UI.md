@@ -68,7 +68,8 @@ Flutter 3.32.8。因此这里自研实现，参考了以下开源项目的做法
   [liquid_glass_widgets](https://github.com/sdegenaar/liquid_glass_widgets)：镜片折射、
   色散、Beer-Lambert 边缘吸收、Fresnel/specular 高光等 shader 思路（MIT）。
 
-实现位置：`flutter/lib/ui/liquid_glass.dart` + `flutter/shaders/liquid_glass.frag`。
+实现位置：`flutter/lib/ui/liquid_glass.dart`；完整材质分级、迁移清单、限制与验收记录见
+[ANDROID_GLASS.md](ANDROID_GLASS.md)。
 
 - 默认使用 `BackdropFilter` 毛玻璃 + tint/渐变/描边/高光叠层（Windows、测试与 Android 均走这条稳定路径）。
 - 实验性的 `ImageFilter.shader` 折射路径默认**关闭**：Flutter 3.32 在多个 `BackdropFilter` 玻璃层

@@ -53,9 +53,7 @@ void main() {
     expect(find.byKey(const ValueKey('app-menu')), findsNothing);
   });
 
-  testWidgets('up from protocol switches focuses the receiver name field', (
-    tester,
-  ) async {
+  testWidgets('MiPlay 上键聚焦编辑按钮，点击编辑后才聚焦名称输入框', (tester) async {
     final initial = FocusNode(debugLabel: 'settings-miplay-test');
     addTearDown(initial.dispose);
     tester.view.physicalSize = const Size(480, 900);
@@ -84,15 +82,112 @@ void main() {
         ),
       ),
     );
+    // 展示态：没有输入框，进入设置不会自动弹键盘。
+    expect(find.byType(TextField), findsNothing);
+
     initial.requestFocus();
     await tester.pump();
     expect(initial.hasPrimaryFocus, isTrue);
 
     await tester.sendKeyEvent(LogicalKeyboardKey.arrowUp);
     await tester.pump();
+    expect(
+      FocusManager.instance.primaryFocus?.debugLabel,
+      'settings-name-edit',
+    );
+    expect(find.byType(TextField), findsNothing);
 
+    await tester.tap(find.byKey(const ValueKey('edit-name')));
+    await tester.pumpAndSettle();
     final textField = tester.widget<TextField>(find.byType(TextField));
     expect(textField.focusNode?.hasPrimaryFocus, isTrue);
+  });
+
+  testWidgets('名称展示→编辑→取消恢复原名，不触发持久化', (tester) async {
+    final initial = FocusNode(debugLabel: 'settings-cancel-test');
+    addTearDown(initial.dispose);
+    final names = <String>[];
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: ThemeData(splashFactory: NoSplash.splashFactory),
+        home: Scaffold(
+          body: SettingsView(
+            state: const AppState(
+              initialized: true,
+              settings: AppSettings(receiverName: '客厅 FusionPlay'),
+            ),
+            initialFocusNode: initial,
+            onClose: () {},
+            onReceiverName: names.add,
+            onStartup: (_) {},
+            onAutoWake: (_) {},
+            onAdvancedEffects: (_) {},
+            onMiPlay: (_) {},
+            onMiPlayIdentity: (_) {},
+            onAirPlay: (_) {},
+            onDlna: (_) {},
+            onExportLogs: () async {},
+          ),
+        ),
+      ),
+    );
+    expect(find.text('客厅 FusionPlay'), findsOneWidget);
+
+    await tester.tap(find.byKey(const ValueKey('edit-name')));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byType(TextField), '书房');
+    await tester.pump();
+    await tester.tap(find.text('取消'));
+    await tester.pumpAndSettle();
+
+    expect(names, isEmpty);
+    expect(find.byType(TextField), findsNothing);
+    expect(find.text('客厅 FusionPlay'), findsOneWidget);
+  });
+
+  testWidgets('名称编辑→应用原子调用一次 onReceiverName 并回到展示态', (tester) async {
+    final initial = FocusNode(debugLabel: 'settings-save-test');
+    addTearDown(initial.dispose);
+    final names = <String>[];
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: ThemeData(splashFactory: NoSplash.splashFactory),
+        home: Scaffold(
+          body: SettingsView(
+            state: const AppState(
+              initialized: true,
+              settings: AppSettings(receiverName: '旧名字'),
+            ),
+            initialFocusNode: initial,
+            onReceiverName: names.add,
+            onClose: () {},
+            onStartup: (_) {},
+            onAutoWake: (_) {},
+            onAdvancedEffects: (_) {},
+            onMiPlay: (_) {},
+            onMiPlayIdentity: (_) {},
+            onAirPlay: (_) {},
+            onDlna: (_) {},
+            onExportLogs: () async {},
+          ),
+        ),
+      ),
+    );
+
+    await tester.tap(find.byKey(const ValueKey('edit-name')));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byType(TextField), '新名字');
+    await tester.pump();
+    await tester.tap(find.text('应用'));
+    await tester.pumpAndSettle();
+
+    expect(names, ['新名字']);
+    expect(find.byType(TextField), findsNothing);
+    expect(find.text('新名字'), findsOneWidget);
+    expect(
+      FocusManager.instance.primaryFocus?.debugLabel,
+      isNot('settings-name'),
+    );
   });
 
   testWidgets('日志导出入口与关于应用位于同一卡片并可触发', (tester) async {

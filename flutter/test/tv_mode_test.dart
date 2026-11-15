@@ -159,7 +159,7 @@ void main() {
     expect(style.focusScale, 1);
   });
 
-  testWidgets('TV 打开设置焦点在 MiPlay 行，非 TV 在名称输入框', (tester) async {
+  testWidgets('TV 打开设置焦点在 MiPlay 行；非 TV 也不自动聚焦名称输入框', (tester) async {
     await _pumpHome(
       tester,
       controller: controller,
@@ -181,10 +181,12 @@ void main() {
     );
     await tester.pump();
     await _openSettings(tester);
-    expect(FocusManager.instance.primaryFocus?.debugLabel, 'settings-name');
+    // 非 TV 同样不自动聚焦名称输入框（避免自动弹键盘）。
+    expect(FocusManager.instance.primaryFocus?.debugLabel, 'settings-miplay');
+    expect(find.byType(TextField), findsNothing);
   });
 
-  testWidgets('TV 设置 MiPlay 上键回名称输入框、下键进入其它开关', (tester) async {
+  testWidgets('TV 设置 MiPlay 上键聚焦编辑按钮，点击编辑后才聚焦名称输入框', (tester) async {
     await _pumpHome(
       tester,
       controller: controller,
@@ -195,7 +197,21 @@ void main() {
 
     await tester.sendKeyEvent(LogicalKeyboardKey.arrowUp);
     await tester.pump();
-    expect(FocusManager.instance.primaryFocus?.debugLabel, 'settings-name');
+    expect(
+      FocusManager.instance.primaryFocus?.debugLabel,
+      'settings-name-edit',
+    );
+    expect(find.byType(TextField), findsNothing);
+
+    await tester.tap(find.byKey(const ValueKey('edit-name')));
+    await tester.pumpAndSettle();
+    final field = tester.widget<TextField>(find.byType(TextField));
+    expect(field.focusNode?.hasPrimaryFocus, isTrue);
+    expect(field.controller?.selection.isCollapsed, isTrue);
+
+    await tester.tap(find.text('取消'));
+    await tester.pumpAndSettle();
+    expect(find.byType(TextField), findsNothing);
 
     final miPlayFocus = FocusManager.instance.rootScope.descendants
         .where((node) => node.debugLabel == 'settings-miplay')
@@ -208,6 +224,28 @@ void main() {
     final focused = FocusManager.instance.primaryFocus;
     expect(focused, isNotNull);
     expect(focused?.debugLabel, isNot('settings-name'));
+    expect(focused?.debugLabel, isNot('settings-name-edit'));
+  });
+
+  testWidgets('进入设置不弹键盘/不选文本；点击编辑后才请求输入法', (tester) async {
+    await _pumpHome(
+      tester,
+      controller: controller,
+      state: _state(isTelevision: true),
+    );
+    await _openSettings(tester);
+    expect(find.byType(TextField), findsNothing);
+    expect(tester.testTextInput.isVisible, isFalse);
+    expect(FocusManager.instance.primaryFocus?.debugLabel, 'settings-miplay');
+
+    await tester.tap(find.byKey(const ValueKey('edit-name')));
+    await tester.pumpAndSettle();
+    expect(tester.testTextInput.isVisible, isTrue);
+    expect(FocusManager.instance.primaryFocus?.debugLabel, 'settings-name');
+
+    await tester.tap(find.text('取消'));
+    await tester.pumpAndSettle();
+    expect(tester.testTextInput.isVisible, isFalse);
   });
 
   testWidgets('TV 设置面板宽度上限 720（仍 ≤ 半屏），非 TV 为 560', (tester) async {
