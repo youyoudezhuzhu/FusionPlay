@@ -1,5 +1,4 @@
 import 'dart:math' as math;
-import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
 
@@ -148,51 +147,40 @@ class FusionSettingsSheet extends StatelessWidget {
       // content fades into it naturally and there is no 1px divider.
       PinnedHeaderSliver(
         key: const ValueKey('settings-pinned-header'),
-        child: ClipRect(
-          child: BackdropFilter(
-            // Same colour family as the settings panel, but blurred: this is
-            // a translucent material over the panel, not an extra darker bar.
-            filter: ui.ImageFilter.blur(sigmaX: 18, sigmaY: 18),
-            child: DecoratedBox(
-              decoration: const BoxDecoration(
-                gradient: LinearGradient(
-                  begin: Alignment.topCenter,
-                  end: Alignment.bottomCenter,
-                  colors: [
-                    Color(0xB314191F),
-                    Color(0xB314191F),
-                    Color(0x0014191F),
-                  ],
-                  stops: [0.0, 0.72, 1.0],
+        child: DecoratedBox(
+          decoration: const BoxDecoration(
+            gradient: LinearGradient(
+              begin: Alignment.topCenter,
+              end: Alignment.bottomCenter,
+              colors: [Color(0xFF14191F), Color(0xFF14191F), Color(0x0014191F)],
+              stops: [0.0, 0.72, 1.0],
+            ),
+          ),
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(20, 10, 10, 8),
+            child: Row(
+              children: [
+                const FusionVectorIcon(
+                  FusionIcons.settings,
+                  size: 20,
+                  color: Color(0xB8FFFFFF),
                 ),
-              ),
-              child: Padding(
-                padding: const EdgeInsets.fromLTRB(20, 10, 10, 8),
-                child: Row(
-                  children: [
-                    const FusionVectorIcon(
-                      FusionIcons.settings,
-                      size: 20,
-                      color: Color(0xB8FFFFFF),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Text(
+                    title,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      fontSize: 20,
+                      color: Color(0xEBFFFFFF),
+                      fontWeight: FusionTypography.semiBoldFontWeight,
+                      fontVariations: FusionTypography.semiBold,
                     ),
-                    const SizedBox(width: 10),
-                    Expanded(
-                      child: Text(
-                        title,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(
-                          fontSize: 20,
-                          color: Color(0xEBFFFFFF),
-                          fontWeight: FusionTypography.semiBoldFontWeight,
-                          fontVariations: FusionTypography.semiBold,
-                        ),
-                      ),
-                    ),
-                    _CloseSettingsButton(onClose: onClose),
-                  ],
+                  ),
                 ),
-              ),
+                _CloseSettingsButton(onClose: onClose),
+              ],
             ),
           ),
         ),
