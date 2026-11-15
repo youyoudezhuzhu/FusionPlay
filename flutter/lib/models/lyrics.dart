@@ -1,5 +1,47 @@
 import 'package:flutter/foundation.dart';
 
+import 'playback_channel.dart';
+
+export 'playback_channel.dart';
+
+/// Whether the current channel can provide lyrics at all.
+///
+/// AirPlay 2 receiver metadata has no lyrics field, so the player shows an
+/// explanatory panel instead of the usual "暂无歌词" empty state. DLNA / MiPlay
+/// and unknown sources stay optimistic: the sender *may* provide lyrics.
+enum LyricsAvailability { unsupported, supported }
+
+LyricsAvailability lyricsAvailabilityForChannel(PlaybackChannel channel) =>
+    channel == PlaybackChannel.airPlay
+    ? LyricsAvailability.unsupported
+    : LyricsAvailability.supported;
+
+LyricsAvailability lyricsAvailabilityForProtocol(String? protocol) =>
+    lyricsAvailabilityForChannel(playbackChannelForProtocol(protocol));
+
+/// Empty-state copy when a supported channel provides no lyrics.
+class LyricsEmptyCopy {
+  const LyricsEmptyCopy({required this.title, required this.description});
+
+  final String title;
+  final String description;
+}
+
+/// Channel-specific "no lyrics this time" copy (never used for AirPlay, which
+/// has its own unsupported-info panel).
+LyricsEmptyCopy lyricsEmptyCopyForChannel(PlaybackChannel channel) =>
+    switch (channel) {
+      PlaybackChannel.dlna => const LyricsEmptyCopy(
+        title: '此发送端未提供歌词',
+        description: '部分投屏 App 不传输歌词；可在音频同目录放置同名 .lrc 后重试',
+      ),
+      PlaybackChannel.miPlay => const LyricsEmptyCopy(
+        title: '此歌曲没有歌词',
+        description: '歌词由手机端随媒体信息下发，当前歌曲未附带',
+      ),
+      _ => const LyricsEmptyCopy(title: '暂无歌词', description: '歌词由发送端提供'),
+    };
+
 /// One karaoke word/token inside a lyric line (MiPlay / AirPlay word timing).
 class LyricsWord {
   const LyricsWord({required this.startMs, this.endMs, required this.text});

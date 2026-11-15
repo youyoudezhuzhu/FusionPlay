@@ -28,6 +28,8 @@ AppState _state({
   bool lyricsLoading = false,
   bool playing = false,
   String? protocol,
+  String? qualityText,
+  String? trackIdentity,
   int? volumePercent = 65,
   int? durationMs = 180000,
   PlaybackControls controls = PlaybackControls.all,
@@ -36,11 +38,13 @@ AppState _state({
   playback: PlaybackSnapshot(
     title: 'Track',
     artist: 'Artist',
+    trackIdentity: trackIdentity,
     durationMs: durationMs,
     positionMs: 200,
     streamActive: true,
     isPlaying: playing,
     protocol: protocol,
+    qualityText: qualityText,
     volumePercent: volumePercent,
     lyrics: lyrics,
     lyricsLoading: lyricsLoading,
@@ -158,11 +162,19 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('无歌词时右列显示优雅空态', (tester) async {
+  testWidgets('无歌词时改为封面居中布局并显示渠道说明', (tester) async {
     await _pumpPlayer(tester, _state());
 
+    expect(
+      find.byKey(const ValueKey('player-centered-layout')),
+      findsOneWidget,
+    );
+    expect(
+      find.byKey(const ValueKey('player-layout-horizontal')),
+      findsOneWidget,
+    );
+    expect(find.byKey(const ValueKey('player-lyrics-view')), findsNothing);
     expect(find.text('暂无歌词'), findsOneWidget);
-    expect(find.text('歌词由发送端提供'), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
 
@@ -344,6 +356,264 @@ void main() {
   testWidgets('disableAnimations 下正常渲染', (tester) async {
     await _pumpPlayer(tester, _state(lyrics: _lyrics()), reduceMotion: true);
     expect(find.text('第一句'), findsWidgets);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('AirPlay 无歌词：居中布局 + AirPlay 2 不提供歌词', (tester) async {
+    await _pumpPlayer(
+      tester,
+      _state(
+        protocol: 'airplay',
+        qualityText: 'AAC / 44.1 kHz / 16-bit / 2 ch',
+      ),
+    );
+
+    expect(
+      find.byKey(const ValueKey('player-centered-layout')),
+      findsOneWidget,
+    );
+    expect(find.byKey(const ValueKey('player-lyrics-view')), findsNothing);
+    expect(find.text('AirPlay 2 不提供歌词'), findsOneWidget);
+    expect(find.text('暂无歌词'), findsNothing);
+    // 顶部协议/音质 chip 保留。
+    expect(find.text('AirPlay 2'), findsWidgets);
+    expect(find.text('AAC / 44.1 kHz / 16-bit / 2 ch'), findsOneWidget);
+    // AirPlay 永远不出现歌词开关。
+    expect(
+      find.byKey(const ValueKey('playback-lyrics-toggle-button')),
+      findsNothing,
+    );
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('DLNA 无歌词：居中布局 + 发送端未提供歌词', (tester) async {
+    await _pumpPlayer(tester, _state(protocol: 'dlna'));
+
+    expect(
+      find.byKey(const ValueKey('player-centered-layout')),
+      findsOneWidget,
+    );
+    expect(find.byKey(const ValueKey('player-lyrics-view')), findsNothing);
+    expect(find.text('此发送端未提供歌词'), findsOneWidget);
+    expect(find.text('暂无歌词'), findsNothing);
+  });
+
+  testWidgets('小米妙播无歌词：居中布局 + 本曲没有歌词', (tester) async {
+    await _pumpPlayer(tester, _state(protocol: 'xiaomi_miplay'));
+
+    expect(
+      find.byKey(const ValueKey('player-centered-layout')),
+      findsOneWidget,
+    );
+    expect(find.text('此歌曲没有歌词'), findsOneWidget);
+    expect(find.text('暂无歌词'), findsNothing);
+  });
+
+  testWidgets('AirPlay 即使带 lyrics 也走居中布局（容错不崩）', (tester) async {
+    await _pumpPlayer(tester, _state(lyrics: _lyrics(), protocol: 'airplay'));
+
+    expect(
+      find.byKey(const ValueKey('player-centered-layout')),
+      findsOneWidget,
+    );
+    expect(find.byKey(const ValueKey('player-lyrics-view')), findsNothing);
+    expect(find.text('第一句'), findsNothing);
+    expect(find.text('AirPlay 2 不提供歌词'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('有歌词默认双栏，点击歌词按钮可隐藏/恢复', (tester) async {
+    await _pumpPlayer(
+      tester,
+      _state(lyrics: _lyrics(), protocol: 'xiaomi_miplay'),
+    );
+
+    expect(find.byKey(const ValueKey('player-lyrics-view')), findsOneWidget);
+    final toggle = find.byKey(const ValueKey('playback-lyrics-toggle-button'));
+    expect(toggle, findsOneWidget);
+
+    await tester.tap(toggle);
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('player-lyrics-view')), findsNothing);
+    expect(
+      find.byKey(const ValueKey('player-centered-layout')),
+      findsOneWidget,
+    );
+    // 用户主动隐藏时不再显示“无歌词”说明。
+    expect(find.text('此歌曲没有歌词'), findsNothing);
+    expect(find.text('暂无歌词'), findsNothing);
+
+    await tester.tap(toggle);
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('player-lyrics-view')), findsOneWidget);
+  });
+
+  testWidgets('换曲后歌词显示状态重置为显示', (tester) async {
+    tester.view.physicalSize = const Size(1000, 660);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    await tester.pumpWidget(
+      _playerHost(
+        _state(
+          lyrics: _lyrics(),
+          protocol: 'xiaomi_miplay',
+          trackIdentity: 'track-a',
+        ),
+      ),
+    );
+    await tester.pump();
+    await tester.tap(
+      find.byKey(const ValueKey('playback-lyrics-toggle-button')),
+    );
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('player-lyrics-view')), findsNothing);
+
+    await tester.pumpWidget(
+      _playerHost(
+        _state(
+          lyrics: _lyrics(),
+          protocol: 'xiaomi_miplay',
+          trackIdentity: 'track-b',
+        ),
+      ),
+    );
+    await tester.pump();
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('player-lyrics-view')), findsOneWidget);
+  });
+
+  testWidgets('居中↔双栏切换使用 300ms fade+scale 过渡', (tester) async {
+    tester.view.physicalSize = const Size(1000, 660);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    await tester.pumpWidget(_playerHost(_state(protocol: 'dlna')));
+    await tester.pump();
+    final switcher = tester.widget<AnimatedSwitcher>(
+      find.byKey(const ValueKey('player-body-switcher')),
+    );
+    expect(switcher.duration, const Duration(milliseconds: 300));
+    expect(
+      find.byKey(const ValueKey('player-centered-layout')),
+      findsOneWidget,
+    );
+
+    await tester.pumpWidget(
+      _playerHost(_state(protocol: 'dlna', lyrics: _lyrics())),
+    );
+    await tester.pump();
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('player-lyrics-view')), findsOneWidget);
+    expect(find.byKey(const ValueKey('player-centered-layout')), findsNothing);
+  });
+
+  testWidgets('reduce motion 时布局切换直接完成', (tester) async {
+    tester.view.physicalSize = const Size(1000, 660);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    await tester.pumpWidget(
+      _playerHost(_state(protocol: 'dlna'), reduceMotion: true),
+    );
+    await tester.pump();
+    final switcher = tester.widget<AnimatedSwitcher>(
+      find.byKey(const ValueKey('player-body-switcher')),
+    );
+    expect(switcher.duration, Duration.zero);
+  });
+
+  testWidgets('焦点链：进度→播放→歌词按钮→三点菜单→进度', (tester) async {
+    final menuFocus = FocusNode(debugLabel: 'test-menu');
+    final progressFocus = FocusNode(debugLabel: 'test-progress');
+    addTearDown(menuFocus.dispose);
+    addTearDown(progressFocus.dispose);
+
+    await _pumpPlayer(
+      tester,
+      _state(lyrics: _lyrics(), protocol: 'xiaomi_miplay'),
+      menuFocusNode: menuFocus,
+      onOpenMenu: () {},
+      progressFocusNode: progressFocus,
+    );
+
+    progressFocus.requestFocus();
+    await tester.pump();
+    await tester.sendKeyEvent(LogicalKeyboardKey.arrowDown);
+    await tester.pump();
+    expect(FocusManager.instance.primaryFocus?.debugLabel, 'player-play-pause');
+
+    await tester.sendKeyEvent(LogicalKeyboardKey.arrowUp);
+    await tester.pump();
+    expect(
+      FocusManager.instance.primaryFocus?.debugLabel,
+      'player-lyrics-toggle',
+    );
+
+    await tester.sendKeyEvent(LogicalKeyboardKey.arrowRight);
+    await tester.pump();
+    expect(FocusManager.instance.primaryFocus?.debugLabel, 'test-menu');
+
+    await tester.sendKeyEvent(LogicalKeyboardKey.arrowDown);
+    await tester.pump();
+    expect(progressFocus.hasPrimaryFocus, isTrue);
+
+    await tester.sendKeyEvent(LogicalKeyboardKey.arrowUp);
+    await tester.pump();
+    expect(menuFocus.hasPrimaryFocus, isTrue);
+
+    await tester.sendKeyEvent(LogicalKeyboardKey.arrowLeft);
+    await tester.pump();
+    expect(
+      FocusManager.instance.primaryFocus?.debugLabel,
+      'player-lyrics-toggle',
+    );
+  });
+
+  testWidgets('AirPlay 居中布局在矮横屏 620x320 不溢出', (tester) async {
+    await _pumpPlayer(
+      tester,
+      _state(protocol: 'airplay'),
+      size: const Size(620, 320),
+    );
+    expect(
+      find.byKey(const ValueKey('player-centered-layout')),
+      findsOneWidget,
+    );
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('居中布局在纵向 420x760 不溢出', (tester) async {
+    await _pumpPlayer(
+      tester,
+      _state(protocol: 'dlna'),
+      size: const Size(420, 760),
+    );
+    expect(
+      find.byKey(const ValueKey('player-centered-layout')),
+      findsOneWidget,
+    );
+    await tester.pump();
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('隐藏歌词后的居中布局在矮横屏也不溢出', (tester) async {
+    await _pumpPlayer(
+      tester,
+      _state(lyrics: _lyrics(), protocol: 'xiaomi_miplay'),
+      size: const Size(620, 320),
+    );
+    await tester.tap(
+      find.byKey(const ValueKey('playback-lyrics-toggle-button')),
+    );
+    await tester.pumpAndSettle();
+    expect(
+      find.byKey(const ValueKey('player-centered-layout')),
+      findsOneWidget,
+    );
     expect(tester.takeException(), isNull);
   });
 

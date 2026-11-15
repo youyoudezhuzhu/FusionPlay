@@ -303,7 +303,7 @@ class _FusionPlayHomeState extends State<FusionPlayHome> {
             _aboutRow('版本', fusionPlayVersion),
             _aboutRow(
               '协议',
-              _protocolLabel(widget.state.playback.protocol) ?? '—',
+              playbackProtocolLabel(widget.state.playback.protocol) ?? '—',
             ),
             _aboutRow('设备名', widget.state.receiverName),
           ],
@@ -351,20 +351,6 @@ class _FusionPlayHomeState extends State<FusionPlayHome> {
       ],
     ),
   );
-
-  String? _protocolLabel(String? protocol) {
-    final value = protocol?.trim();
-    if (value == null || value.isEmpty) return null;
-    final normalized = value.toLowerCase();
-    if (normalized.contains('miplay') ||
-        normalized.contains('xiaomi') ||
-        value == '小米妙播') {
-      return '小米妙播';
-    }
-    if (normalized.contains('airplay')) return 'AirPlay';
-    if (normalized.contains('dlna')) return 'DLNA';
-    return value;
-  }
 
   void _returnFocusToMenuButton() {
     WidgetsBinding.instance.addPostFrameCallback((_) {

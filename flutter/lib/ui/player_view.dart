@@ -77,6 +77,15 @@ class _PlayerViewState extends State<PlayerView> {
   final ValueNotifier<bool> _playPausePressed = ValueNotifier(false);
   final ValueNotifier<bool> _nextPressed = ValueNotifier(false);
   final ValueNotifier<bool> _menuPressed = ValueNotifier(false);
+  final FocusNode _lyricsToggleFocus = FocusNode(
+    debugLabel: 'player-lyrics-toggle',
+  );
+  final ValueNotifier<bool> _lyricsTogglePressed = ValueNotifier(false);
+
+  /// Whether the lyrics column is shown for the current track. Defaults to
+  /// true and resets on track/source changes or when lyrics appear.
+  bool _lyricsVisible = true;
+  late String _lastTrackKey;
 
   bool seeking = false;
   double? seekPositionMs;
@@ -119,6 +128,37 @@ class _PlayerViewState extends State<PlayerView> {
         playback.durationMs != null;
   }
 
+  bool get _lyricsSupported =>
+      lyricsAvailabilityForProtocol(widget.state.playback.protocol) ==
+      LyricsAvailability.supported;
+
+  bool _hasDisplayableLyricsFor(PlaybackSnapshot playback) {
+    final lyrics = playback.lyrics;
+    return playback.lyricsLoading || (lyrics != null && lyrics.hasLyrics);
+  }
+
+  bool get _hasDisplayableLyrics =>
+      _hasDisplayableLyricsFor(widget.state.playback);
+
+  bool get _lyricsToggleVisible => _lyricsSupported && _hasDisplayableLyrics;
+
+  /// Two-column lyrics layout: only when the channel supports lyrics and the
+  /// user has not hidden them. While loading we keep the two-column shimmer
+  /// placeholder even if the user had hidden lyrics before.
+  bool get _showLyricsLayout =>
+      _lyricsSupported &&
+      _hasDisplayableLyrics &&
+      (widget.state.playback.lyricsLoading || _lyricsVisible);
+
+  String _trackKeyOf(PlaybackSnapshot playback) {
+    final identity = playback.trackIdentity?.trim();
+    if (identity != null && identity.isNotEmpty) return identity;
+    final epoch = playback.sourceEpoch;
+    if (epoch != null) return 'epoch:$epoch';
+    return '${playback.protocol ?? ''}\u001f${playback.title ?? ''}'
+        '\u001f${playback.artist ?? ''}\u001f${playback.mediaUrl ?? ''}';
+  }
+
   bool get _playVisible => _hasPlayback && _controls.playPause;
 
   bool get _previousVisible => _hasPlayback && _controls.previous;
@@ -135,6 +175,7 @@ class _PlayerViewState extends State<PlayerView> {
   @override
   void initState() {
     super.initState();
+    _lastTrackKey = _trackKeyOf(widget.state.playback);
     final identity = _artworkHistoryIdentity(widget);
     if (identity != null) {
       _artworkHistory.add(identity);
@@ -145,6 +186,17 @@ class _PlayerViewState extends State<PlayerView> {
   @override
   void didUpdateWidget(covariant PlayerView oldWidget) {
     super.didUpdateWidget(oldWidget);
+    final nextTrackKey = _trackKeyOf(widget.state.playback);
+    final previousHadLyrics = _hasDisplayableLyricsFor(
+      oldWidget.state.playback,
+    );
+    final nextHasLyrics = _hasDisplayableLyricsFor(widget.state.playback);
+    if (nextTrackKey != _lastTrackKey ||
+        (!previousHadLyrics && nextHasLyrics)) {
+      // New track/source or lyrics became available: show them by default.
+      _lyricsVisible = true;
+    }
+    _lastTrackKey = nextTrackKey;
     final artworkTransitionChanged = widget.artworkIdentity != null
         ? widget.artworkIdentity != oldWidget.artworkIdentity
         : widget.artworkSource != oldWidget.artworkSource;
@@ -202,6 +254,8 @@ class _PlayerViewState extends State<PlayerView> {
     _playPausePressed.dispose();
     _nextPressed.dispose();
     _menuPressed.dispose();
+    _lyricsToggleFocus.dispose();
+    _lyricsTogglePressed.dispose();
     super.dispose();
   }
 
@@ -290,10 +344,49 @@ class _PlayerViewState extends State<PlayerView> {
     return LayoutBuilder(
       builder: (context, outer) {
         final landscape = outer.maxWidth > outer.maxHeight;
+        final reduceMotion = _reduceMotion;
+        final showLyrics = _showLyricsLayout;
+        final body = showLyrics
+            ? (landscape ? _landscapeBody() : _portraitBody())
+            : _centeredBody(landscape: landscape);
         return Column(
           children: [
             _topBar(landscape: landscape),
-            Expanded(child: landscape ? _landscapeBody() : _portraitBody()),
+            Expanded(
+              child: AnimatedSwitcher(
+                key: const ValueKey('player-body-switcher'),
+                duration: reduceMotion
+                    ? Duration.zero
+                    : const Duration(milliseconds: 300),
+                reverseDuration: reduceMotion
+                    ? Duration.zero
+                    : const Duration(milliseconds: 240),
+                switchInCurve: Curves.easeOutCubic,
+                switchOutCurve: Curves.easeInCubic,
+                layoutBuilder: (current, previous) => Stack(
+                  fit: StackFit.expand,
+                  children: [...previous, ?current],
+                ),
+                transitionBuilder: (child, animation) {
+                  if (reduceMotion) return child;
+                  final curved = CurvedAnimation(
+                    parent: animation,
+                    curve: Curves.easeOutCubic,
+                  );
+                  return FadeTransition(
+                    opacity: curved,
+                    child: ScaleTransition(
+                      scale: Tween<double>(begin: .98, end: 1).animate(curved),
+                      child: child,
+                    ),
+                  );
+                },
+                child: KeyedSubtree(
+                  key: ValueKey<bool>(showLyrics),
+                  child: body,
+                ),
+              ),
+            ),
             _dock(),
           ],
         );
@@ -307,7 +400,7 @@ class _PlayerViewState extends State<PlayerView> {
 
   Widget _topBar({required bool landscape}) {
     final playback = widget.state.playback;
-    final protocol = _protocolLabel(playback.protocol);
+    final protocol = playbackProtocolLabel(playback.protocol);
     final quality = playback.qualityText?.trim();
     final reduceMotion = _reduceMotion;
     final entrance = reduceMotion
@@ -355,10 +448,104 @@ class _PlayerViewState extends State<PlayerView> {
               ),
             ),
           ),
+          if (_lyricsToggleVisible) ...[
+            _lyricsToggleButton(),
+            const SizedBox(width: 8),
+          ],
           if (_menuVisible) _menuButton(),
         ],
       ),
     );
+  }
+
+  Widget _lyricsToggleButton() {
+    final active = _lyricsVisible;
+    final reduceMotion = _reduceMotion;
+    final focusVisible = _menuVisible;
+    return AnimatedPressScale(
+      key: const ValueKey('playback-lyrics-toggle-button'),
+      externalPressed: _lyricsTogglePressed,
+      child: RemoteFocusFrame(
+        focusNode: _lyricsToggleFocus,
+        onActivate: _toggleLyricsVisibility,
+        onPressChange: (pressed) => _lyricsTogglePressed.value = pressed,
+        borderColor: Colors.white,
+        shape: const G2ContinuousBorder(radius: 999),
+        shortcuts: <ShortcutActivator, Intent>{
+          if (focusVisible)
+            const SingleActivator(LogicalKeyboardKey.arrowRight):
+                const DirectionalFocusIntent(TraversalDirection.right),
+          const SingleActivator(LogicalKeyboardKey.arrowDown):
+              const DirectionalFocusIntent(TraversalDirection.down),
+        },
+        actions: <Type, Action<Intent>>{
+          DirectionalFocusIntent: CallbackAction<DirectionalFocusIntent>(
+            onInvoke: (intent) {
+              final target = switch (intent.direction) {
+                TraversalDirection.right => focusVisible ? _menuFocus : null,
+                TraversalDirection.down =>
+                  _seekable
+                      ? _progressFocus
+                      : (_playVisible ? _playPauseFocus : null),
+                _ => null,
+              };
+              target?.requestFocus();
+              return null;
+            },
+          ),
+        },
+        child: LiquidGlass(
+          borderRadius: 999,
+          blurSigma: 16,
+          tint: active ? const Color(0x3DFFFFFF) : const Color(0x1FFFFFFF),
+          animate: !reduceMotion,
+          forceFallback: widget.forceGlassFallback,
+          child: Material(
+            color: Colors.transparent,
+            shape: const StadiumBorder(),
+            clipBehavior: Clip.antiAlias,
+            child: InkWell(
+              onTap: _toggleLyricsVisibility,
+              child: Padding(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 12,
+                  vertical: 9,
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(
+                      active
+                          ? Icons.subtitles_rounded
+                          : Icons.subtitles_off_rounded,
+                      size: 18,
+                      color: Colors.white.withValues(alpha: active ? .94 : .68),
+                    ),
+                    const SizedBox(width: 6),
+                    Text(
+                      '歌词',
+                      style: TextStyle(
+                        fontSize: 12,
+                        color: Colors.white.withValues(
+                          alpha: active ? .94 : .66,
+                        ),
+                        fontWeight: FusionTypography.mediumFontWeight,
+                        fontVariations: FusionTypography.medium,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  void _toggleLyricsVisibility() {
+    if (!_lyricsToggleVisible) return;
+    setState(() => _lyricsVisible = !_lyricsVisible);
   }
 
   Widget _chip(String text) => Container(
@@ -395,11 +582,19 @@ class _PlayerViewState extends State<PlayerView> {
       shortcuts: <ShortcutActivator, Intent>{
         const SingleActivator(LogicalKeyboardKey.arrowDown):
             const DirectionalFocusIntent(TraversalDirection.down),
+        if (_lyricsToggleVisible)
+          const SingleActivator(LogicalKeyboardKey.arrowLeft):
+              const DirectionalFocusIntent(TraversalDirection.left),
       },
       actions: <Type, Action<Intent>>{
         DirectionalFocusIntent: CallbackAction<DirectionalFocusIntent>(
-          onInvoke: (_) {
-            _focusAfterTopBar();
+          onInvoke: (intent) {
+            if (intent.direction == TraversalDirection.left &&
+                _lyricsToggleVisible) {
+              _lyricsToggleFocus.requestFocus();
+            } else {
+              _focusAfterTopBar();
+            }
             return null;
           },
         ),
@@ -441,20 +636,6 @@ class _PlayerViewState extends State<PlayerView> {
     } else if (_controls.any) {
       _volumeFocus.requestFocus();
     }
-  }
-
-  String? _protocolLabel(String? protocol) {
-    final value = protocol?.trim();
-    if (value == null || value.isEmpty) return null;
-    final normalized = value.toLowerCase();
-    if (normalized.contains('miplay') ||
-        normalized.contains('xiaomi') ||
-        value == '小米妙播') {
-      return '小米妙播';
-    }
-    if (normalized.contains('airplay')) return 'AirPlay';
-    if (normalized.contains('dlna')) return 'DLNA';
-    return value;
   }
 
   // ------------------------------------------------------------------
@@ -619,52 +800,161 @@ class _PlayerViewState extends State<PlayerView> {
     return _ArtworkBreath(enabled: enabled, child: child);
   }
 
+  String _centeredHint(PlaybackSnapshot playback) {
+    final channel = playbackChannelForProtocol(playback.protocol);
+    if (channel == PlaybackChannel.airPlay) {
+      return 'AirPlay 2 不提供歌词';
+    }
+    return lyricsEmptyCopyForChannel(channel).title;
+  }
+
+  /// Single-column centered layout used when no lyrics can be displayed:
+  /// channel without lyrics (AirPlay), nothing provided this time, or the user
+  /// hid the lyrics. It never shows a "waiting/loading" empty state.
+  Widget _centeredBody({required bool landscape}) {
+    final playback = widget.state.playback;
+    final title = playback.title?.trim().isNotEmpty == true
+        ? playback.title!.trim()
+        : '暂无音乐';
+    final artist = playback.artist?.trim();
+    final hiddenByUser = _lyricsSupported && _hasDisplayableLyrics;
+    final hint = hiddenByUser ? null : _centeredHint(playback);
+    return LayoutBuilder(
+      builder: (context, content) {
+        final veryDense = content.maxHeight < 180;
+        final dense = content.maxHeight < 240;
+        // Reserve room for title, artist and the channel hint so the hint is
+        // never clipped at the bottom of the viewport (especially at 16:9).
+        final reservedText = veryDense
+            ? 48.0
+            : (dense ? 80.0 : (hint == null ? 96.0 : 140.0));
+        final artwork = math
+            .min(
+              math.min(
+                content.maxWidth * .40,
+                content.maxHeight - reservedText,
+              ),
+              420.0,
+            )
+            .clamp(veryDense ? 28.0 : (dense ? 40.0 : 96.0), 420.0)
+            .toDouble();
+        final titleSize = (artwork / 10.5).clamp(
+          veryDense ? 13.0 : (dense ? 15.0 : 22.0),
+          32.0,
+        );
+        final column = Column(
+          key: const ValueKey('player-centered-layout'),
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.center,
+          children: [
+            _breathingArtwork(size: artwork, child: _artworkCard(artwork)),
+            SizedBox(height: dense ? 8 : 18),
+            Text(
+              title,
+              maxLines: veryDense ? 1 : 2,
+              overflow: TextOverflow.ellipsis,
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                fontSize: titleSize,
+                height: 1.2,
+                color: Colors.white,
+                fontWeight: FusionTypography.semiBoldFontWeight,
+                fontVariations: FusionTypography.semiBold,
+                shadows: const [
+                  Shadow(blurRadius: 20, color: Color(0x66000000)),
+                ],
+              ),
+            ),
+            if (!veryDense && artist != null && artist.isNotEmpty) ...[
+              const SizedBox(height: 4),
+              Text(
+                artist,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                  fontSize: dense ? 12 : 16,
+                  color: Colors.white.withValues(alpha: .68),
+                  fontWeight: FusionTypography.regularFontWeight,
+                  fontVariations: FusionTypography.regular,
+                ),
+              ),
+            ],
+            if (hint != null) ...[
+              SizedBox(height: dense ? 6 : 12),
+              Text(
+                hint,
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                  fontSize: dense ? 11 : 13,
+                  height: 1.4,
+                  color: Colors.white.withValues(alpha: .56),
+                  fontWeight: FusionTypography.regularFontWeight,
+                  fontVariations: FusionTypography.regular,
+                ),
+              ),
+            ],
+          ],
+        );
+        return SingleChildScrollView(
+          key: ValueKey(
+            landscape ? 'player-layout-horizontal' : 'player-layout-compact',
+          ),
+          padding: const EdgeInsets.fromLTRB(20, 4, 20, 8),
+          child: ConstrainedBox(
+            constraints: BoxConstraints(
+              minHeight: math.max(0, content.maxHeight - 12),
+            ),
+            child: Center(
+              child: Padding(
+                padding: const EdgeInsets.symmetric(vertical: 6),
+                child: column,
+              ),
+            ),
+          ),
+        );
+      },
+    );
+  }
+
   Widget _lyricsColumn({
     required double activeFontSize,
     required double inactiveFontSize,
     bool alignCenter = false,
   }) {
     final playback = widget.state.playback;
-    final reduceMotion = _reduceMotion;
-    return TweenAnimationBuilder<double>(
-      tween: Tween(begin: 0, end: 1),
-      duration: reduceMotion
-          ? Duration.zero
-          : const Duration(milliseconds: 280),
-      curve: Curves.easeOutCubic,
-      builder: (context, reveal, child) => Opacity(
-        opacity: reveal,
-        child: Transform.translate(
-          offset: Offset(0, 10 * (1 - reveal)),
-          child: child,
-        ),
-      ),
-      child: LyricsView(
-        key: const ValueKey('player-lyrics-view'),
-        lyrics: playback.lyrics,
-        loading: playback.lyricsLoading,
-        isPlaying: playback.isPlaying,
-        positionMs: playback.positionMs,
-        durationMs: playback.durationMs,
-        trackKey:
-            playback.trackIdentity ??
-            playback.sourceEpoch ??
-            playback.mediaUrl ??
-            playback.protocol ??
-            'fusionplay-track',
-        foreground: Colors.white,
-        muted: Colors.white.withValues(alpha: .50),
-        activeColor: Colors.white,
-        activeFontSize: activeFontSize,
-        inactiveFontSize: inactiveFontSize,
-        lineGap: (activeFontSize * .30).clamp(7.0, 13.0),
-        textShadow: const [Shadow(blurRadius: 18, color: Color(0x66000000))],
-        semanticLabel: '歌词',
-      ),
+    final emptyCopy = lyricsEmptyCopyForChannel(
+      playbackChannelForProtocol(playback.protocol),
+    );
+    return LyricsView(
+      key: const ValueKey('player-lyrics-view'),
+      lyrics: playback.lyrics,
+      loading: playback.lyricsLoading,
+      isPlaying: playback.isPlaying,
+      positionMs: playback.positionMs,
+      durationMs: playback.durationMs,
+      trackKey: _trackKeyOf(playback),
+      foreground: Colors.white,
+      muted: Colors.white.withValues(alpha: .50),
+      activeColor: Colors.white,
+      activeFontSize: activeFontSize,
+      inactiveFontSize: inactiveFontSize,
+      lineGap: (activeFontSize * .30).clamp(7.0, 13.0),
+      textShadow: const [Shadow(blurRadius: 18, color: Color(0x66000000))],
+      emptyTitle: emptyCopy.title,
+      emptyDescription: emptyCopy.description,
+      semanticLabel: '歌词',
     );
   }
 
   String? _lyricsStatusLabel(PlaybackSnapshot playback) {
+    if (playbackChannelForProtocol(playback.protocol) ==
+        PlaybackChannel.airPlay) {
+      // AirPlay 2 never carries lyrics; don't advertise a lyric state chip.
+      return null;
+    }
     final lyrics = playback.lyrics;
     if (lyrics != null && lyrics.hasLyrics) {
       if (lyrics.hasWordTiming) return '逐字歌词';
@@ -930,9 +1220,11 @@ class _PlayerViewState extends State<PlayerView> {
             onInvoke: (intent) {
               final target = switch (intent.direction) {
                 TraversalDirection.up =>
-                  _seekable
-                      ? _progressFocus
-                      : (_menuVisible ? _menuFocus : null),
+                  _lyricsToggleVisible
+                      ? _lyricsToggleFocus
+                      : (_seekable
+                            ? _progressFocus
+                            : (_menuVisible ? _menuFocus : null)),
                 TraversalDirection.left =>
                   _previousVisible ? _previousFocus : null,
                 TraversalDirection.right =>
@@ -1026,9 +1318,11 @@ class _PlayerViewState extends State<PlayerView> {
             onInvoke: (intent) {
               final target = switch (intent.direction) {
                 TraversalDirection.up =>
-                  _seekable
-                      ? _progressFocus
-                      : (_menuVisible ? _menuFocus : null),
+                  _lyricsToggleVisible
+                      ? _lyricsToggleFocus
+                      : (_seekable
+                            ? _progressFocus
+                            : (_menuVisible ? _menuFocus : null)),
                 TraversalDirection.left => leftFocusNode,
                 TraversalDirection.right => rightFocusNode,
                 TraversalDirection.down => downFocusNode,

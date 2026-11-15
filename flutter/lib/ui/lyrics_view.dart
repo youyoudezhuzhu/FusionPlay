@@ -32,6 +32,8 @@ class LyricsView extends StatefulWidget {
     this.inactiveFontSize = 16,
     this.lineGap = 5,
     this.textShadow,
+    this.emptyTitle = '暂无歌词',
+    this.emptyDescription = '歌词由发送端提供',
   });
 
   final LyricsDocument? lyrics;
@@ -58,6 +60,10 @@ class LyricsView extends StatefulWidget {
   final double inactiveFontSize;
   final double lineGap;
   final List<Shadow>? textShadow;
+
+  /// Channel-specific copy for the "no lyrics" empty state.
+  final String emptyTitle;
+  final String emptyDescription;
 
   static const autoScrollDuration = Duration(milliseconds: 420);
   static const autoScrollPause = Duration(seconds: 4);
@@ -332,6 +338,8 @@ class _LyricsViewState extends State<LyricsView>
         key: const ValueKey('lyrics-empty'),
         foreground: widget.foreground,
         muted: _inactiveColor,
+        title: widget.emptyTitle,
+        description: widget.emptyDescription,
       );
     }
     return _LyricsListBody(
@@ -642,10 +650,14 @@ class _LyricsEmpty extends StatelessWidget {
     super.key,
     required this.foreground,
     required this.muted,
+    required this.title,
+    required this.description,
   });
 
   final Color foreground;
   final Color muted;
+  final String title;
+  final String description;
 
   @override
   Widget build(BuildContext context) => Center(
@@ -655,7 +667,8 @@ class _LyricsEmpty extends StatelessWidget {
         Icon(Icons.music_off_rounded, size: 30, color: muted),
         const SizedBox(height: 10),
         Text(
-          '暂无歌词',
+          title,
+          textAlign: TextAlign.center,
           style: TextStyle(
             fontSize: 15,
             color: foreground.withValues(alpha: .88),
@@ -665,7 +678,7 @@ class _LyricsEmpty extends StatelessWidget {
         ),
         const SizedBox(height: 4),
         Text(
-          '歌词由发送端提供',
+          description,
           textAlign: TextAlign.center,
           style: TextStyle(fontSize: 12, color: muted),
         ),

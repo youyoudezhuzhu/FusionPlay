@@ -203,7 +203,7 @@ void main() {
     expect(find.text('版本'), findsOneWidget);
     expect(find.text(fusionPlayVersion), findsOneWidget);
     expect(find.text('协议'), findsOneWidget);
-    expect(find.text('AirPlay'), findsWidgets);
+    expect(find.text('AirPlay 2'), findsWidgets);
     expect(find.text('设备名'), findsOneWidget);
     expect(find.text('客厅 FusionPlay'), findsOneWidget);
 
