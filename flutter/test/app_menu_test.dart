@@ -30,10 +30,11 @@ void _clearChannels() {
       .setMockMethodCallHandler(_updateChannel, null);
 }
 
-AppState _state() => const AppState(
+AppState _state({bool advancedEffects = false}) => AppState(
   initialized: true,
   receiverName: '客厅 FusionPlay',
-  playback: PlaybackSnapshot(
+  settings: AppSettings(advancedEffectsEnabled: advancedEffects),
+  playback: const PlaybackSnapshot(
     title: 'Track',
     artist: 'Artist',
     durationMs: 180000,
@@ -41,7 +42,7 @@ AppState _state() => const AppState(
     protocol: 'airplay',
     qualityText: 'AAC 44.1 kHz',
   ),
-  remoteControl: RemoteControlState(
+  remoteControl: const RemoteControlState(
     available: true,
     commands: {'play_pause', 'previous_track', 'next_track'},
   ),
@@ -52,6 +53,7 @@ Future<void> _pumpHome(
   WidgetTester tester, {
   required NativeAppController controller,
   bool isAndroid = false,
+  bool advancedEffects = false,
   Size size = const Size(1200, 600),
 }) async {
   tester.view.physicalSize = size;
@@ -63,7 +65,7 @@ Future<void> _pumpHome(
       theme: fusionTheme(),
       home: FusionPlayHome(
         controller: controller,
-        state: _state(),
+        state: _state(advancedEffects: advancedEffects),
         isAndroid: isAndroid,
         forceGlassFallback: true,
       ),
@@ -151,7 +153,7 @@ void main() {
     expect(find.byKey(const ValueKey('app-menu')), findsNothing);
   });
 
-  testWidgets('菜单项「设置」打开居中玻璃浮层，首个焦点在设置内容', (tester) async {
+  testWidgets('菜单项「设置」morph 成右侧玻璃面板，焦点进入设置内容', (tester) async {
     await _pumpHome(tester, controller: controller);
     await _openMenu(tester);
 
@@ -163,12 +165,19 @@ void main() {
     expect(find.text('自定义名称'), findsOneWidget);
     expect(find.byKey(const ValueKey('export-logs')), findsOneWidget);
     // 焦点进入设置内容（MiPlay 行），而不是关闭按钮。
-    expect(FocusManager.instance.primaryFocus?.debugLabel, 'settings-miplay');
+    expect(FocusManager.instance.primaryFocus?.debugLabel, 'settings-name');
 
-    // Escape 先关设置浮层。
+    // 第一次 Escape：设置收回菜单（不是直接回播放页），焦点回菜单首项。
     await tester.sendKeyEvent(LogicalKeyboardKey.escape);
     await tester.pumpAndSettle();
     expect(find.byKey(const ValueKey('settings-sheet')), findsNothing);
+    expect(find.byKey(const ValueKey('app-menu')), findsOneWidget);
+    expect(FocusManager.instance.primaryFocus?.debugLabel, 'menu-item-0');
+
+    // 第二次 Escape：菜单收回三点按钮。
+    await tester.sendKeyEvent(LogicalKeyboardKey.escape);
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('app-menu')), findsNothing);
     expect(FocusManager.instance.primaryFocus?.debugLabel, 'player-menu');
   });
 
@@ -189,6 +198,11 @@ void main() {
     await tester.tap(find.bySemanticsLabel('关闭设置'));
     await tester.pumpAndSettle();
     expect(find.byKey(const ValueKey('settings-sheet')), findsNothing);
+    expect(find.byKey(const ValueKey('app-menu')), findsOneWidget);
+
+    await tester.sendKeyEvent(LogicalKeyboardKey.escape);
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('app-menu')), findsNothing);
   });
 
   testWidgets('菜单项「关于」展示版本/协议/设备名', (tester) async {
@@ -218,7 +232,7 @@ void main() {
     await _openMenu(tester);
 
     await tester.tap(find.text('导出日志'));
-    await tester.pump();
+    await tester.pumpAndSettle();
 
     expect(_runtimeMethods, contains('exportLogs'));
     expect(find.byKey(const ValueKey('app-menu')), findsNothing);
@@ -240,6 +254,140 @@ void main() {
     await tester.tap(find.text('好'));
     await tester.pumpAndSettle();
     expect(FocusManager.instance.primaryFocus?.debugLabel, 'player-menu');
+  });
+
+  testWidgets('菜单从三点按钮 rect morph 展开（圆角容器形变）', (tester) async {
+    await _pumpHome(
+      tester,
+      controller: controller,
+      advancedEffects: true,
+      size: const Size(1000, 600),
+    );
+    final buttonRect = tester.getRect(
+      find.byKey(const ValueKey('playback-menu-button')),
+    );
+
+    await tester.tap(find.byKey(const ValueKey('playback-menu-button')));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 80));
+
+    final midRect = tester.getRect(
+      find.byKey(const ValueKey('morph-container')),
+    );
+    // 动画中：容器比最终菜单小，且靠近按钮（不是凭空 fade 出现）。
+    expect(midRect.width, lessThan(240));
+    expect(midRect.width, greaterThan(30));
+    expect((midRect.center - buttonRect.center).distance, lessThan(160));
+
+    await tester.pumpAndSettle();
+    final menuRect = tester.getRect(
+      find.byKey(const ValueKey('morph-container')),
+    );
+    expect(menuRect.width, 240);
+    expect(menuRect.right, closeTo(1000 - 18, .01));
+    expect(menuRect.top, closeTo(buttonRect.bottom + 8, .01));
+    expect(menuRect.height, closeTo(3 * 46 + 14, .01));
+  });
+
+  testWidgets('设置面板 morph 到右半边：宽 ≤ 屏宽/2，右/上留 16', (tester) async {
+    await _pumpHome(
+      tester,
+      controller: controller,
+      advancedEffects: true,
+      size: const Size(1200, 600),
+    );
+    await _openMenu(tester);
+    await tester.tap(find.text('设置'));
+    await tester.pumpAndSettle();
+
+    final settingsRect = tester.getRect(
+      find.byKey(const ValueKey('morph-container')),
+    );
+    expect(settingsRect.width, lessThanOrEqualTo(1200 / 2));
+    expect(settingsRect.width, 560);
+    expect(1200 - settingsRect.right, closeTo(16, .01));
+    expect(settingsRect.top, closeTo(16, .01));
+    expect(settingsRect.bottom, closeTo(600 - 16, .01));
+    expect(find.byKey(const ValueKey('morph-overlay')), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('设置面板关闭：先收回菜单再收回按钮', (tester) async {
+    await _pumpHome(tester, controller: controller);
+    await _openMenu(tester);
+    await tester.tap(find.text('设置'));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('settings-sheet')), findsOneWidget);
+
+    await tester.sendKeyEvent(LogicalKeyboardKey.escape);
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('settings-sheet')), findsNothing);
+    expect(find.byKey(const ValueKey('app-menu')), findsOneWidget);
+    expect(FocusManager.instance.primaryFocus?.debugLabel, 'menu-item-0');
+
+    await tester.sendKeyEvent(LogicalKeyboardKey.escape);
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('app-menu')), findsNothing);
+    expect(find.byKey(const ValueKey('morph-overlay')), findsNothing);
+    expect(FocusManager.instance.primaryFocus?.debugLabel, 'player-menu');
+  });
+
+  testWidgets('reduce motion 时菜单直接到位（无过渡动画）', (tester) async {
+    await _pumpHome(
+      tester,
+      controller: controller,
+      size: const Size(1000, 600),
+    );
+    final buttonRect = tester.getRect(
+      find.byKey(const ValueKey('playback-menu-button')),
+    );
+
+    await tester.tap(find.byKey(const ValueKey('playback-menu-button')));
+    await tester.pump();
+    // reduce motion 下没有过渡：下一帧即到目标位置。
+    await tester.pump();
+    final firstFrameRect = tester.getRect(
+      find.byKey(const ValueKey('morph-container')),
+    );
+
+    expect(firstFrameRect.width, 240);
+    expect(firstFrameRect.top, closeTo(buttonRect.bottom + 8, .01));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('app-menu')), findsOneWidget);
+  });
+
+  testWidgets('800x360：菜单与设置面板在屏内且不溢出', (tester) async {
+    await _pumpHome(
+      tester,
+      controller: controller,
+      advancedEffects: true,
+      size: const Size(800, 360),
+    );
+
+    await _openMenu(tester);
+    final menuRect = tester.getRect(
+      find.byKey(const ValueKey('morph-container')),
+    );
+    expect(menuRect.width, 240);
+    expect(menuRect.left, greaterThanOrEqualTo(0));
+    expect(menuRect.right, lessThanOrEqualTo(800));
+    expect(menuRect.top, greaterThanOrEqualTo(0));
+    expect(menuRect.bottom, lessThanOrEqualTo(360));
+    expect(tester.takeException(), isNull);
+
+    await tester.tap(find.text('设置'));
+    await tester.pumpAndSettle();
+
+    final settingsRect = tester.getRect(
+      find.byKey(const ValueKey('morph-container')),
+    );
+    expect(settingsRect.width, 400);
+    expect(settingsRect.width, lessThanOrEqualTo(800 / 2));
+    expect(settingsRect.right, closeTo(800 - 16, .01));
+    expect(settingsRect.top, closeTo(16, .01));
+    expect(settingsRect.bottom, closeTo(360 - 16, .01));
+    expect(find.text('自定义名称'), findsOneWidget);
+    expect(tester.takeException(), isNull);
   });
 
   testWidgets('menu/contextMenu 快捷键打开菜单，返回键先关设置再关菜单', (tester) async {

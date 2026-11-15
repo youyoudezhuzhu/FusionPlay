@@ -45,6 +45,11 @@ void main() {
     await tester.sendKeyEvent(LogicalKeyboardKey.escape);
     await tester.pumpAndSettle();
     expect(find.byKey(const ValueKey('settings-sheet')), findsNothing);
+    // 设置先收回菜单，再关菜单。
+    expect(find.byKey(const ValueKey('app-menu')), findsOneWidget);
+
+    await tester.sendKeyEvent(LogicalKeyboardKey.escape);
+    await tester.pumpAndSettle();
     expect(find.byKey(const ValueKey('app-menu')), findsNothing);
   });
 

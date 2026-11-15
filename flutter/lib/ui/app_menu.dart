@@ -1,3 +1,5 @@
+import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
 
 import '../theme/fusion_theme.dart';
@@ -21,50 +23,34 @@ class FusionMenuItem {
   final String? semanticLabel;
 }
 
-/// Anchored liquid-glass action menu shown below the three-dot trigger.
+/// Menu content shown inside the morphing glass container.
 ///
-/// The host owns visibility/animation, focus nodes (for returning focus to the
-/// trigger) and outside-click dismissal so this widget stays presentation-only.
+/// The host owns visibility, morph animation, focus nodes and dismissal; this
+/// widget is presentation-only.
 class FusionAppMenu extends StatelessWidget {
   const FusionAppMenu({
     super.key,
     required this.items,
     required this.focusNodes,
-    required this.onDismiss,
-    this.width = 240,
-    this.forceFallback = false,
   });
 
   final List<FusionMenuItem> items;
   final List<FocusNode> focusNodes;
-  final VoidCallback onDismiss;
-  final double width;
-  final bool forceFallback;
 
   @override
-  Widget build(BuildContext context) => SizedBox(
-    width: width,
-    child: LiquidGlass(
-      borderRadius: 24,
-      blurSigma: 20,
-      tint: const Color(0xE014171C),
-      forceFallback: forceFallback,
-      padding: const EdgeInsets.all(7),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          for (var index = 0; index < items.length; index++)
-            _MenuItemRow(
-              item: items[index],
-              focusNode: index < focusNodes.length ? focusNodes[index] : null,
-              autofocus: index == 0,
-              onSelected: () {
-                onDismiss();
-                items[index].onSelected();
-              },
-            ),
-        ],
-      ),
+  Widget build(BuildContext context) => Padding(
+    padding: const EdgeInsets.all(7),
+    child: Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        for (var index = 0; index < items.length; index++)
+          _MenuItemRow(
+            item: items[index],
+            focusNode: index < focusNodes.length ? focusNodes[index] : null,
+            autofocus: index == 0,
+            onSelected: items[index].onSelected,
+          ),
+      ],
     ),
   );
 }
@@ -83,130 +69,47 @@ class _MenuItemRow extends StatelessWidget {
   final VoidCallback onSelected;
 
   @override
-  Widget build(BuildContext context) {
-    return RemoteFocusFrame(
-      focusNode: focusNode,
-      autofocus: autofocus,
-      onActivate: onSelected,
-      borderColor: Colors.white,
-      shape: const G2ContinuousBorder(radius: 14),
-      child: InkWell(
-        borderRadius: BorderRadius.circular(14),
-        onTap: onSelected,
-        child: Semantics(
-          label: item.semanticLabel ?? item.label,
-          button: true,
-          child: SizedBox(
-            height: 46,
-            child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 12),
-              child: Row(
-                children: [
-                  SizedBox.square(
-                    dimension: 22,
-                    child: Center(
-                      child: IconTheme.merge(
-                        data: IconThemeData(
-                          size: 19,
-                          color: Colors.white.withValues(alpha: .86),
-                        ),
-                        child: item.icon,
-                      ),
-                    ),
-                  ),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: Text(
-                      item.label,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(
-                        fontSize: 15,
-                        color: Colors.white.withValues(alpha: .94),
-                        fontWeight: FusionTypography.mediumFontWeight,
-                        fontVariations: FusionTypography.medium,
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-/// Centered liquid-glass settings sheet that hosts the existing [SettingsView]
-/// content inside a light surface for readability.
-class FusionSettingsSheet extends StatelessWidget {
-  const FusionSettingsSheet({
-    super.key,
-    required this.title,
-    required this.child,
-    required this.onClose,
-    this.forceFallback = false,
-  });
-
-  final String title;
-  final Widget child;
-  final VoidCallback onClose;
-  final bool forceFallback;
-
-  @override
-  Widget build(BuildContext context) => Center(
-    child: ConstrainedBox(
-      constraints: const BoxConstraints(maxWidth: 720),
-      child: FractionallySizedBox(
-        heightFactor: .86,
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 16),
-          child: LiquidGlass(
-            borderRadius: 28,
-            blurSigma: 20,
-            tint: const Color(0xE614171C),
-            forceFallback: forceFallback,
-            child: Column(
+  Widget build(BuildContext context) => RemoteFocusFrame(
+    focusNode: focusNode,
+    autofocus: autofocus,
+    onActivate: onSelected,
+    borderColor: Colors.white,
+    shape: const G2ContinuousBorder(radius: 14),
+    child: InkWell(
+      borderRadius: BorderRadius.circular(14),
+      onTap: onSelected,
+      child: Semantics(
+        label: item.semanticLabel ?? item.label,
+        button: true,
+        child: SizedBox(
+          height: 46,
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 12),
+            child: Row(
               children: [
-                Padding(
-                  padding: const EdgeInsets.fromLTRB(22, 14, 12, 10),
-                  child: Row(
-                    children: [
-                      const FusionVectorIcon(
-                        FusionIcons.settings,
-                        size: 20,
-                        color: Colors.white,
+                SizedBox.square(
+                  dimension: 22,
+                  child: Center(
+                    child: IconTheme.merge(
+                      data: IconThemeData(
+                        size: 19,
+                        color: Colors.white.withValues(alpha: .86),
                       ),
-                      const SizedBox(width: 10),
-                      Expanded(
-                        child: Text(
-                          title,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: const TextStyle(
-                            fontSize: 20,
-                            color: Colors.white,
-                            fontWeight: FusionTypography.semiBoldFontWeight,
-                            fontVariations: FusionTypography.semiBold,
-                          ),
-                        ),
-                      ),
-                      _CloseSettingsButton(onClose: onClose),
-                    ],
+                      child: item.icon,
+                    ),
                   ),
                 ),
-                Divider(
-                  height: 1,
-                  thickness: 1,
-                  color: Colors.white.withValues(alpha: .12),
-                ),
+                const SizedBox(width: 12),
                 Expanded(
-                  child: Padding(
-                    padding: const EdgeInsets.fromLTRB(10, 10, 10, 10),
-                    child: ClipRRect(
-                      borderRadius: BorderRadius.circular(22),
-                      child: ColoredBox(color: Colors.white, child: child),
+                  child: Text(
+                    item.label,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      fontSize: 15,
+                      color: Colors.white.withValues(alpha: .94),
+                      fontWeight: FusionTypography.mediumFontWeight,
+                      fontVariations: FusionTypography.medium,
                     ),
                   ),
                 ),
@@ -219,6 +122,56 @@ class FusionSettingsSheet extends StatelessWidget {
   );
 }
 
+/// Right-half glass settings panel content. The morph overlay provides the
+/// animated glass container/rect; this widget just fills it.
+class FusionSettingsSheet extends StatelessWidget {
+  const FusionSettingsSheet({
+    super.key,
+    required this.title,
+    required this.child,
+    required this.onClose,
+  });
+
+  final String title;
+  final Widget child;
+  final VoidCallback onClose;
+
+  @override
+  Widget build(BuildContext context) => Column(
+    children: [
+      Padding(
+        padding: const EdgeInsets.fromLTRB(20, 10, 10, 8),
+        child: Row(
+          children: [
+            const FusionVectorIcon(
+              FusionIcons.settings,
+              size: 20,
+              color: Color(0xFF262626),
+            ),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Text(
+                title,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(
+                  fontSize: 20,
+                  color: Color(0xFF1C1C1E),
+                  fontWeight: FusionTypography.semiBoldFontWeight,
+                  fontVariations: FusionTypography.semiBold,
+                ),
+              ),
+            ),
+            _CloseSettingsButton(onClose: onClose),
+          ],
+        ),
+      ),
+      const Divider(height: 1, thickness: 1, color: Color(0x1F000000)),
+      Expanded(child: child),
+    ],
+  );
+}
+
 class _CloseSettingsButton extends StatelessWidget {
   const _CloseSettingsButton({required this.onClose});
 
@@ -227,7 +180,7 @@ class _CloseSettingsButton extends StatelessWidget {
   @override
   Widget build(BuildContext context) => RemoteFocusFrame(
     onActivate: onClose,
-    borderColor: Colors.white,
+    borderColor: Colors.black,
     shape: const CircleBorder(),
     child: InkWell(
       customBorder: const CircleBorder(),
@@ -241,11 +194,318 @@ class _CloseSettingsButton extends StatelessWidget {
             child: Icon(
               Icons.close_rounded,
               size: 20,
-              color: Colors.white.withValues(alpha: .86),
+              color: Colors.black.withValues(alpha: .72),
             ),
           ),
         ),
       ),
     ),
+  );
+}
+
+/// Stage of the morphing overlay used by the home page.
+enum MorphStage { menu, settings, closing }
+
+/// Container-transform overlay: a single liquid-glass surface morphs from the
+/// three-dot trigger (circle) to the anchored menu, then to the right-half
+/// settings panel, and back.
+class FusionMorphOverlay extends StatefulWidget {
+  const FusionMorphOverlay({
+    super.key,
+    required this.stage,
+    required this.anchorRect,
+    required this.menuItems,
+    required this.menuFocusNodes,
+    required this.settingsChild,
+    required this.settingsTitle,
+    required this.onDismiss,
+    required this.onSettingsClose,
+    required this.onClosed,
+    this.onTransitionCompleted,
+    this.forceFallback = false,
+  });
+
+  final MorphStage stage;
+
+  /// Global (overlay-local) rect of the three-dot trigger when opened.
+  final Rect anchorRect;
+  final List<FusionMenuItem> menuItems;
+  final List<FocusNode> menuFocusNodes;
+  final Widget settingsChild;
+  final String settingsTitle;
+  final VoidCallback onDismiss;
+  final VoidCallback onSettingsClose;
+  final VoidCallback onClosed;
+  final ValueChanged<MorphStage>? onTransitionCompleted;
+  final bool forceFallback;
+
+  @override
+  State<FusionMorphOverlay> createState() => _FusionMorphOverlayState();
+}
+
+class _FusionMorphOverlayState extends State<FusionMorphOverlay>
+    with SingleTickerProviderStateMixin {
+  static const menuRadius = 22.0;
+  static const settingsRadius = 28.0;
+  static const menuTint = Color(0xE014171C);
+  static const settingsTint = Color(0xECF2F4F7);
+
+  late final AnimationController _controller = AnimationController(vsync: this)
+    ..addListener(() => setState(() {}));
+
+  late MorphStage _fromStage = widget.stage;
+  late MorphStage _toStage = widget.stage;
+  late Rect _fromRect = widget.anchorRect;
+  late Rect _toRect = widget.anchorRect;
+  late double _fromRadius = _circleRadius(widget.anchorRect);
+  late double _toRadius = _circleRadius(widget.anchorRect);
+  Size _size = Size.zero;
+  bool _closingNotified = false;
+
+  static double _circleRadius(Rect rect) =>
+      math.min(rect.width, rect.height) / 2;
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) _animateTo(widget.stage);
+    });
+  }
+
+  @override
+  void didUpdateWidget(covariant FusionMorphOverlay oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.stage != widget.stage ||
+        oldWidget.anchorRect != widget.anchorRect) {
+      final target = widget.stage;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted || widget.stage != target) return;
+        _animateTo(target);
+      });
+    }
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  bool get _reduceMotion =>
+      MediaQuery.maybeOf(context)?.disableAnimations ?? false;
+
+  double get _eased =>
+      Curves.easeOutCubic.transform(_controller.value.clamp(0.0, 1.0));
+
+  Rect get _currentRect => Rect.lerp(_fromRect, _toRect, _eased) ?? _toRect;
+
+  double get _currentRadius => _fromRadius + (_toRadius - _fromRadius) * _eased;
+
+  double get _settingsAmount {
+    if (_toStage == MorphStage.settings) return _controller.value;
+    if (_fromStage == MorphStage.settings) return 1 - _controller.value;
+    return 0;
+  }
+
+  double get _menuOpacity {
+    if (_fromStage == MorphStage.settings || _toStage == MorphStage.settings) {
+      return (1 - _settingsAmount / .35).clamp(0.0, 1.0);
+    }
+    if (_toStage == MorphStage.closing) {
+      return (1 - _controller.value).clamp(0.0, 1.0);
+    }
+    return (_controller.value / .35).clamp(0.0, 1.0);
+  }
+
+  double get _settingsOpacity =>
+      ((_settingsAmount - .35) / .65).clamp(0.0, 1.0);
+
+  Rect _menuRect(Size size) {
+    final width = size.width < 480 ? 220.0 : 240.0;
+    final height = widget.menuItems.length * 46.0 + 14.0;
+    final anchor = widget.anchorRect;
+    var top = anchor.bottom + 8;
+    if (top + height > size.height - 8) {
+      top = anchor.top - height - 8;
+    }
+    top = top.clamp(8.0, math.max(8.0, size.height - height - 8)).toDouble();
+    final left = (size.width - 18 - width)
+        .clamp(8.0, math.max(8.0, size.width - width - 8))
+        .toDouble();
+    return Rect.fromLTWH(left, top, width, height);
+  }
+
+  Rect _settingsRect(Size size) {
+    const side = 16.0;
+    final width = math.min(560.0, size.width * .5);
+    final height = math.max(120.0, size.height - side * 2);
+    return Rect.fromLTWH(size.width - side - width, side, width, height);
+  }
+
+  Rect _targetRect(MorphStage stage) => switch (stage) {
+    MorphStage.menu => _menuRect(_size),
+    MorphStage.settings => _settingsRect(_size),
+    MorphStage.closing => widget.anchorRect,
+  };
+
+  void _animateTo(MorphStage stage) {
+    if (_size.isEmpty) {
+      // Wait for the first layout to know the viewport.
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted && _size.isEmpty) {
+          _size = Size(
+            MediaQuery.sizeOf(context).width,
+            MediaQuery.sizeOf(context).height,
+          );
+        }
+        if (mounted) _animateTo(stage);
+      });
+      return;
+    }
+    final currentRect = _currentRect;
+    final currentRadius = _currentRadius;
+    final fromStage = _toStage;
+    _fromRect = currentRect;
+    _toRect = _targetRect(stage);
+    _fromRadius = currentRadius;
+    _toRadius = switch (stage) {
+      MorphStage.menu => menuRadius,
+      MorphStage.settings => settingsRadius,
+      MorphStage.closing => _circleRadius(widget.anchorRect),
+    };
+    _fromStage = fromStage;
+    _toStage = stage;
+    _closingNotified = false;
+    if (_reduceMotion) {
+      _controller.duration = Duration.zero;
+      _controller.value = 1;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted || widget.stage != stage) return;
+        if (stage == MorphStage.closing) {
+          _notifyClosed();
+        } else {
+          widget.onTransitionCompleted?.call(stage);
+        }
+      });
+      return;
+    }
+    _controller.duration = switch (stage) {
+      MorphStage.menu => const Duration(milliseconds: 260),
+      MorphStage.settings => const Duration(milliseconds: 320),
+      MorphStage.closing => const Duration(milliseconds: 240),
+    };
+    _controller.forward(from: 0).whenComplete(() {
+      if (!mounted || widget.stage != stage) return;
+      if (stage == MorphStage.closing) {
+        _notifyClosed();
+      } else {
+        widget.onTransitionCompleted?.call(stage);
+      }
+    });
+  }
+
+  void _notifyClosed() {
+    if (_closingNotified) return;
+    _closingNotified = true;
+    widget.onClosed();
+  }
+
+  @override
+  Widget build(BuildContext context) => LayoutBuilder(
+    builder: (context, constraints) {
+      _size = Size(constraints.maxWidth, constraints.maxHeight);
+      final rect = _currentRect;
+      final radius = _currentRadius;
+      final settingsAmount = _settingsAmount;
+      final menuOpacity = _menuOpacity;
+      final settingsOpacity = _settingsOpacity;
+      final dim =
+          (.18 * math.max(menuOpacity, settingsOpacity) + .12 * settingsOpacity)
+              .clamp(0.0, .42);
+      final menuSize = _menuRect(_size).size;
+      final settingsSize = _settingsRect(_size).size;
+      final tint = Color.lerp(menuTint, settingsTint, settingsAmount)!;
+      final glass = LiquidGlass(
+        key: const ValueKey('morph-container'),
+        borderRadius: radius,
+        blurSigma: settingsAmount > .5 ? 24 : 20,
+        tint: tint,
+        animate: false,
+        forceFallback: widget.forceFallback,
+        child: ClipRect(
+          child: Stack(
+            children: [
+              Positioned(
+                left: 0,
+                top: 0,
+                width: menuSize.width,
+                height: menuSize.height,
+                child: Offstage(
+                  offstage: menuOpacity <= .001,
+                  child: IgnorePointer(
+                    ignoring: settingsAmount > .05,
+                    child: ExcludeFocus(
+                      excluding: settingsAmount > .05,
+                      child: Opacity(
+                        opacity: menuOpacity,
+                        child: FusionAppMenu(
+                          key: const ValueKey('app-menu'),
+                          items: widget.menuItems,
+                          focusNodes: widget.menuFocusNodes,
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+              Positioned(
+                left: 0,
+                top: 0,
+                width: settingsSize.width,
+                height: settingsSize.height,
+                child: Offstage(
+                  offstage: settingsOpacity <= .001,
+                  child: IgnorePointer(
+                    ignoring: settingsOpacity < .5,
+                    child: ExcludeFocus(
+                      excluding: settingsOpacity < .5,
+                      child: Opacity(
+                        opacity: settingsOpacity,
+                        child: FusionSettingsSheet(
+                          key: const ValueKey('settings-sheet'),
+                          title: widget.settingsTitle,
+                          onClose: widget.onSettingsClose,
+                          child: widget.settingsChild,
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      );
+      return Stack(
+        children: [
+          Positioned.fill(
+            child: GestureDetector(
+              behavior: HitTestBehavior.opaque,
+              onTap: widget.onDismiss,
+              child: ColoredBox(color: Colors.black.withValues(alpha: dim)),
+            ),
+          ),
+          Positioned.fromRect(
+            rect: rect,
+            child: GestureDetector(
+              behavior: HitTestBehavior.opaque,
+              onTap: () {},
+              child: glass,
+            ),
+          ),
+        ],
+      );
+    },
   );
 }

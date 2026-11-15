@@ -33,6 +33,7 @@ class PlayerView extends StatefulWidget {
     this.menuFocusNode,
     this.onOpenMenu,
     this.menuOpen = false,
+    this.menuButtonKey,
     this.volumeFocusNode,
     this.forceGlassFallback = false,
   });
@@ -55,6 +56,10 @@ class PlayerView extends StatefulWidget {
   final VoidCallback? onOpenMenu;
 
   final bool menuOpen;
+
+  /// Optional key for the three-dot trigger; the morph overlay reads its rect.
+  final GlobalKey? menuButtonKey;
+
   final FocusNode? volumeFocusNode;
 
   /// Test hook: render LiquidGlass surfaces without the backdrop shader.
@@ -576,56 +581,58 @@ class _PlayerViewState extends State<PlayerView> {
     ),
   );
 
-  Widget _menuButton() => AnimatedPressScale(
-    key: const ValueKey('playback-menu-button'),
-    externalPressed: _menuPressed,
-    child: RemoteFocusFrame(
-      autofocus: true,
-      focusNode: _menuFocus,
-      onActivate: widget.onOpenMenu,
-      onPressChange: (pressed) => _menuPressed.value = pressed,
-      borderColor: Colors.white,
-      shape: const G2ContinuousBorder(radius: 999),
-      shortcuts: <ShortcutActivator, Intent>{
-        const SingleActivator(LogicalKeyboardKey.arrowDown):
-            const DirectionalFocusIntent(TraversalDirection.down),
-        if (_lyricsToggleVisible)
-          const SingleActivator(LogicalKeyboardKey.arrowLeft):
-              const DirectionalFocusIntent(TraversalDirection.left),
-      },
-      actions: <Type, Action<Intent>>{
-        DirectionalFocusIntent: CallbackAction<DirectionalFocusIntent>(
-          onInvoke: (intent) {
-            if (intent.direction == TraversalDirection.left &&
-                _lyricsToggleVisible) {
-              _lyricsToggleFocus.requestFocus();
-            } else {
-              _focusAfterTopBar();
-            }
-            return null;
-          },
-        ),
-      },
-      child: SizedBox.square(
-        dimension: 46,
-        child: LiquidGlass(
-          borderRadius: 999,
-          blurSigma: 16,
-          tint: widget.menuOpen
-              ? const Color(0x40FFFFFF)
-              : const Color(0x1FFFFFFF),
-          forceFallback: widget.forceGlassFallback,
-          child: Material(
-            color: Colors.transparent,
-            shape: const CircleBorder(),
-            clipBehavior: Clip.antiAlias,
-            child: InkWell(
-              onTap: widget.onOpenMenu,
-              child: Center(
-                child: Icon(
-                  Icons.more_horiz_rounded,
-                  size: 24,
-                  color: Colors.white.withValues(alpha: .94),
+  Widget _menuButton() => _wrapMenuButton(
+    AnimatedPressScale(
+      key: const ValueKey('playback-menu-button'),
+      externalPressed: _menuPressed,
+      child: RemoteFocusFrame(
+        autofocus: true,
+        focusNode: _menuFocus,
+        onActivate: widget.onOpenMenu,
+        onPressChange: (pressed) => _menuPressed.value = pressed,
+        borderColor: Colors.white,
+        shape: const G2ContinuousBorder(radius: 999),
+        shortcuts: <ShortcutActivator, Intent>{
+          const SingleActivator(LogicalKeyboardKey.arrowDown):
+              const DirectionalFocusIntent(TraversalDirection.down),
+          if (_lyricsToggleVisible)
+            const SingleActivator(LogicalKeyboardKey.arrowLeft):
+                const DirectionalFocusIntent(TraversalDirection.left),
+        },
+        actions: <Type, Action<Intent>>{
+          DirectionalFocusIntent: CallbackAction<DirectionalFocusIntent>(
+            onInvoke: (intent) {
+              if (intent.direction == TraversalDirection.left &&
+                  _lyricsToggleVisible) {
+                _lyricsToggleFocus.requestFocus();
+              } else {
+                _focusAfterTopBar();
+              }
+              return null;
+            },
+          ),
+        },
+        child: SizedBox.square(
+          dimension: 46,
+          child: LiquidGlass(
+            borderRadius: 999,
+            blurSigma: 16,
+            tint: widget.menuOpen
+                ? const Color(0x40FFFFFF)
+                : const Color(0x1FFFFFFF),
+            forceFallback: widget.forceGlassFallback,
+            child: Material(
+              color: Colors.transparent,
+              shape: const CircleBorder(),
+              clipBehavior: Clip.antiAlias,
+              child: InkWell(
+                onTap: widget.onOpenMenu,
+                child: Center(
+                  child: Icon(
+                    Icons.more_horiz_rounded,
+                    size: 24,
+                    color: Colors.white.withValues(alpha: .94),
+                  ),
                 ),
               ),
             ),
@@ -634,6 +641,12 @@ class _PlayerViewState extends State<PlayerView> {
       ),
     ),
   );
+
+  Widget _wrapMenuButton(Widget button) {
+    final key = widget.menuButtonKey;
+    if (key == null) return button;
+    return SizedBox.square(dimension: 46, key: key, child: button);
+  }
 
   void _focusAfterTopBar() {
     if (_seekable) {

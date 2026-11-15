@@ -111,14 +111,21 @@ class _FusionPlayHomeState extends State<FusionPlayHome> {
     'com.fusionplay.android/navigation_keys',
   );
 
-  bool menuOpen = false;
-  bool settingsOpen = false;
+  MorphStage? _morphStage;
+  Rect? _anchorRect;
+  VoidCallback? _pendingMorphAction;
+  final GlobalKey _menuButtonKey = GlobalKey(debugLabel: 'player-menu-button');
+  final GlobalKey _playerStackKey = GlobalKey(debugLabel: 'player-host-stack');
+
+  bool get menuOpen => _morphStage == MorphStage.menu;
+  bool get settingsOpen => _morphStage == MorphStage.settings;
+  bool get _morphOpen => _morphStage != null;
   final FocusNode _menuButtonFocus = FocusNode(debugLabel: 'player-menu');
   final FocusNode _playerProgressFocus = FocusNode(
     debugLabel: 'player-progress',
   );
   final FocusNode _settingsInitialFocus = FocusNode(
-    debugLabel: 'settings-miplay',
+    debugLabel: 'settings-name',
   );
   final List<FocusNode> _menuItemFocus = List<FocusNode>.generate(
     4,
@@ -226,38 +233,82 @@ class _FusionPlayHomeState extends State<FusionPlayHome> {
   // Menu / settings / update actions
   // ------------------------------------------------------------------
 
+  Rect? _computeAnchorRect() {
+    final buttonBox = _menuButtonKey.currentContext?.findRenderObject();
+    final stackBox = _playerStackKey.currentContext?.findRenderObject();
+    if (buttonBox is! RenderBox ||
+        !buttonBox.hasSize ||
+        stackBox is! RenderBox ||
+        !stackBox.hasSize) {
+      return null;
+    }
+    final offset =
+        buttonBox.localToGlobal(Offset.zero) -
+        stackBox.localToGlobal(Offset.zero);
+    return offset & buttonBox.size;
+  }
+
   void _openMenu() {
-    if (menuOpen || settingsOpen) return;
-    setState(() => menuOpen = true);
+    if (_morphStage != null) return;
+    final anchor = _computeAnchorRect();
+    if (anchor == null) return;
+    setState(() {
+      _anchorRect = anchor;
+      _morphStage = MorphStage.menu;
+    });
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
       _menuItemFocus.first.requestFocus();
     });
   }
 
-  void _closeMenu({bool returnFocus = true}) {
-    if (!menuOpen) return;
-    setState(() => menuOpen = false);
-    if (!returnFocus) return;
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (mounted) _menuButtonFocus.requestFocus();
+  void _beginClose({VoidCallback? then}) {
+    if (_morphStage == null || _morphStage == MorphStage.closing) return;
+    _pendingMorphAction = then;
+    setState(() => _morphStage = MorphStage.closing);
+  }
+
+  void _finishMorphClose() {
+    if (!mounted || _morphStage != MorphStage.closing) return;
+    final action = _pendingMorphAction;
+    _pendingMorphAction = null;
+    setState(() {
+      _morphStage = null;
+      _anchorRect = null;
     });
+    _returnFocusToMenuButton();
+    if (action != null) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) action();
+      });
+    }
   }
 
   void _openSettings() {
-    _closeMenu(returnFocus: false);
-    setState(() => settingsOpen = true);
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (mounted) _settingsInitialFocus.requestFocus();
-    });
+    if (_morphStage != MorphStage.menu) return;
+    setState(() => _morphStage = MorphStage.settings);
   }
 
   void _closeSettings() {
-    if (!settingsOpen) return;
-    setState(() => settingsOpen = false);
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (mounted) _menuButtonFocus.requestFocus();
-    });
+    if (_morphStage != MorphStage.settings) return;
+    setState(() => _morphStage = MorphStage.menu);
+  }
+
+  void _handleMorphTransitionCompleted(MorphStage stage) {
+    if (!mounted) return;
+    if (stage == MorphStage.settings) {
+      _settingsInitialFocus.requestFocus();
+    } else if (stage == MorphStage.menu) {
+      _menuItemFocus.first.requestFocus();
+    }
+  }
+
+  void _dismissOverlay() {
+    if (_morphStage == MorphStage.settings) {
+      _closeSettings();
+    } else if (_morphStage == MorphStage.menu) {
+      _beginClose();
+    }
   }
 
   void _settingsAction() {
@@ -265,23 +316,26 @@ class _FusionPlayHomeState extends State<FusionPlayHome> {
   }
 
   void _exportLogsAction() {
-    _closeMenu(returnFocus: false);
-    unawaited(widget.controller.exportLogs());
-    _returnFocusToMenuButton();
+    _beginClose(then: () => unawaited(widget.controller.exportLogs()));
   }
 
-  Future<void> _checkForUpdatesAction() async {
-    _closeMenu(returnFocus: false);
-    await runUpdateFlow(
-      context: context,
-      onCheckUpdate: widget.controller.checkForUpdate,
-      onInstallUpdate: widget.controller.downloadAndInstallUpdate,
+  void _checkForUpdatesAction() {
+    _beginClose(
+      then: () => unawaited(
+        runUpdateFlow(
+          context: context,
+          onCheckUpdate: widget.controller.checkForUpdate,
+          onInstallUpdate: widget.controller.downloadAndInstallUpdate,
+        ),
+      ),
     );
-    _returnFocusToMenuButton();
   }
 
-  Future<void> _showAboutAction() async {
-    _closeMenu(returnFocus: false);
+  void _showAboutAction() {
+    _beginClose(then: () => unawaited(_showAboutDialog()));
+  }
+
+  Future<void> _showAboutDialog() async {
     await showDialog<void>(
       context: context,
       builder: (dialogContext) => AlertDialog(
@@ -362,7 +416,7 @@ class _FusionPlayHomeState extends State<FusionPlayHome> {
     if (settingsOpen) {
       _closeSettings();
     } else if (menuOpen) {
-      _closeMenu();
+      _beginClose();
     }
   }
 
@@ -370,7 +424,7 @@ class _FusionPlayHomeState extends State<FusionPlayHome> {
     if (settingsOpen) {
       _closeSettings();
     } else if (menuOpen) {
-      _closeMenu();
+      _beginClose();
     } else {
       _openMenu();
     }
@@ -423,8 +477,6 @@ class _FusionPlayHomeState extends State<FusionPlayHome> {
   Widget build(BuildContext context) {
     final mediaQuery = MediaQuery.of(context);
     final state = widget.state;
-    final advancedEffectsEnabled =
-        state.settings.advancedEffectsEnabled && !mediaQuery.disableAnimations;
     final artwork = _displayedArtworkSource;
     final hasArtwork = artwork != null && artwork.isNotEmpty;
     final playback = state.playback;
@@ -457,6 +509,7 @@ class _FusionPlayHomeState extends State<FusionPlayHome> {
         ),
         SafeArea(
           child: Stack(
+            key: _playerStackKey,
             children: [
               Positioned.fill(
                 child: ExcludeFocus(
@@ -467,6 +520,7 @@ class _FusionPlayHomeState extends State<FusionPlayHome> {
                     artworkIdentity: _displayedArtworkIdentity,
                     progressFocusNode: _playerProgressFocus,
                     menuFocusNode: _menuButtonFocus,
+                    menuButtonKey: _menuButtonKey,
                     onOpenMenu: _openMenu,
                     menuOpen: menuOpen,
                     forceGlassFallback: widget.forceGlassFallback,
@@ -476,137 +530,46 @@ class _FusionPlayHomeState extends State<FusionPlayHome> {
                   ),
                 ),
               ),
-              if (menuOpen)
+              if (_morphOpen && _anchorRect != null)
                 Positioned.fill(
-                  child: GestureDetector(
-                    behavior: HitTestBehavior.opaque,
-                    onTap: () => _closeMenu(),
-                  ),
-                ),
-              Positioned(
-                top: 70,
-                right: 22,
-                child: AnimatedSwitcher(
-                  duration: const Duration(milliseconds: 200),
-                  reverseDuration: const Duration(milliseconds: 140),
-                  switchInCurve: Curves.easeOutCubic,
-                  switchOutCurve: Curves.easeInCubic,
-                  transitionBuilder: (child, animation) {
-                    if (mediaQuery.disableAnimations) return child;
-                    final curved = CurvedAnimation(
-                      parent: animation,
-                      curve: Curves.easeOutCubic,
-                    );
-                    return FadeTransition(
-                      opacity: curved,
-                      child: ScaleTransition(
-                        alignment: Alignment.topRight,
-                        scale: Tween<double>(
-                          begin: .96,
-                          end: 1,
-                        ).animate(curved),
-                        child: SlideTransition(
-                          position: Tween<Offset>(
-                            begin: const Offset(0, .03),
-                            end: Offset.zero,
-                          ).animate(curved),
-                          child: child,
-                        ),
-                      ),
-                    );
-                  },
-                  child: menuOpen
-                      ? FusionAppMenu(
-                          key: const ValueKey('app-menu'),
-                          items: _menuItems(),
-                          focusNodes: _menuItemFocus,
-                          onDismiss: () => _closeMenu(),
-                          forceFallback: widget.forceGlassFallback,
-                        )
-                      : const SizedBox.shrink(key: ValueKey('app-menu-closed')),
-                ),
-              ),
-              if (settingsOpen)
-                Positioned.fill(
-                  child: GestureDetector(
-                    behavior: HitTestBehavior.opaque,
-                    onTap: _closeSettings,
-                    child: ColoredBox(
-                      color: Colors.black.withValues(alpha: .38),
+                  child: FusionMorphOverlay(
+                    key: const ValueKey('morph-overlay'),
+                    stage: _morphStage!,
+                    anchorRect: _anchorRect!,
+                    menuItems: _menuItems(),
+                    menuFocusNodes: _menuItemFocus,
+                    settingsTitle: '设置',
+                    settingsChild: SettingsView(
+                      state: state,
+                      showHeader: false,
+                      initialFocusNode: _settingsInitialFocus,
+                      onClose: _closeSettings,
+                      onReceiverName: widget.controller.setReceiverName,
+                      onStartup: widget.controller.setStartupEnabled,
+                      onAutoWake: widget.controller.setAutoWakeEnabled,
+                      onAdvancedEffects:
+                          widget.controller.setAdvancedEffectsEnabled,
+                      onMiPlay: (value) =>
+                          widget.controller.setProtocolEnabled('miplay', value),
+                      onMiPlayIdentity:
+                          widget.controller.setMiPlayDeviceIdentity,
+                      onAirPlay: (value) => widget.controller
+                          .setProtocolEnabled('airplay', value),
+                      onDlna: (value) =>
+                          widget.controller.setProtocolEnabled('dlna', value),
+                      onExportLogs: widget.controller.exportLogs,
+                      isAndroid: _isAndroid,
+                      onCheckUpdate: widget.controller.checkForUpdate,
+                      onInstallUpdate:
+                          widget.controller.downloadAndInstallUpdate,
                     ),
+                    onDismiss: _dismissOverlay,
+                    onSettingsClose: _closeSettings,
+                    onClosed: _finishMorphClose,
+                    onTransitionCompleted: _handleMorphTransitionCompleted,
+                    forceFallback: widget.forceGlassFallback,
                   ),
                 ),
-              Positioned.fill(
-                child: IgnorePointer(
-                  ignoring: !settingsOpen,
-                  child: ExcludeFocus(
-                    excluding: !settingsOpen,
-                    child: AnimatedSwitcher(
-                      duration: advancedEffectsEnabled
-                          ? const Duration(milliseconds: 220)
-                          : Duration.zero,
-                      reverseDuration: advancedEffectsEnabled
-                          ? const Duration(milliseconds: 160)
-                          : Duration.zero,
-                      switchInCurve: Curves.easeOutCubic,
-                      switchOutCurve: Curves.easeInCubic,
-                      transitionBuilder: (child, animation) {
-                        if (mediaQuery.disableAnimations) return child;
-                        final curved = CurvedAnimation(
-                          parent: animation,
-                          curve: Curves.easeOutCubic,
-                        );
-                        return FadeTransition(
-                          opacity: curved,
-                          child: ScaleTransition(
-                            scale: Tween<double>(
-                              begin: .97,
-                              end: 1,
-                            ).animate(curved),
-                            child: child,
-                          ),
-                        );
-                      },
-                      child: settingsOpen
-                          ? FusionSettingsSheet(
-                              key: const ValueKey('settings-sheet'),
-                              title: '设置',
-                              forceFallback: widget.forceGlassFallback,
-                              onClose: _closeSettings,
-                              child: SettingsView(
-                                state: state,
-                                showHeader: false,
-                                initialFocusNode: _settingsInitialFocus,
-                                onClose: _closeSettings,
-                                onReceiverName:
-                                    widget.controller.setReceiverName,
-                                onStartup: widget.controller.setStartupEnabled,
-                                onAutoWake:
-                                    widget.controller.setAutoWakeEnabled,
-                                onAdvancedEffects:
-                                    widget.controller.setAdvancedEffectsEnabled,
-                                onMiPlay: (value) => widget.controller
-                                    .setProtocolEnabled('miplay', value),
-                                onMiPlayIdentity:
-                                    widget.controller.setMiPlayDeviceIdentity,
-                                onAirPlay: (value) => widget.controller
-                                    .setProtocolEnabled('airplay', value),
-                                onDlna: (value) => widget.controller
-                                    .setProtocolEnabled('dlna', value),
-                                onExportLogs: widget.controller.exportLogs,
-                                isAndroid: _isAndroid,
-                                onCheckUpdate: widget.controller.checkForUpdate,
-                                onInstallUpdate:
-                                    widget.controller.downloadAndInstallUpdate,
-                              ),
-                            )
-                          : const SizedBox.shrink(
-                              key: ValueKey('settings-sheet-closed'),
-                            ),
-                    ),
-                  ),
-                ),
-              ),
               if (state.lastError != null)
                 SafeArea(
                   child: Align(
@@ -666,14 +629,10 @@ class _FusionPlayHomeState extends State<FusionPlayHome> {
             _handleMenuShortcut,
       },
       child: PopScope(
-        canPop: !settingsOpen && !menuOpen,
+        canPop: _morphStage == null,
         onPopInvokedWithResult: (didPop, _) {
           if (didPop) return;
-          if (settingsOpen) {
-            _closeSettings();
-          } else if (menuOpen) {
-            _closeMenu();
-          }
+          _handleBackShortcut();
         },
         child: Scaffold(
           backgroundColor: const Color(0xFF101316),

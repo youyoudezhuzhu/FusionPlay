@@ -71,7 +71,6 @@ class SettingsView extends StatefulWidget {
 
 class _SettingsViewState extends State<SettingsView> {
   late final TextEditingController _name;
-  late final FocusNode _nameFocus;
   late String _savedName;
   bool _exportingLogs = false;
   bool _checkingUpdate = false;
@@ -81,7 +80,6 @@ class _SettingsViewState extends State<SettingsView> {
   void initState() {
     super.initState();
     _savedName = widget.state.settings.receiverName ?? '';
-    _nameFocus = FocusNode(debugLabel: 'receiver-name');
     _name = TextEditingController(text: _savedName)..addListener(_refresh);
   }
 
@@ -101,7 +99,6 @@ class _SettingsViewState extends State<SettingsView> {
   void dispose() {
     _name.removeListener(_refresh);
     _name.dispose();
-    _nameFocus.dispose();
     super.dispose();
   }
 
@@ -109,110 +106,121 @@ class _SettingsViewState extends State<SettingsView> {
   Widget build(BuildContext context) {
     final settings = widget.state.settings;
     final padding = MediaQuery.paddingOf(context);
-    return ColoredBox(
-      color: Colors.white,
-      child: FocusTraversalGroup(
-        policy: ReadingOrderTraversalPolicy(),
-        child: SingleChildScrollView(
-          padding: EdgeInsets.fromLTRB(28, padding.top + 24, 28, 0),
-          child: Column(
-            children: [
-              if (widget.showHeader) ...[
-                const SizedBox(
-                  height: 56,
-                  child: Padding(
-                    padding: EdgeInsets.only(bottom: 4),
-                    child: Center(
-                      child: Text(
-                        '设置',
-                        maxLines: 1,
-                        style: TextStyle(
-                          fontSize: 28,
-                          fontWeight: FusionTypography.boldFontWeight,
-                          fontVariations: FusionTypography.bold,
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final narrow = constraints.maxWidth < 460;
+        final horizontalPadding = narrow ? 16.0 : 28.0;
+        final cardSpacing = narrow ? 12.0 : SettingsStyle.cardSpacing;
+        return ColoredBox(
+          color: Colors.transparent,
+          child: FocusTraversalGroup(
+            policy: ReadingOrderTraversalPolicy(),
+            child: SingleChildScrollView(
+              padding: EdgeInsets.fromLTRB(
+                horizontalPadding,
+                padding.top + (narrow ? 12 : 24),
+                horizontalPadding,
+                0,
+              ),
+              child: Column(
+                children: [
+                  if (widget.showHeader) ...[
+                    const SizedBox(
+                      height: 56,
+                      child: Padding(
+                        padding: EdgeInsets.only(bottom: 4),
+                        child: Center(
+                          child: Text(
+                            '设置',
+                            maxLines: 1,
+                            style: TextStyle(
+                              fontSize: 28,
+                              fontWeight: FusionTypography.boldFontWeight,
+                              fontVariations: FusionTypography.bold,
+                            ),
+                          ),
                         ),
                       ),
                     ),
-                  ),
-                ),
-                const SizedBox(height: SettingsStyle.cardSpacing),
-              ],
-              _card([_nameEditor()]),
-              const SizedBox(height: SettingsStyle.cardSpacing),
-              _card([
-                _switchRow(
-                  asset: 'assets/miplay-logo.svg',
-                  preserveAssetColors: true,
-                  title: 'MiPlay',
-                  value: settings.miPlayEnabled,
-                  focusNode: widget.initialFocusNode,
-                  focusNameOnUp: true,
-                  onChanged: widget.onMiPlay,
-                ),
-                _switchRow(
-                  asset: 'assets/airplay-broadcast.svg',
-                  title: 'AirPlay',
-                  value: settings.airPlayEnabled,
-                  onChanged: widget.onAirPlay,
-                ),
-                _switchRow(
-                  asset: FusionIcons.dlna,
-                  title: 'DLNA',
-                  value: settings.dlnaEnabled,
-                  onChanged: widget.onDlna,
-                ),
-              ]),
-              const SizedBox(height: SettingsStyle.cardSpacing),
-              _card([
-                for (final identity in MiPlayDeviceIdentity.values)
-                  _identityRow(identity, settings.miPlayDeviceIdentity),
-                // Xiaomi's device picker is version dependent: some HyperOS
-                // builds hide "speaker" receivers from the MiPlay list while
-                // "television" works. Surface that instead of letting users
-                // think the receiver vanished.
-                const Padding(
-                  padding: EdgeInsets.fromLTRB(20, 4, 20, 14),
-                  child: Text(
-                    '设备类型影响小米手机妙播列表中的图标与可见性；'
-                    '若选「音响」后手机里找不到设备，请改用「电视」。',
-                    style: TextStyle(
-                      fontSize: 12,
-                      color: SettingsStyle.secondaryText,
+                    SizedBox(height: cardSpacing),
+                  ],
+                  _card([_nameEditor()]),
+                  SizedBox(height: cardSpacing),
+                  _card([
+                    _switchRow(
+                      asset: 'assets/miplay-logo.svg',
+                      preserveAssetColors: true,
+                      title: 'MiPlay',
+                      value: settings.miPlayEnabled,
+                      focusNameOnUp: true,
+                      onChanged: widget.onMiPlay,
                     ),
-                  ),
-                ),
-              ]),
-              const SizedBox(height: SettingsStyle.cardSpacing),
-              _card([
-                _switchRow(
-                  asset: 'assets/icon-power-settings-new.svg',
-                  title: '开机自启',
-                  value: settings.startupEnabled,
-                  onChanged: widget.onStartup,
-                ),
-                _switchRow(
-                  asset: 'assets/auto-wake.svg',
-                  title: '自动唤起',
-                  value: settings.autoWakeEnabled,
-                  onChanged: widget.onAutoWake,
-                ),
-                _switchRow(
-                  icon: Icons.auto_awesome_rounded,
-                  title: '高级效果',
-                  value: settings.advancedEffectsEnabled,
-                  onChanged: widget.onAdvancedEffects,
-                ),
-              ]),
-              const SizedBox(height: SettingsStyle.cardSpacing),
-              _card([
-                _aboutRow(),
-                if (_showUpdateRow) _checkUpdateRow(),
-                _exportLogsRow(),
-              ]),
-            ],
+                    _switchRow(
+                      asset: 'assets/airplay-broadcast.svg',
+                      title: 'AirPlay',
+                      value: settings.airPlayEnabled,
+                      onChanged: widget.onAirPlay,
+                    ),
+                    _switchRow(
+                      asset: FusionIcons.dlna,
+                      title: 'DLNA',
+                      value: settings.dlnaEnabled,
+                      onChanged: widget.onDlna,
+                    ),
+                  ]),
+                  SizedBox(height: cardSpacing),
+                  _card([
+                    for (final identity in MiPlayDeviceIdentity.values)
+                      _identityRow(identity, settings.miPlayDeviceIdentity),
+                    // Xiaomi's device picker is version dependent: some HyperOS
+                    // builds hide "speaker" receivers from the MiPlay list while
+                    // "television" works. Surface that instead of letting users
+                    // think the receiver vanished.
+                    const Padding(
+                      padding: EdgeInsets.fromLTRB(20, 4, 20, 14),
+                      child: Text(
+                        '设备类型影响小米手机妙播列表中的图标与可见性；'
+                        '若选「音响」后手机里找不到设备，请改用「电视」。',
+                        style: TextStyle(
+                          fontSize: 12,
+                          color: SettingsStyle.secondaryText,
+                        ),
+                      ),
+                    ),
+                  ]),
+                  SizedBox(height: cardSpacing),
+                  _card([
+                    _switchRow(
+                      asset: 'assets/icon-power-settings-new.svg',
+                      title: '开机自启',
+                      value: settings.startupEnabled,
+                      onChanged: widget.onStartup,
+                    ),
+                    _switchRow(
+                      asset: 'assets/auto-wake.svg',
+                      title: '自动唤起',
+                      value: settings.autoWakeEnabled,
+                      onChanged: widget.onAutoWake,
+                    ),
+                    _switchRow(
+                      icon: Icons.auto_awesome_rounded,
+                      title: '高级效果',
+                      value: settings.advancedEffectsEnabled,
+                      onChanged: widget.onAdvancedEffects,
+                    ),
+                  ]),
+                  SizedBox(height: cardSpacing),
+                  _card([
+                    _aboutRow(),
+                    if (_showUpdateRow) _checkUpdateRow(),
+                    _exportLogsRow(),
+                  ]),
+                ],
+              ),
+            ),
           ),
-        ),
-      ),
+        );
+      },
     );
   }
 
@@ -422,13 +430,13 @@ class _SettingsViewState extends State<SettingsView> {
             onKeyEvent: (_, event) {
               if (event is KeyDownEvent &&
                   event.logicalKey == LogicalKeyboardKey.arrowDown) {
-                _nameFocus.nextFocus();
+                widget.initialFocusNode.nextFocus();
                 return KeyEventResult.handled;
               }
               return KeyEventResult.ignored;
             },
             child: TextField(
-              focusNode: _nameFocus,
+              focusNode: widget.initialFocusNode,
               controller: _name,
               maxLength: 63,
               textInputAction: TextInputAction.done,
@@ -437,7 +445,7 @@ class _SettingsViewState extends State<SettingsView> {
                 hintText: widget.state.receiverName,
                 hintStyle: const TextStyle(color: SettingsStyle.secondaryText),
                 filled: true,
-                fillColor: Colors.white,
+                fillColor: const Color(0xB3FFFFFF),
                 border: const OutlineInputBorder(
                   borderRadius: BorderRadius.all(Radius.circular(28)),
                   borderSide: BorderSide.none,
@@ -652,7 +660,7 @@ class _SettingsViewState extends State<SettingsView> {
         ? <Type, Action<Intent>>{
             _FocusReceiverNameIntent: CallbackAction<_FocusReceiverNameIntent>(
               onInvoke: (_) {
-                _nameFocus.requestFocus();
+                widget.initialFocusNode.requestFocus();
                 return null;
               },
             ),
@@ -713,8 +721,11 @@ class _SettingsViewState extends State<SettingsView> {
 
   Widget _card(List<Widget> children) => DecoratedBox(
     decoration: const ShapeDecoration(
-      color: SettingsStyle.groupBackground,
-      shape: G2ContinuousBorder(radius: SettingsStyle.cardRadius),
+      color: Color(0x8CFFFFFF),
+      shape: G2ContinuousBorder(
+        radius: SettingsStyle.cardRadius,
+        side: BorderSide(color: Color(0x26FFFFFF)),
+      ),
     ),
     child: Column(children: children),
   );
