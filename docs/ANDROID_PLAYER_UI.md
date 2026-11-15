@@ -41,7 +41,7 @@
   关闭动画结束后才淡入回来，视觉上圆被菜单“吸收”。点击外部/Escape/返回关闭，焦点回到三点按钮。
 - 设置：从菜单矩形继续 **morph** 成右侧玻璃面板（约 320ms），宽 `min(560, 屏宽/2)`
   （电视 `min(720, 屏宽/2)`），上下右 16px 边距，严格不超过右半屏。
-  外层是深色液态玻璃（唯一真实 BackdropFilter/shader），内部为深色半透明玻璃表面：
+  外层是深色毛玻璃（唯一真实 BackdropFilter），内部为深色半透明玻璃表面：
   分组卡片 + 细白边、白色文字层级、单色玻璃开关（白底深色滑块）、玻璃胶囊按钮、选中设备行白色高亮 + 白色勾选；
   不再使用白色实心卡片。设置面板使用 Flutter 官方 `PinnedHeaderSliver` +
   `CustomScrollView`：标题栏钉住，内容真正从标题栏下方滚过（不再在 body 顶部裁切后
@@ -70,14 +70,11 @@ Flutter 3.32.8。因此这里自研实现，参考了以下开源项目的做法
 
 实现位置：`flutter/lib/ui/liquid_glass.dart` + `flutter/shaders/liquid_glass.frag`。
 
-- 使用 `BackdropFilter` + `ImageFilter.compose(inner: blur, outer: ImageFilter.shader(...))`：
-  shader 接收已模糊的背景，做圆角 SDF、边缘折射、随边缘增强的色散、边缘变暗、方向高光、
-  缓慢流动的 sheen；
-- `ImageFilter.shader` 仅在 Impeller 后端可用（Android 默认 Impeller；Windows/Skia/测试环境
-  自动退化为毛玻璃 + 同样的 tint/描边/高光叠层，外观接近）；
-- 玻璃默认**静态**（折射/边缘/高光始终在，但不再每帧运行 shader ticker）：多个玻璃面板共享同一个
-  `FragmentShader` 实例并各自每帧改 uniform 时，Android Impeller 会出现闪烁；现在每个面板使用独立
-  shader 实例且默认不跑时间动画，需要流动高光时可用 `animate: true` 显式开启。
+- 默认使用 `BackdropFilter` 毛玻璃 + tint/渐变/描边/高光叠层（Windows、测试与 Android 均走这条稳定路径）。
+- 实验性的 `ImageFilter.shader` 折射路径默认**关闭**：Flutter 3.32 在多个 `BackdropFilter` 玻璃层
+  重叠时会把上一帧（含自身输出）反馈进下一帧，任何动画触发重绘都会让玻璃闪白色底
+ （flutter/flutter#187820、#170820）。需要实验时用
+  `--dart-define=FUSIONPLAY_GLASS_SHADER=true` 显式开启。
 - 组件会对 `MediaQuery.disableAnimations` 关闭时间动画；
 - 可调参数：`borderRadius`、`blurSigma`、`tint`、`refraction`、`specular`、`thickness`、
   `absorption`、`animate`。

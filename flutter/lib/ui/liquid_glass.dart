@@ -87,6 +87,18 @@ class _LiquidGlassState extends State<LiquidGlass>
     with SingleTickerProviderStateMixin {
   static Future<ui.FragmentProgram?>? _programFuture;
 
+  /// Flutter 3.32's `ImageFilter.shader` + `BackdropFilter` can feed the
+  /// previous frame back into the next one when two glass surfaces overlap
+  /// (flutter/flutter#187820, #170820). On Android the whole glass layer then
+  /// flashes an opaque white wash whenever any animation schedules a repaint.
+  /// Keep the experimental lens shader off by default; the blurred fallback
+  /// below is stable and looks the same. Opt in only for experiments:
+  /// `--dart-define=FUSIONPLAY_GLASS_SHADER=true`.
+  static const bool _enableExperimentalShader = bool.fromEnvironment(
+    'FUSIONPLAY_GLASS_SHADER',
+    defaultValue: false,
+  );
+
   /// Per-widget shader instance. A shared [ui.FragmentShader] would let every
   /// surface overwrite the others' uniforms during build, which makes several
   /// glass panels flash as the paint order changes.
@@ -108,7 +120,7 @@ class _LiquidGlassState extends State<LiquidGlass>
   @override
   void initState() {
     super.initState();
-    if (widget.forceFallback) return;
+    if (widget.forceFallback || !_enableExperimentalShader) return;
     _initialiseShader();
   }
 

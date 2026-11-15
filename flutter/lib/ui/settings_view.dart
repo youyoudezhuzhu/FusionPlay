@@ -15,7 +15,7 @@ import 'vector_icon.dart';
 
 const fusionPlayVersion = String.fromEnvironment(
   'FUSIONPLAY_VERSION',
-  defaultValue: '1.3.7',
+  defaultValue: '1.3.8',
 );
 
 /// Dark liquid-glass palette used by the settings panel. The outer
