@@ -374,8 +374,8 @@ void main() {
     expect(find.byKey(const ValueKey('player-lyrics-view')), findsNothing);
     expect(find.text('AirPlay 2 不提供歌词'), findsOneWidget);
     expect(find.text('暂无歌词'), findsNothing);
-    // 顶部不再显示协议/音质胶囊。
-    expect(find.text('AirPlay 2'), findsNothing);
+    // 顶部保留音频来源（协议）胶囊，但不再显示音质胶囊。
+    expect(find.text('AirPlay 2'), findsWidgets);
     expect(find.text('AAC / 44.1 kHz / 16-bit / 2 ch'), findsNothing);
     // AirPlay 永远不出现歌词开关。
     expect(

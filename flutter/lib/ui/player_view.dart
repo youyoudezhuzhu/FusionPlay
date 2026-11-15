@@ -418,6 +418,11 @@ class _PlayerViewState extends State<PlayerView> {
   // ------------------------------------------------------------------
 
   Widget _topBar({required bool landscape, required bool compact}) {
+    final protocol = playbackProtocolLabel(widget.state.playback.protocol);
+    final reduceMotion = _reduceMotion;
+    final entrance = reduceMotion
+        ? Duration.zero
+        : const Duration(milliseconds: 240);
     return Padding(
       padding: EdgeInsets.fromLTRB(
         compact ? (landscape ? 16 : 12) : (landscape ? 30 : 18),
@@ -427,7 +432,26 @@ class _PlayerViewState extends State<PlayerView> {
       ),
       child: Row(
         children: [
-          const Spacer(),
+          Expanded(
+            child: TweenAnimationBuilder<double>(
+              tween: Tween(begin: 0, end: 1),
+              duration: entrance,
+              curve: Curves.easeOutCubic,
+              builder: (context, reveal, child) => Opacity(
+                opacity: reveal,
+                child: Transform.translate(
+                  offset: Offset(0, 4 * (1 - reveal)),
+                  child: child,
+                ),
+              ),
+              child: Wrap(
+                spacing: 10,
+                runSpacing: 6,
+                crossAxisAlignment: WrapCrossAlignment.center,
+                children: [if (protocol != null) _chip(protocol)],
+              ),
+            ),
+          ),
           if (_lyricsToggleVisible) ...[
             _lyricsToggleButton(),
             const SizedBox(width: 8),
