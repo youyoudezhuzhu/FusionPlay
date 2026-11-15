@@ -11,6 +11,7 @@ import com.airplayreceiver.desktop.backend.CorePlaybackStateSideEffect
 import com.airplayreceiver.desktop.backend.FusionPlayDiagnosticLogger
 import com.airplayreceiver.desktop.backend.MediaSource
 import com.airplayreceiver.desktop.backend.MediaSourceArbiter
+import com.airplayreceiver.desktop.backend.mediaControlAvailability
 import com.airplayreceiver.desktop.backend.MiPlayDeviceIdentity
 import com.airplayreceiver.desktop.backend.NetworkMediaEventGate
 import com.airplayreceiver.desktop.backend.PlaybackCommand
@@ -1108,6 +1109,31 @@ class FusionPlayRuntime(
         return serialized
     }
 
+    /**
+     * Capability flags for the Flutter controls.
+     *
+     * Skip/seek come from the shared MediaControlPolicy (MiPlay reverse control
+     * or the sender's advertised remote commands). Play/pause and seek are also
+     * allowed for locally rendered sources: AirPlay and DLNA sessions are
+     * paused/resumed through the local core even when the sender exposes no
+     * remote-control channel.
+     */
+    private fun controlsStateMap(state: AppState): Map<String, Any?> {
+        val controls = state.mediaControlAvailability()
+        val playback = state.playback
+        val hasPlayback = playback.streamActive ||
+            playback.mediaUrl != null ||
+            playback.title != null ||
+            playback.protocol != null ||
+            playback.durationMs != null
+        return mapOf(
+            "playPause" to (controls.canPlayPause || hasPlayback),
+            "previous" to controls.canPrevious,
+            "next" to controls.canNext,
+            "seek" to (controls.canSeek || (playback.durationMs ?: 0L) > 0L),
+        )
+    }
+
     private fun stateMap(state: AppState): Map<String, Any?> = mapOf(
         "initialized" to state.initialized,
         "busy" to state.busy,
@@ -1130,6 +1156,7 @@ class FusionPlayRuntime(
             "airPlayEnabled" to state.settings.airPlayEnabled,
             "dlnaEnabled" to state.settings.dlnaEnabled,
         ),
+        "controls" to controlsStateMap(state),
         "playback" to mapOf(
             "title" to state.playback.title,
             "artist" to state.playback.artist,

@@ -28,6 +28,10 @@ class LyricsView extends StatefulWidget {
     this.clock,
     this.compact = false,
     this.semanticLabel = '歌词',
+    this.activeFontSize = 19,
+    this.inactiveFontSize = 16,
+    this.lineGap = 5,
+    this.textShadow,
   });
 
   final LyricsDocument? lyrics;
@@ -48,6 +52,12 @@ class LyricsView extends StatefulWidget {
 
   final bool compact;
   final String semanticLabel;
+
+  /// Typography overrides for the large YAQMC-style right column.
+  final double activeFontSize;
+  final double inactiveFontSize;
+  final double lineGap;
+  final List<Shadow>? textShadow;
 
   static const autoScrollDuration = Duration(milliseconds: 420);
   static const autoScrollPause = Duration(seconds: 4);
@@ -341,6 +351,10 @@ class _LyricsViewState extends State<LyricsView>
       durationMs: widget.durationMs,
       controller: _scroll,
       onScrollNotification: _onScrollNotification,
+      activeFontSize: widget.activeFontSize,
+      inactiveFontSize: widget.inactiveFontSize,
+      lineGap: widget.lineGap,
+      textShadow: widget.textShadow,
     );
   }
 }
@@ -360,6 +374,10 @@ class _LyricsListBody extends StatelessWidget {
     required this.durationMs,
     required this.controller,
     required this.onScrollNotification,
+    required this.activeFontSize,
+    required this.inactiveFontSize,
+    required this.lineGap,
+    required this.textShadow,
   });
 
   final LyricsDocument lyrics;
@@ -374,6 +392,10 @@ class _LyricsListBody extends StatelessWidget {
   final int? durationMs;
   final ScrollController controller;
   final bool Function(ScrollNotification notification) onScrollNotification;
+  final double activeFontSize;
+  final double inactiveFontSize;
+  final double lineGap;
+  final List<Shadow>? textShadow;
 
   @override
   Widget build(BuildContext context) => LayoutBuilder(
@@ -403,7 +425,8 @@ class _LyricsListBody extends StatelessWidget {
     final line = lyrics.lines[index];
     final active = synced && index == activeIndex;
     final blank = line.isBlank;
-    final fontSize = (active ? 19.0 : 16.0) * (compact ? .96 : 1.0);
+    final fontSize =
+        (active ? activeFontSize : inactiveFontSize) * (compact ? .96 : 1.0);
     final color = active
         ? activeColor
         : blank

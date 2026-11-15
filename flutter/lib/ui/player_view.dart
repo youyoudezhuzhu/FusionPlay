@@ -9,12 +9,16 @@ import '../theme/fusion_theme.dart';
 import 'animated_press_scale.dart';
 import 'artwork.dart';
 import 'g2_shape.dart';
-import 'player_layout.dart';
+import 'liquid_glass.dart';
 import 'lyrics_view.dart';
-import 'rounded_progress_bar.dart';
 import 'remote_focus.dart';
+import 'rounded_progress_bar.dart';
 import 'vector_icon.dart';
 
+/// YAQMC-style player surface: full-bleed artwork background (owned by the
+/// host), top bar with source chips + liquid-glass action menu trigger, a large
+/// artwork/title column plus a large lyrics column, and a floating glass
+/// transport dock with progress and volume.
 class PlayerView extends StatefulWidget {
   const PlayerView({
     super.key,
@@ -26,7 +30,13 @@ class PlayerView extends StatefulWidget {
     this.artworkIdentity,
     this.progressFocusNode,
     this.settingsFocusNode,
+    this.menuFocusNode,
+    this.onOpenMenu,
+    this.menuOpen = false,
+    this.volumeFocusNode,
+    this.forceGlassFallback = false,
   });
+
   final AppState state;
   final ValueChanged<PlaybackCommand> onPlayback;
   final ValueChanged<int> onSeek;
@@ -34,7 +44,21 @@ class PlayerView extends StatefulWidget {
   final String? artworkSource;
   final String? artworkIdentity;
   final FocusNode? progressFocusNode;
+
+  /// Legacy menu-trigger focus node (kept for existing call sites).
   final FocusNode? settingsFocusNode;
+
+  /// Focus node of the three-dot trigger in the top bar.
+  final FocusNode? menuFocusNode;
+
+  /// Opens the action menu; the trigger is hidden when null.
+  final VoidCallback? onOpenMenu;
+
+  final bool menuOpen;
+  final FocusNode? volumeFocusNode;
+
+  /// Test hook: render LiquidGlass surfaces without the backdrop shader.
+  final bool forceGlassFallback;
 
   @override
   State<PlayerView> createState() => _PlayerViewState();
@@ -44,15 +68,16 @@ class _PlayerViewState extends State<PlayerView> {
   final FocusNode _fallbackProgressFocus = FocusNode(
     debugLabel: 'player-progress',
   );
+  final FocusNode _fallbackMenuFocus = FocusNode(debugLabel: 'player-menu');
   final FocusNode _previousFocus = FocusNode(debugLabel: 'player-previous');
   final FocusNode _playPauseFocus = FocusNode(debugLabel: 'player-play-pause');
   final FocusNode _nextFocus = FocusNode(debugLabel: 'player-next');
-  final FocusNode _lyricsFocus = FocusNode(debugLabel: 'player-lyrics');
+  final FocusNode _fallbackVolumeFocus = FocusNode(debugLabel: 'player-volume');
   final ValueNotifier<bool> _previousPressed = ValueNotifier(false);
   final ValueNotifier<bool> _playPausePressed = ValueNotifier(false);
   final ValueNotifier<bool> _nextPressed = ValueNotifier(false);
-  final ValueNotifier<bool> _lyricsPressed = ValueNotifier(false);
-  bool lyricsMode = false;
+  final ValueNotifier<bool> _menuPressed = ValueNotifier(false);
+
   bool seeking = false;
   double? seekPositionMs;
   int? pendingSeekTargetMs;
@@ -63,8 +88,49 @@ class _PlayerViewState extends State<PlayerView> {
   final List<String> _artworkHistory = [];
   int _artworkHistoryIndex = -1;
 
+  double? _volumeDrag;
+  int? _optimisticVolume;
+  int? _lastAudibleVolume;
+  Timer? _volumeDebounceTimer;
+  Timer? _volumeOptimisticTimer;
+
   FocusNode get _progressFocus =>
       widget.progressFocusNode ?? _fallbackProgressFocus;
+
+  FocusNode get _menuFocus =>
+      widget.menuFocusNode ?? widget.settingsFocusNode ?? _fallbackMenuFocus;
+
+  FocusNode get _volumeFocus => widget.volumeFocusNode ?? _fallbackVolumeFocus;
+
+  bool get _reduceMotion =>
+      MediaQuery.maybeOf(context)?.disableAnimations ?? false;
+
+  PlaybackControls get _controls => widget.state.controls;
+
+  int get _durationMs => math.max(0, widget.state.playback.durationMs ?? 0);
+
+  bool get _hasPlayback {
+    final playback = widget.state.playback;
+    return playback.streamActive ||
+        (playback.protocol?.trim().isNotEmpty ?? false) ||
+        (playback.mediaUrl?.trim().isNotEmpty ?? false) ||
+        (playback.title?.trim().isNotEmpty ?? false) ||
+        (playback.artist?.trim().isNotEmpty ?? false) ||
+        playback.durationMs != null;
+  }
+
+  bool get _playVisible => _hasPlayback && _controls.playPause;
+
+  bool get _previousVisible => _hasPlayback && _controls.previous;
+
+  bool get _nextVisible => _hasPlayback && _controls.next;
+
+  bool get _seekable => _durationMs > 0 && _controls.seek;
+
+  bool get _menuVisible =>
+      widget.onOpenMenu != null ||
+      widget.menuFocusNode != null ||
+      widget.settingsFocusNode != null;
 
   @override
   void initState() {
@@ -107,11 +173,6 @@ class _PlayerViewState extends State<PlayerView> {
       artworkFlipDirectionPending = false;
       artworkFlipDirectionTimer?.cancel();
     }
-    if (lyricsMode && !_lyricsAvailable) {
-      // Lyrics vanished while the page was open (sender stopped / new track
-      // without lyrics): leave the mode without a jarring rebuild.
-      lyricsMode = false;
-    }
     if (!seeking) {
       final pending = pendingSeekTargetMs;
       if (pending == null ||
@@ -123,6 +184,25 @@ class _PlayerViewState extends State<PlayerView> {
         seekPositionMs = pending.toDouble();
       }
     }
+  }
+
+  @override
+  void dispose() {
+    pendingSeekTimer?.cancel();
+    artworkFlipDirectionTimer?.cancel();
+    _volumeDebounceTimer?.cancel();
+    _volumeOptimisticTimer?.cancel();
+    _fallbackProgressFocus.dispose();
+    _fallbackMenuFocus.dispose();
+    _previousFocus.dispose();
+    _playPauseFocus.dispose();
+    _nextFocus.dispose();
+    _fallbackVolumeFocus.dispose();
+    _previousPressed.dispose();
+    _playPausePressed.dispose();
+    _nextPressed.dispose();
+    _menuPressed.dispose();
+    super.dispose();
   }
 
   String? _artworkHistoryIdentity(PlayerView view) {
@@ -206,419 +286,343 @@ class _PlayerViewState extends State<PlayerView> {
   }
 
   @override
-  void dispose() {
-    pendingSeekTimer?.cancel();
-    artworkFlipDirectionTimer?.cancel();
-    _fallbackProgressFocus.dispose();
-    _previousFocus.dispose();
-    _playPauseFocus.dispose();
-    _nextFocus.dispose();
-    _lyricsFocus.dispose();
-    _previousPressed.dispose();
-    _playPausePressed.dispose();
-    _nextPressed.dispose();
-    _lyricsPressed.dispose();
-    super.dispose();
-  }
-
-  @override
   Widget build(BuildContext context) {
     return LayoutBuilder(
       builder: (context, outer) {
         final landscape = outer.maxWidth > outer.maxHeight;
-        final portrait = !landscape;
-        final viewportInsets = playerViewportInsets(
-          outer.maxWidth,
-          outer.maxHeight,
-        );
-        final sidePadding = portrait ? 16.0 : viewportInsets.horizontal;
-        final verticalPadding = portrait ? 16.0 : viewportInsets.vertical;
-        return Padding(
-          padding: EdgeInsets.fromLTRB(
-            sidePadding,
-            verticalPadding,
-            sidePadding,
-            verticalPadding,
-          ),
-          child: LayoutBuilder(
-            builder: (context, box) {
-              final layout = playerLayoutMetrics(
-                box.maxWidth,
-                box.maxHeight,
-                landscape: landscape,
-              );
-              return layout.horizontal
-                  ? _horizontal(layout, availableHeight: box.maxHeight)
-                  : _compact(
-                      layout,
-                      centerTrackText: portrait,
-                      availableHeight: box.maxHeight,
-                    );
-            },
-          ),
+        return Column(
+          children: [
+            _topBar(landscape: landscape),
+            Expanded(child: landscape ? _landscapeBody() : _portraitBody()),
+            _dock(),
+          ],
         );
       },
     );
   }
 
-  Widget _horizontal(
-    PlayerLayoutMetrics layout, {
-    required double availableHeight,
-  }) {
+  // ------------------------------------------------------------------
+  // Top bar
+  // ------------------------------------------------------------------
+
+  Widget _topBar({required bool landscape}) {
+    final playback = widget.state.playback;
+    final protocol = _protocolLabel(playback.protocol);
+    final quality = playback.qualityText?.trim();
     final reduceMotion = _reduceMotion;
-    return Center(
+    final entrance = reduceMotion
+        ? Duration.zero
+        : const Duration(milliseconds: 240);
+    return Padding(
+      padding: EdgeInsets.fromLTRB(
+        landscape ? 30 : 18,
+        landscape ? 16 : 12,
+        landscape ? 22 : 12,
+        6,
+      ),
       child: Row(
-        key: const ValueKey('player-layout-horizontal'),
-        mainAxisSize: MainAxisSize.min,
         children: [
-          _animatedArtwork(
-            baseSize: layout.artworkSize,
-            shrinkScale: .82,
-            reduceMotion: reduceMotion,
-          ),
-          SizedBox(width: layout.contentGap),
-          ConstrainedBox(
-            constraints: BoxConstraints(
-              minWidth: layout.detailsMinWidth,
-              maxWidth: layout.detailsMaxWidth,
-            ),
-            child: _details(
-              textScale: layout.textScale,
-              spacingScale: layout.spacingScale,
-              controlScale: layout.controlScale,
-              contentGap: layout.contentGap,
-              lyricsViewportHeight: _lyricsViewportHeight(
-                availableHeight,
-                compact: false,
+          Expanded(
+            child: TweenAnimationBuilder<double>(
+              tween: Tween(begin: 0, end: 1),
+              duration: entrance,
+              curve: Curves.easeOutCubic,
+              builder: (context, reveal, child) => Opacity(
+                opacity: reveal,
+                child: Transform.translate(
+                  offset: Offset(0, 4 * (1 - reveal)),
+                  child: child,
+                ),
               ),
-              compactLayout: false,
+              child: Wrap(
+                spacing: 10,
+                runSpacing: 6,
+                crossAxisAlignment: WrapCrossAlignment.center,
+                children: [
+                  const Text(
+                    '正在播放',
+                    style: TextStyle(
+                      fontSize: 12,
+                      letterSpacing: 1.8,
+                      color: Color(0x9EFFFFFF),
+                      fontWeight: FusionTypography.semiBoldFontWeight,
+                      fontVariations: FusionTypography.semiBold,
+                    ),
+                  ),
+                  if (protocol != null) _chip(protocol),
+                  if (quality != null && quality.isNotEmpty) _chip(quality),
+                ],
+              ),
             ),
           ),
+          if (_menuVisible) _menuButton(),
         ],
       ),
     );
   }
 
-  Widget _compact(
-    PlayerLayoutMetrics layout, {
-    required bool centerTrackText,
-    required double availableHeight,
-  }) {
-    final reduceMotion = _reduceMotion;
-    return Center(
-      child: SingleChildScrollView(
+  Widget _chip(String text) => Container(
+    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+    decoration: ShapeDecoration(
+      color: const Color(0x26FFFFFF),
+      shape: StadiumBorder(
+        side: BorderSide(color: Colors.white.withValues(alpha: .16)),
+      ),
+    ),
+    child: Text(
+      text,
+      maxLines: 1,
+      overflow: TextOverflow.ellipsis,
+      style: TextStyle(
+        fontSize: 12,
+        color: Colors.white.withValues(alpha: .84),
+        fontWeight: FusionTypography.mediumFontWeight,
+        fontVariations: FusionTypography.medium,
+      ),
+    ),
+  );
+
+  Widget _menuButton() => AnimatedPressScale(
+    key: const ValueKey('playback-menu-button'),
+    externalPressed: _menuPressed,
+    child: RemoteFocusFrame(
+      autofocus: true,
+      focusNode: _menuFocus,
+      onActivate: widget.onOpenMenu,
+      onPressChange: (pressed) => _menuPressed.value = pressed,
+      borderColor: Colors.white,
+      shape: const G2ContinuousBorder(radius: 999),
+      shortcuts: <ShortcutActivator, Intent>{
+        const SingleActivator(LogicalKeyboardKey.arrowDown):
+            const DirectionalFocusIntent(TraversalDirection.down),
+      },
+      actions: <Type, Action<Intent>>{
+        DirectionalFocusIntent: CallbackAction<DirectionalFocusIntent>(
+          onInvoke: (_) {
+            _focusAfterTopBar();
+            return null;
+          },
+        ),
+      },
+      child: SizedBox.square(
+        dimension: 46,
+        child: LiquidGlass(
+          borderRadius: 999,
+          blurSigma: 16,
+          tint: widget.menuOpen
+              ? const Color(0x40FFFFFF)
+              : const Color(0x1FFFFFFF),
+          forceFallback: widget.forceGlassFallback,
+          child: Material(
+            color: Colors.transparent,
+            shape: const CircleBorder(),
+            clipBehavior: Clip.antiAlias,
+            child: InkWell(
+              onTap: widget.onOpenMenu,
+              child: Center(
+                child: Icon(
+                  Icons.more_horiz_rounded,
+                  size: 24,
+                  color: Colors.white.withValues(alpha: .94),
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    ),
+  );
+
+  void _focusAfterTopBar() {
+    if (_seekable) {
+      _progressFocus.requestFocus();
+    } else if (_playVisible) {
+      _playPauseFocus.requestFocus();
+    } else if (_controls.any) {
+      _volumeFocus.requestFocus();
+    }
+  }
+
+  String? _protocolLabel(String? protocol) {
+    final value = protocol?.trim();
+    if (value == null || value.isEmpty) return null;
+    final normalized = value.toLowerCase();
+    if (normalized.contains('miplay') ||
+        normalized.contains('xiaomi') ||
+        value == '小米妙播') {
+      return '小米妙播';
+    }
+    if (normalized.contains('airplay')) return 'AirPlay';
+    if (normalized.contains('dlna')) return 'DLNA';
+    return value;
+  }
+
+  // ------------------------------------------------------------------
+  // Main content
+  // ------------------------------------------------------------------
+
+  Widget _landscapeBody() => Padding(
+    padding: const EdgeInsets.fromLTRB(30, 4, 24, 10),
+    child: LayoutBuilder(
+      builder: (context, content) {
+        final leftWidth = (content.maxWidth * .36)
+            .clamp(210.0, 380.0)
+            .toDouble();
+        final dense = content.maxHeight < 260;
+        final artwork = math
+            .min(leftWidth - 8, content.maxHeight * (dense ? .50 : .62))
+            .clamp(dense ? 40.0 : 96.0, 360.0)
+            .toDouble();
+        final rightWidth = content.maxWidth - leftWidth - 28;
+        final activeFont = (rightWidth * .042).clamp(22.0, 34.0).toDouble();
+        return Row(
+          key: const ValueKey('player-layout-horizontal'),
+          crossAxisAlignment: CrossAxisAlignment.center,
+          children: [
+            SizedBox(
+              width: leftWidth,
+              child: _leftColumn(
+                artwork: artwork,
+                compact: content.maxHeight < 420,
+                center: false,
+                dense: dense,
+              ),
+            ),
+            const SizedBox(width: 28),
+            Expanded(
+              child: _lyricsColumn(
+                activeFontSize: activeFont,
+                inactiveFontSize: activeFont * .68,
+              ),
+            ),
+          ],
+        );
+      },
+    ),
+  );
+
+  Widget _portraitBody() => LayoutBuilder(
+    builder: (context, content) {
+      final artwork = (content.maxWidth * .62).clamp(150.0, 300.0).toDouble();
+      final lyricsHeight = (content.maxHeight * .32)
+          .clamp(160.0, 280.0)
+          .toDouble();
+      return SingleChildScrollView(
+        key: const ValueKey('player-layout-compact'),
+        padding: const EdgeInsets.fromLTRB(20, 4, 20, 8),
         child: Column(
-          key: const ValueKey('player-layout-compact'),
           mainAxisSize: MainAxisSize.min,
           children: [
-            _animatedArtwork(
-              baseSize: layout.artworkSize,
-              shrinkScale: .80,
-              reduceMotion: reduceMotion,
-            ),
-            SizedBox(height: layout.contentGap),
+            _leftColumn(artwork: artwork, compact: true, center: true),
+            const SizedBox(height: 18),
             SizedBox(
-              width: layout.detailsMaxWidth,
-              child: _details(
-                textScale: layout.textScale,
-                spacingScale: layout.spacingScale,
-                controlScale: layout.controlScale,
-                contentGap: layout.contentGap,
-                centerTrackText: centerTrackText,
-                lyricsViewportHeight: _lyricsViewportHeight(
-                  availableHeight,
-                  compact: true,
-                ),
-                compactLayout: true,
+              height: lyricsHeight,
+              child: _lyricsColumn(
+                activeFontSize: 24,
+                inactiveFontSize: 16.5,
+                alignCenter: true,
               ),
             ),
           ],
         ),
-      ),
-    );
-  }
+      );
+    },
+  );
 
-  /// Artwork shrinks (and drifts slightly left) when lyrics open; the scale
-  /// animates on a shared easeOutCubic curve with the rest of the transition.
-  Widget _animatedArtwork({
-    required double baseSize,
-    required double shrinkScale,
-    required bool reduceMotion,
-  }) {
-    final target = _showLyrics ? shrinkScale : 1.0;
-    return TweenAnimationBuilder<double>(
-      tween: Tween(end: target),
-      duration: reduceMotion
-          ? Duration.zero
-          : const Duration(milliseconds: 240),
-      curve: Curves.easeOutCubic,
-      builder: (context, scale, child) => Transform.translate(
-        offset: Offset(-8 * (1 - scale), 0),
-        child: _BreathingArtwork(
-          enabled: widget.state.playback.isPlaying && !reduceMotion,
-          child: ArtworkCard(
-            source: widget.artworkSource,
-            size: baseSize * scale,
-            hasPlayback: _hasPlayback,
-            identity: widget.artworkIdentity,
-            flipDirection: artworkFlipDirection,
-          ),
-        ),
-      ),
-    );
-  }
-
-  Widget _details({
-    required double textScale,
-    required double spacingScale,
-    required double controlScale,
-    required double contentGap,
-    required double lyricsViewportHeight,
-    required bool compactLayout,
-    bool centerTrackText = false,
+  Widget _leftColumn({
+    required double artwork,
+    required bool compact,
+    required bool center,
+    bool dense = false,
   }) {
     final playback = widget.state.playback;
-    final hasArtwork = widget.artworkSource?.trim().isNotEmpty ?? false;
-    final hasPlayback = _hasPlayback;
-    final foreground = hasArtwork ? Colors.white : const Color(0xFF171717);
-    final muted = hasArtwork
-        ? Colors.white.withValues(alpha: .74)
-        : const Color(0xFF5F5F5F);
-    final reduceMotion = _reduceMotion;
-    final showLyrics = _showLyrics;
-    final duration = math.max(0, playback.durationMs ?? 0);
-    final position = (seekPositionMs?.round() ?? playback.positionMs).clamp(
-      0,
-      duration == 0 ? playback.positionMs : duration,
-    );
-    final canSeek = duration > 0 && _can('seek');
-    final progress = duration > 0 ? position / duration : 0.0;
-    return Column(
-      crossAxisAlignment: centerTrackText
-          ? CrossAxisAlignment.center
-          : CrossAxisAlignment.stretch,
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        _trackHeader(
-          textScale: textScale,
-          spacingScale: spacingScale,
-          centerTrackText: centerTrackText,
-          compactHeader: showLyrics,
-          foreground: foreground,
-          muted: muted,
-        ),
-        _animatedLyricsSlot(
-          visible: showLyrics,
-          reduceMotion: reduceMotion,
-          height: lyricsViewportHeight,
-          topGap: 8 * spacingScale,
-          child: _lyricsPanel(
-            foreground: foreground,
-            muted: hasArtwork
-                ? Colors.white.withValues(alpha: .55)
-                : const Color(0xFF6B6B6B),
-            compact: compactLayout,
-          ),
-        ),
-        SizedBox(
-          height: centerTrackText
-              ? contentGap
-              : (showLyrics ? 12 * spacingScale : 30 * spacingScale),
-        ),
-        Row(
-          children: [
-            SizedBox(
-              width: 48 * spacingScale,
-              child: Transform.translate(
-                offset: Offset(centerTrackText ? -4 : 0, 0),
-                child: Text(
-                  hasPlayback ? _duration(position) : '1:14',
-                  textAlign: TextAlign.center,
-                  style: TextStyle(
-                    color: muted,
-                    fontSize: 12 * textScale,
-                    fontWeight: FusionTypography.mediumFontWeight,
-                    fontVariations: FusionTypography.medium,
-                  ),
-                ),
-              ),
-            ),
-            Expanded(
-              child: TweenAnimationBuilder<double>(
-                tween: Tween(end: progress),
-                duration: reduceMotion
-                    ? Duration.zero
-                    : const Duration(milliseconds: 220),
-                curve: Curves.easeOutCubic,
-                builder: (context, animatedProgress, _) => RoundedProgressBar(
-                  value: animatedProgress,
-                  enabled: duration > 0,
-                  seekEnabled: canSeek,
-                  showThumb: false,
-                  focusNode: _progressFocus,
-                  upFocusNode: widget.settingsFocusNode,
-                  downFocusNode: _playPauseFocus,
-                  focusBorderColor: hasArtwork ? Colors.white : Colors.black,
-                  activeColor: hasPlayback
-                      ? foreground
-                      : const Color(0x1A1A1A1A),
-                  inactiveColor: duration <= 0
-                      ? (!hasPlayback
-                            ? const Color(0x1A1A1A1A)
-                            : hasArtwork
-                            ? Colors.white.withValues(alpha: .56)
-                            : const Color(0x331A1A1A))
-                      : (hasArtwork
-                            ? Colors.white.withValues(alpha: .28)
-                            : const Color(0xFFE7E7E7)),
-                  onChangeStart: (_) => setState(() => seeking = true),
-                  onChanged: (value) => setState(() {
-                    seeking = true;
-                    seekPositionMs = duration * value;
-                  }),
-                  onChangeEnd: (value) {
-                    final target = (duration * value).round();
-                    setState(() {
-                      seeking = false;
-                      seekPositionMs = target.toDouble();
-                      pendingSeekTargetMs = target;
-                    });
-                    pendingSeekTimer?.cancel();
-                    pendingSeekTimer = Timer(
-                      const Duration(milliseconds: 3000),
-                      () {
-                        if (!mounted || pendingSeekTargetMs != target) return;
-                        setState(() {
-                          pendingSeekTargetMs = null;
-                          seekPositionMs = widget.state.playback.positionMs
-                              .toDouble();
-                        });
-                      },
-                    );
-                    widget.onSeek(target);
-                  },
-                ),
-              ),
-            ),
-            SizedBox(
-              width: 48 * spacingScale,
-              child: Transform.translate(
-                offset: Offset(centerTrackText ? 4 : 0, 0),
-                child: Text(
-                  hasPlayback ? _duration(duration) : '5:14',
-                  textAlign: TextAlign.center,
-                  style: TextStyle(
-                    color: muted,
-                    fontSize: 12 * textScale,
-                    fontWeight: FusionTypography.mediumFontWeight,
-                    fontVariations: FusionTypography.medium,
-                  ),
-                ),
-              ),
-            ),
-          ],
-        ),
-        SizedBox(height: showLyrics ? 12 * spacingScale : 20 * spacingScale),
-        _controls(controlScale, spacingScale, hasPlayback),
-      ],
-    );
-  }
-
-  /// Reveals/hides the lyrics viewport. Reduced motion swaps the animated
-  /// size for a plain slot: a zero-duration [AnimatedSize] would re-dirty
-  /// itself during layout.
-  Widget _animatedLyricsSlot({
-    required bool visible,
-    required bool reduceMotion,
-    required double height,
-    required double topGap,
-    required Widget child,
-  }) {
-    final slot = visible
-        ? Padding(
-            padding: EdgeInsets.only(top: topGap),
-            child: SizedBox(height: height, child: child),
-          )
-        : const SizedBox(width: double.infinity, height: 0);
-    if (reduceMotion) return slot;
-    return AnimatedSize(
-      duration: const Duration(milliseconds: 240),
-      curve: Curves.easeOutCubic,
-      alignment: Alignment.topCenter,
-      child: slot,
-    );
-  }
-
-  /// Title/artist header. Shrinks to a single compact line while lyrics are
-  /// open so the lyrics viewport can own the middle of the details column.
-  Widget _trackHeader({
-    required double textScale,
-    required double spacingScale,
-    required bool centerTrackText,
-    required bool compactHeader,
-    required Color foreground,
-    required Color muted,
-  }) {
-    final playback = widget.state.playback;
-    final reduceMotion = _reduceMotion;
     final title = playback.title?.trim().isNotEmpty == true
         ? playback.title!.trim()
         : '暂无音乐';
     final artist = playback.artist?.trim();
-    return TweenAnimationBuilder<double>(
-      tween: Tween(end: compactHeader ? 1 : 0),
-      duration: reduceMotion
-          ? Duration.zero
-          : const Duration(milliseconds: 240),
-      curve: Curves.easeOutCubic,
-      builder: (context, compact, _) {
-        final titleSize = (28 + (15 - 28) * compact) * textScale;
-        final artistSize = (16 + (12 - 16) * compact) * textScale;
-        final titleAlign = centerTrackText ? TextAlign.center : TextAlign.start;
-        return Column(
-          crossAxisAlignment: centerTrackText
-              ? CrossAxisAlignment.center
-              : CrossAxisAlignment.stretch,
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Text(
-              title,
-              maxLines: compact >= .5 ? 1 : 2,
-              overflow: TextOverflow.ellipsis,
-              textAlign: titleAlign,
-              style: Theme.of(context).textTheme.headlineMedium?.copyWith(
-                fontSize: titleSize,
-                height: 1.25,
-                color: foreground,
-                fontWeight: FusionTypography.semiBoldFontWeight,
-                fontVariations: FusionTypography.semiBold,
-              ),
+    final lyricsChip = _lyricsStatusLabel(playback);
+    final titleSize = (artwork / 11.5).clamp(
+      dense ? 17.0 : (compact ? 20.0 : 24.0),
+      32.0,
+    );
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: center
+          ? CrossAxisAlignment.center
+          : CrossAxisAlignment.start,
+      children: [
+        _breathingArtwork(size: artwork, child: _artworkCard(artwork)),
+        SizedBox(height: dense ? 8 : (compact ? 12 : 18)),
+        Text(
+          title,
+          maxLines: dense ? 1 : 2,
+          overflow: TextOverflow.ellipsis,
+          textAlign: center ? TextAlign.center : TextAlign.start,
+          style: TextStyle(
+            fontSize: titleSize,
+            height: 1.2,
+            color: Colors.white,
+            fontWeight: FusionTypography.semiBoldFontWeight,
+            fontVariations: FusionTypography.semiBold,
+            shadows: const [Shadow(blurRadius: 20, color: Color(0x66000000))],
+          ),
+        ),
+        if (!dense && artist != null && artist.isNotEmpty) ...[
+          const SizedBox(height: 4),
+          Text(
+            artist,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            textAlign: center ? TextAlign.center : TextAlign.start,
+            style: TextStyle(
+              fontSize: compact ? 14 : 16,
+              color: Colors.white.withValues(alpha: .68),
+              fontWeight: FusionTypography.regularFontWeight,
+              fontVariations: FusionTypography.regular,
             ),
-            if (artist != null && artist.isNotEmpty) ...[
-              SizedBox(height: (6 + (2 - 6) * compact) * spacingScale),
-              Text(
-                artist,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                textAlign: titleAlign,
-                style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                  fontSize: artistSize,
-                  color: muted,
-                  fontWeight: FusionTypography.regularFontWeight,
-                  fontVariations: FusionTypography.regular,
-                ),
-              ),
-            ],
-          ],
-        );
-      },
+          ),
+        ],
+        if (!dense && lyricsChip != null) ...[
+          const SizedBox(height: 10),
+          _chip(lyricsChip),
+        ],
+      ],
     );
   }
 
-  Widget _lyricsPanel({
-    required Color foreground,
-    required Color muted,
-    required bool compact,
+  Widget _artworkCard(double size) => DecoratedBox(
+    decoration: BoxDecoration(
+      borderRadius: BorderRadius.circular(26),
+      boxShadow: [
+        BoxShadow(
+          color: Colors.black.withValues(alpha: .42),
+          blurRadius: 38,
+          spreadRadius: -6,
+          offset: const Offset(0, 18),
+        ),
+      ],
+    ),
+    child: ClipRRect(
+      borderRadius: BorderRadius.circular(26),
+      child: ArtworkCard(
+        source: widget.artworkSource,
+        size: size,
+        hasPlayback: _hasPlayback,
+        identity: widget.artworkIdentity,
+        flipDirection: artworkFlipDirection,
+      ),
+    ),
+  );
+
+  Widget _breathingArtwork({required double size, required Widget child}) {
+    final enabled = widget.state.playback.isPlaying && !_reduceMotion;
+    return _ArtworkBreath(enabled: enabled, child: child);
+  }
+
+  Widget _lyricsColumn({
+    required double activeFontSize,
+    required double inactiveFontSize,
+    bool alignCenter = false,
   }) {
     final playback = widget.state.playback;
     final reduceMotion = _reduceMotion;
@@ -626,17 +630,13 @@ class _PlayerViewState extends State<PlayerView> {
       tween: Tween(begin: 0, end: 1),
       duration: reduceMotion
           ? Duration.zero
-          : const Duration(milliseconds: 260),
+          : const Duration(milliseconds: 280),
       curve: Curves.easeOutCubic,
-      builder: (context, progress, child) => Opacity(
-        opacity: progress,
+      builder: (context, reveal, child) => Opacity(
+        opacity: reveal,
         child: Transform.translate(
-          offset: Offset(0, 12 * (1 - progress)),
-          child: Transform.scale(
-            scale: .985 + .015 * progress,
-            alignment: Alignment.topCenter,
-            child: child,
-          ),
+          offset: Offset(0, 10 * (1 - reveal)),
+          child: child,
         ),
       ),
       child: LyricsView(
@@ -646,324 +646,315 @@ class _PlayerViewState extends State<PlayerView> {
         isPlaying: playback.isPlaying,
         positionMs: playback.positionMs,
         durationMs: playback.durationMs,
-        trackKey: _lyricsTrackKey,
-        foreground: foreground,
-        muted: muted,
-        compact: compact,
+        trackKey:
+            playback.trackIdentity ??
+            playback.sourceEpoch ??
+            playback.mediaUrl ??
+            playback.protocol ??
+            'fusionplay-track',
+        foreground: Colors.white,
+        muted: Colors.white.withValues(alpha: .50),
+        activeColor: Colors.white,
+        activeFontSize: activeFontSize,
+        inactiveFontSize: inactiveFontSize,
+        lineGap: (activeFontSize * .30).clamp(7.0, 13.0),
+        textShadow: const [Shadow(blurRadius: 18, color: Color(0x66000000))],
+        semanticLabel: '歌词',
       ),
     );
   }
 
-  Widget _controls(double controlScale, double spacingScale, bool hasPlayback) {
-    final small = 50 * controlScale;
-    final play = 62 * controlScale;
-    final gap = 18 * spacingScale;
-    final reduceMotion = _reduceMotion;
-    final lyricsAvailable = _lyricsAvailable;
-    const idleElement = Color(0x1A1A1A1A);
-    final tonal = hasPlayback
-        ? Colors.black.withValues(alpha: .28)
-        : idleElement;
-    final disabledContainer = hasPlayback
-        ? Colors.black.withValues(alpha: .28)
-        : idleElement;
-    final disabledContent = hasPlayback
-        ? Colors.white.withValues(alpha: .38)
-        : const Color(0x61151515);
-    final playBackground = hasPlayback ? Colors.white : idleElement;
-    final playForeground = hasPlayback ? Colors.black : const Color(0xFF151515);
-    final playDisabledBackground = hasPlayback ? Colors.white : idleElement;
-    final playDisabledForeground = const Color(0x61151515);
-    final smallForeground = hasPlayback
-        ? Colors.white
-        : const Color(0xFF151515);
-    final coreControls = Row(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        _ControlEntrance(
-          index: 0,
-          reduceMotion: reduceMotion,
-          child: _controlButton(
-            FusionIcons.previous,
-            _previousFocus,
-            _previousPressed,
-            small,
-            24 * controlScale,
-            tonal,
-            smallForeground,
-            disabledContainer,
-            disabledContent,
-            hasPlayback
-                ? () => _changeTrack(
-                    PlaybackCommand.previous,
-                    ArtworkFlipDirection.right,
-                  )
-                : null,
-            controlKey: const ValueKey('playback-previous-button'),
-          ),
-        ),
-        SizedBox(width: gap),
-        _ControlEntrance(
-          index: 1,
-          reduceMotion: reduceMotion,
-          child: _controlButton(
-            widget.state.playback.isPlaying
-                ? FusionIcons.pause
-                : FusionIcons.play,
-            _playPauseFocus,
-            _playPausePressed,
-            play,
-            30 * controlScale,
-            playBackground,
-            playForeground,
-            playDisabledBackground,
-            playDisabledForeground,
-            hasPlayback
-                ? () => widget.onPlayback(PlaybackCommand.playPause)
-                : null,
-            upFocusNode: _progressFocus,
-            leftFocusNode: _previousFocus,
-            rightFocusNode: _nextFocus,
-            controlKey: const ValueKey('playback-play-pause-button'),
-          ),
-        ),
-        SizedBox(width: gap),
-        _ControlEntrance(
-          index: 2,
-          reduceMotion: reduceMotion,
-          child: _controlButton(
-            FusionIcons.next,
-            _nextFocus,
-            _nextPressed,
-            small,
-            24 * controlScale,
-            tonal,
-            smallForeground,
-            disabledContainer,
-            disabledContent,
-            hasPlayback
-                ? () => _changeTrack(
-                    PlaybackCommand.next,
-                    ArtworkFlipDirection.left,
-                  )
-                : null,
-            rightFocusNode: lyricsAvailable ? _lyricsFocus : null,
-            controlKey: const ValueKey('playback-next-button'),
-          ),
-        ),
-        if (lyricsAvailable) ...[
-          SizedBox(width: gap * .7),
-          _ControlEntrance(
-            index: 3,
-            reduceMotion: reduceMotion,
-            child: _lyricsButton(controlScale, hasPlayback),
-          ),
-        ],
-      ],
-    );
-    return SizedBox(
-      height: play,
-      child: Center(
-        child: FittedBox(fit: BoxFit.scaleDown, child: coreControls),
-      ),
-    );
+  String? _lyricsStatusLabel(PlaybackSnapshot playback) {
+    final lyrics = playback.lyrics;
+    if (lyrics != null && lyrics.hasLyrics) {
+      if (lyrics.hasWordTiming) return '逐字歌词';
+      if (lyrics.isSynced) return '同步歌词';
+      return '静态歌词';
+    }
+    return null;
   }
 
-  Widget _lyricsButton(double controlScale, bool hasPlayback) {
-    final size = 46 * controlScale;
+  // ------------------------------------------------------------------
+  // Bottom dock
+  // ------------------------------------------------------------------
+
+  Widget _dock() {
+    final playback = widget.state.playback;
+    final duration = _durationMs;
+    final position = seekPositionMs?.round() ?? playback.positionMs;
+    final clampedPosition = position.clamp(
+      0,
+      duration == 0 ? playback.positionMs : duration,
+    );
+    final progress = duration > 0 ? clampedPosition / duration : 0.0;
     final reduceMotion = _reduceMotion;
-    final active = lyricsMode;
-    final hasArtwork = widget.artworkSource?.trim().isNotEmpty ?? false;
-    final accent = hasPlayback ? Colors.white : Colors.black;
-    final background = hasPlayback
-        ? (active ? Colors.white : Colors.black.withValues(alpha: .30))
-        : (active ? Colors.white : const Color(0x1A1A1A1A));
-    final iconColor = hasPlayback
-        ? (active ? Colors.black : Colors.white)
-        : const Color(0xFF151515);
-    return AnimatedPressScale(
-      key: const ValueKey('playback-lyrics-button'),
-      enabled: true,
-      externalPressed: _lyricsPressed,
-      child: RemoteFocusFrame(
-        enabled: true,
-        focusNode: _lyricsFocus,
-        onActivate: _toggleLyricsMode,
-        onPressChange: (pressed) => _lyricsPressed.value = pressed,
-        shortcuts: const <ShortcutActivator, Intent>{
-          SingleActivator(LogicalKeyboardKey.arrowUp): DirectionalFocusIntent(
-            TraversalDirection.up,
-          ),
-          SingleActivator(LogicalKeyboardKey.arrowLeft): DirectionalFocusIntent(
-            TraversalDirection.left,
-          ),
-        },
-        actions: <Type, Action<Intent>>{
-          DirectionalFocusIntent: CallbackAction<DirectionalFocusIntent>(
-            onInvoke: (intent) {
-              if (intent.direction == TraversalDirection.up) {
-                _progressFocus.requestFocus();
-              } else if (intent.direction == TraversalDirection.left) {
-                _nextFocus.requestFocus();
-              }
-              return null;
-            },
-          ),
-        },
-        borderColor: hasArtwork ? Colors.white : Colors.black,
-        shape: G2ContinuousBorder(radius: size / 2),
-        child: Stack(
-          alignment: Alignment.center,
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(22, 0, 22, 18),
+      child: LiquidGlass(
+        borderRadius: 28,
+        blurSigma: 18,
+        tint: const Color(0x59101318),
+        forceFallback: widget.forceGlassFallback,
+        padding: const EdgeInsets.fromLTRB(20, 8, 20, 12),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
           children: [
-            AnimatedContainer(
-              duration: reduceMotion
-                  ? Duration.zero
-                  : const Duration(milliseconds: 220),
-              curve: Curves.easeOutCubic,
-              width: size,
-              height: size,
-              decoration: ShapeDecoration(
-                color: background,
-                shape: G2ContinuousBorder(radius: size / 2),
-                shadows: active && !reduceMotion
-                    ? <BoxShadow>[
-                        BoxShadow(
-                          color: accent.withValues(alpha: .30),
-                          blurRadius: 16,
-                          spreadRadius: 1,
+            Row(
+              children: [
+                _timeLabel(
+                  _hasPlayback ? _formatDuration(clampedPosition) : '0:00',
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: TweenAnimationBuilder<double>(
+                    tween: Tween(end: progress),
+                    duration: reduceMotion
+                        ? Duration.zero
+                        : const Duration(milliseconds: 220),
+                    curve: Curves.easeOutCubic,
+                    builder: (context, animatedProgress, _) =>
+                        RoundedProgressBar(
+                          key: const ValueKey('player-progress-bar'),
+                          value: animatedProgress,
+                          enabled: duration > 0,
+                          seekEnabled: _seekable,
+                          showThumb: false,
+                          focusNode: _progressFocus,
+                          upFocusNode: _menuVisible ? _menuFocus : null,
+                          downFocusNode: _playVisible ? _playPauseFocus : null,
+                          focusBorderColor: Colors.white,
+                          activeColor: Colors.white,
+                          inactiveColor: Colors.white.withValues(alpha: .24),
+                          onChangeStart: (_) => setState(() => seeking = true),
+                          onChanged: (value) => setState(() {
+                            seeking = true;
+                            seekPositionMs = duration * value;
+                          }),
+                          onChangeEnd: (value) {
+                            final target = (duration * value).round();
+                            setState(() {
+                              seeking = false;
+                              seekPositionMs = target.toDouble();
+                              pendingSeekTargetMs = target;
+                            });
+                            pendingSeekTimer?.cancel();
+                            pendingSeekTimer = Timer(
+                              const Duration(milliseconds: 3000),
+                              () {
+                                if (!mounted || pendingSeekTargetMs != target) {
+                                  return;
+                                }
+                                setState(() {
+                                  pendingSeekTargetMs = null;
+                                  seekPositionMs = widget
+                                      .state
+                                      .playback
+                                      .positionMs
+                                      .toDouble();
+                                });
+                              },
+                            );
+                            widget.onSeek(target);
+                          },
                         ),
-                      ]
-                    : null,
-              ),
-              child: Material(
-                color: Colors.transparent,
-                shape: G2ContinuousBorder(radius: size / 2),
-                clipBehavior: Clip.antiAlias,
-                child: InkWell(
-                  onTap: _toggleLyricsMode,
-                  child: Center(
-                    child: AnimatedSwitcher(
-                      duration: reduceMotion
-                          ? Duration.zero
-                          : const Duration(milliseconds: 180),
-                      child: Icon(
-                        active ? Icons.lyrics_rounded : Icons.lyrics_outlined,
-                        key: ValueKey<bool>(active),
-                        size: 22 * controlScale,
-                        color: iconColor,
-                      ),
-                    ),
                   ),
                 ),
-              ),
+                const SizedBox(width: 10),
+                _timeLabel(_hasPlayback ? _formatDuration(duration) : '0:00'),
+              ],
             ),
-            if (!active)
-              Positioned(
-                top: size * .16,
-                right: size * .16,
-                child: Container(
-                  width: 6,
-                  height: 6,
-                  decoration: BoxDecoration(
-                    color: accent.withValues(alpha: hasPlayback ? .9 : .6),
-                    shape: BoxShape.circle,
-                  ),
-                ),
-              ),
+            const SizedBox(height: 4),
+            LayoutBuilder(
+              builder: (context, dock) {
+                final wide = dock.maxWidth >= 460;
+                final transport = _transport();
+                final volume = _volumeControls();
+                if (wide) {
+                  return Row(
+                    children: [
+                      Expanded(
+                        child: Align(
+                          alignment: Alignment.centerLeft,
+                          child: _dockStatus(),
+                        ),
+                      ),
+                      transport,
+                      Expanded(
+                        child: Align(
+                          alignment: Alignment.centerRight,
+                          child: volume,
+                        ),
+                      ),
+                    ],
+                  );
+                }
+                return Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    transport,
+                    const SizedBox(height: 2),
+                    Align(alignment: Alignment.centerRight, child: volume),
+                  ],
+                );
+              },
+            ),
           ],
         ),
       ),
     );
   }
 
-  void _toggleLyricsMode() {
-    if (!_lyricsAvailable) return;
-    setState(() => lyricsMode = !lyricsMode);
+  Widget _timeLabel(String text) => SizedBox(
+    width: 46,
+    child: Text(
+      text,
+      textAlign: TextAlign.center,
+      style: TextStyle(
+        fontSize: 12,
+        color: Colors.white.withValues(alpha: .62),
+        fontWeight: FusionTypography.mediumFontWeight,
+        fontVariations: FusionTypography.medium,
+      ),
+    ),
+  );
+
+  Widget _dockStatus() {
+    final playback = widget.state.playback;
+    final status = _lyricsStatusLabel(playback) ?? '';
+    if (status.isEmpty) return const SizedBox.shrink();
+    return Text(
+      status,
+      maxLines: 1,
+      overflow: TextOverflow.ellipsis,
+      style: TextStyle(
+        fontSize: 11,
+        color: Colors.white.withValues(alpha: .46),
+        letterSpacing: .6,
+        fontWeight: FusionTypography.mediumFontWeight,
+        fontVariations: FusionTypography.medium,
+      ),
+    );
   }
 
-  void _changeTrack(PlaybackCommand command, ArtworkFlipDirection direction) {
-    setState(() {
-      artworkFlipDirection = direction;
-      artworkFlipDirectionPending = true;
-    });
-    artworkFlipDirectionTimer?.cancel();
-    artworkFlipDirectionTimer = Timer(const Duration(seconds: 3), () {
-      if (!mounted || !artworkFlipDirectionPending) return;
-      setState(() {
-        artworkFlipDirection = ArtworkFlipDirection.right;
-        artworkFlipDirectionPending = false;
-      });
-    });
-    widget.onPlayback(command);
-  }
-
-  Widget _controlButton(
-    String icon,
-    FocusNode focusNode,
-    ValueNotifier<bool> remotePressed,
-    double size,
-    double iconSize,
-    Color background,
-    Color foreground,
-    Color disabledBackground,
-    Color disabledForeground,
-    VoidCallback? onPressed, {
-    required Key controlKey,
-    FocusNode? upFocusNode,
-    FocusNode? leftFocusNode,
-    FocusNode? rightFocusNode,
-  }) {
-    final lightFocus = widget.artworkSource?.trim().isNotEmpty ?? false;
+  Widget _transport() {
     final reduceMotion = _reduceMotion;
-    final hasDirectionalTargets =
-        upFocusNode != null || leftFocusNode != null || rightFocusNode != null;
+    final children = <Widget>[];
+    if (_previousVisible) {
+      children.add(
+        _ControlEntrance(
+          index: 0,
+          reduceMotion: reduceMotion,
+          child: _glassControlButton(
+            icon: FusionIcons.previous,
+            focusNode: _previousFocus,
+            remotePressed: _previousPressed,
+            key: const ValueKey('playback-previous-button'),
+            onPressed: () => _changeTrack(
+              PlaybackCommand.previous,
+              ArtworkFlipDirection.right,
+            ),
+            rightFocusNode: _playVisible
+                ? _playPauseFocus
+                : (_nextVisible ? _nextFocus : null),
+          ),
+        ),
+      );
+    }
+    if (_playVisible) {
+      if (children.isNotEmpty) children.add(const SizedBox(width: 16));
+      children.add(
+        _ControlEntrance(
+          index: 1,
+          reduceMotion: reduceMotion,
+          child: _playPauseButton(reduceMotion),
+        ),
+      );
+    }
+    if (_nextVisible) {
+      if (children.isNotEmpty) children.add(const SizedBox(width: 16));
+      children.add(
+        _ControlEntrance(
+          index: 2,
+          reduceMotion: reduceMotion,
+          child: _glassControlButton(
+            icon: FusionIcons.next,
+            focusNode: _nextFocus,
+            remotePressed: _nextPressed,
+            key: const ValueKey('playback-next-button'),
+            onPressed: () =>
+                _changeTrack(PlaybackCommand.next, ArtworkFlipDirection.left),
+            leftFocusNode: _playVisible ? _playPauseFocus : null,
+            rightFocusNode: _volumeFocus,
+            downFocusNode: _volumeFocus,
+          ),
+        ),
+      );
+    }
+    if (children.isEmpty) return const SizedBox(height: 56);
+    return Row(mainAxisSize: MainAxisSize.min, children: children);
+  }
+
+  Widget _playPauseButton(bool reduceMotion) {
+    final hasPlayback = _hasPlayback;
+    final background = hasPlayback ? Colors.white : const Color(0x1AFFFFFF);
+    final foreground = hasPlayback
+        ? const Color(0xFF151515)
+        : const Color(0x61FFFFFF);
     return AnimatedPressScale(
-      key: controlKey,
-      enabled: onPressed != null,
-      externalPressed: remotePressed,
+      key: const ValueKey('playback-play-pause-button'),
+      enabled: hasPlayback,
+      externalPressed: _playPausePressed,
       child: RemoteFocusFrame(
-        enabled: onPressed != null,
-        focusNode: focusNode,
-        onActivate: onPressed,
-        onPressChange: (pressed) => remotePressed.value = pressed,
+        enabled: hasPlayback,
+        focusNode: _playPauseFocus,
+        onActivate: hasPlayback
+            ? () => widget.onPlayback(PlaybackCommand.playPause)
+            : null,
+        onPressChange: (pressed) => _playPausePressed.value = pressed,
+        borderColor: Colors.white,
+        shape: G2ContinuousBorder(radius: 29),
         shortcuts: <ShortcutActivator, Intent>{
-          if (upFocusNode != null)
-            const SingleActivator(LogicalKeyboardKey.arrowUp):
-                const DirectionalFocusIntent(TraversalDirection.up),
-          if (leftFocusNode != null)
+          const SingleActivator(LogicalKeyboardKey.arrowUp):
+              const DirectionalFocusIntent(TraversalDirection.up),
+          if (_previousVisible)
             const SingleActivator(LogicalKeyboardKey.arrowLeft):
                 const DirectionalFocusIntent(TraversalDirection.left),
-          if (rightFocusNode != null)
+          if (_nextVisible)
             const SingleActivator(LogicalKeyboardKey.arrowRight):
                 const DirectionalFocusIntent(TraversalDirection.right),
+          const SingleActivator(LogicalKeyboardKey.arrowDown):
+              const DirectionalFocusIntent(TraversalDirection.down),
         },
-        actions: !hasDirectionalTargets
-            ? const <Type, Action<Intent>>{}
-            : <Type, Action<Intent>>{
-                DirectionalFocusIntent: CallbackAction<DirectionalFocusIntent>(
-                  onInvoke: (intent) {
-                    final target = switch (intent.direction) {
-                      TraversalDirection.up => upFocusNode,
-                      TraversalDirection.left => leftFocusNode,
-                      TraversalDirection.right => rightFocusNode,
-                      _ => null,
-                    };
-                    target?.requestFocus();
-                    return null;
-                  },
-                ),
-              },
-        borderColor: lightFocus ? Colors.white : Colors.black,
-        shape: G2ContinuousBorder(radius: size / 2),
+        actions: <Type, Action<Intent>>{
+          DirectionalFocusIntent: CallbackAction<DirectionalFocusIntent>(
+            onInvoke: (intent) {
+              final target = switch (intent.direction) {
+                TraversalDirection.up =>
+                  _seekable
+                      ? _progressFocus
+                      : (_menuVisible ? _menuFocus : null),
+                TraversalDirection.left =>
+                  _previousVisible ? _previousFocus : null,
+                TraversalDirection.right =>
+                  _nextVisible ? _nextFocus : _volumeFocus,
+                TraversalDirection.down => _volumeFocus,
+              };
+              target?.requestFocus();
+              return null;
+            },
+          ),
+        },
         child: SizedBox.square(
-          dimension: size,
+          dimension: 58,
           child: Material(
-            color: onPressed == null ? disabledBackground : background,
-            shape: G2ContinuousBorder(radius: size / 2),
+            color: background,
+            shape: const CircleBorder(),
             clipBehavior: Clip.antiAlias,
             child: IconButton(
               padding: EdgeInsets.zero,
-              onPressed: onPressed,
+              onPressed: hasPlayback
+                  ? () => widget.onPlayback(PlaybackCommand.playPause)
+                  : null,
               icon: AnimatedSwitcher(
                 duration: reduceMotion
                     ? Duration.zero
@@ -982,10 +973,12 @@ class _PlayerViewState extends State<PlayerView> {
                   ),
                 ),
                 child: FusionVectorIcon(
-                  icon,
-                  key: ValueKey<String>(icon),
-                  size: iconSize,
-                  color: onPressed == null ? disabledForeground : foreground,
+                  widget.state.playback.isPlaying
+                      ? FusionIcons.pause
+                      : FusionIcons.play,
+                  key: ValueKey<bool>(widget.state.playback.isPlaying),
+                  size: 28,
+                  color: foreground,
                 ),
               ),
             ),
@@ -995,71 +988,235 @@ class _PlayerViewState extends State<PlayerView> {
     );
   }
 
-  bool get _reduceMotion =>
-      MediaQuery.maybeOf(context)?.disableAnimations ?? false;
-
-  LyricsDocument? get _lyrics => widget.state.playback.lyrics;
-
-  bool get _lyricsAvailable {
-    final lyrics = _lyrics;
-    return widget.state.playback.lyricsLoading ||
-        (lyrics != null && lyrics.lines.isNotEmpty && lyrics.hasLyrics);
-  }
-
-  bool get _showLyrics => lyricsMode && _lyricsAvailable;
-
-  Object get _lyricsTrackKey {
-    final playback = widget.state.playback;
-    return playback.trackIdentity ??
-        playback.sourceEpoch ??
-        playback.mediaUrl ??
-        playback.protocol ??
-        'fusionplay-track';
-  }
-
-  /// Lyrics viewport height: 190-240 px on a regular landscape layout and a
-  /// graceful minimum on short layouts so the details column never overflows.
-  double _lyricsViewportHeight(
-    double availableHeight, {
-    required bool compact,
+  Widget _glassControlButton({
+    required String icon,
+    required FocusNode focusNode,
+    required ValueNotifier<bool> remotePressed,
+    required Key key,
+    required VoidCallback onPressed,
+    FocusNode? leftFocusNode,
+    FocusNode? rightFocusNode,
+    FocusNode? downFocusNode,
   }) {
-    if (compact) {
-      return (availableHeight * .30).clamp(140.0, 220.0).toDouble();
+    final reduceMotion = _reduceMotion;
+    return AnimatedPressScale(
+      key: key,
+      externalPressed: remotePressed,
+      child: RemoteFocusFrame(
+        focusNode: focusNode,
+        onActivate: onPressed,
+        onPressChange: (pressed) => remotePressed.value = pressed,
+        borderColor: Colors.white,
+        shape: G2ContinuousBorder(radius: 23),
+        shortcuts: <ShortcutActivator, Intent>{
+          const SingleActivator(LogicalKeyboardKey.arrowUp):
+              const DirectionalFocusIntent(TraversalDirection.up),
+          if (leftFocusNode != null)
+            const SingleActivator(LogicalKeyboardKey.arrowLeft):
+                const DirectionalFocusIntent(TraversalDirection.left),
+          if (rightFocusNode != null)
+            const SingleActivator(LogicalKeyboardKey.arrowRight):
+                const DirectionalFocusIntent(TraversalDirection.right),
+          if (downFocusNode != null)
+            const SingleActivator(LogicalKeyboardKey.arrowDown):
+                const DirectionalFocusIntent(TraversalDirection.down),
+        },
+        actions: <Type, Action<Intent>>{
+          DirectionalFocusIntent: CallbackAction<DirectionalFocusIntent>(
+            onInvoke: (intent) {
+              final target = switch (intent.direction) {
+                TraversalDirection.up =>
+                  _seekable
+                      ? _progressFocus
+                      : (_menuVisible ? _menuFocus : null),
+                TraversalDirection.left => leftFocusNode,
+                TraversalDirection.right => rightFocusNode,
+                TraversalDirection.down => downFocusNode,
+              };
+              target?.requestFocus();
+              return null;
+            },
+          ),
+        },
+        child: SizedBox.square(
+          dimension: 46,
+          child: LiquidGlass(
+            borderRadius: 999,
+            blurSigma: 14,
+            tint: const Color(0x26FFFFFF),
+            animate: !reduceMotion,
+            forceFallback: widget.forceGlassFallback,
+            child: Material(
+              color: Colors.transparent,
+              shape: const CircleBorder(),
+              clipBehavior: Clip.antiAlias,
+              child: InkWell(
+                onTap: onPressed,
+                child: Center(
+                  child: FusionVectorIcon(
+                    icon,
+                    size: 22,
+                    color: Colors.white.withValues(alpha: .92),
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  // ------------------------------------------------------------------
+  // Volume
+  // ------------------------------------------------------------------
+
+  int get _externalVolume =>
+      (widget.state.playback.volumePercent ?? 100).clamp(0, 100);
+
+  double get _displayVolume {
+    final drag = _volumeDrag;
+    if (drag != null) return drag;
+    final optimistic = _optimisticVolume;
+    return ((optimistic ?? _externalVolume).clamp(0, 100)) / 100;
+  }
+
+  Widget _volumeControls() {
+    final volume = _displayVolume;
+    final percent = (volume * 100).round();
+    final icon = percent == 0
+        ? Icons.volume_off_rounded
+        : (percent < 50 ? Icons.volume_down_rounded : Icons.volume_up_rounded);
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        ExcludeFocus(
+          child: Semantics(
+            label: percent == 0 ? '取消静音' : '静音',
+            button: true,
+            child: InkResponse(
+              key: const ValueKey('volume-mute-button'),
+              onTap: _toggleMute,
+              radius: 22,
+              child: SizedBox.square(
+                dimension: 40,
+                child: Center(
+                  child: Icon(
+                    icon,
+                    size: 20,
+                    color: Colors.white.withValues(alpha: .82),
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ),
+        const SizedBox(width: 6),
+        SizedBox(
+          width: 96,
+          child: RoundedProgressBar(
+            key: const ValueKey('volume-slider'),
+            value: volume,
+            enabled: true,
+            seekEnabled: true,
+            showThumb: true,
+            focusNode: _volumeFocus,
+            upFocusNode: _playVisible ? _playPauseFocus : null,
+            focusBorderColor: Colors.white,
+            activeColor: Colors.white.withValues(alpha: .82),
+            inactiveColor: Colors.white.withValues(alpha: .22),
+            onChanged: (value) {
+              setState(() => _volumeDrag = value);
+              _scheduleVolumeCommit((value * 100).round());
+            },
+            onChangeEnd: (value) => _commitVolume((value * 100).round()),
+          ),
+        ),
+        SizedBox(
+          width: 34,
+          child: Text(
+            '$percent',
+            textAlign: TextAlign.right,
+            style: TextStyle(
+              fontSize: 11,
+              color: Colors.white.withValues(alpha: .52),
+              fontFeatures: const [FontFeature.tabularFigures()],
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  /// Throttled live volume updates while dragging (120-150ms).
+  void _scheduleVolumeCommit(int percent) {
+    _volumeDebounceTimer?.cancel();
+    _volumeDebounceTimer = Timer(const Duration(milliseconds: 130), () {
+      if (!mounted) return;
+      _applyVolume(percent);
+    });
+  }
+
+  void _toggleMute() {
+    final current = (_displayVolume * 100).round();
+    if (current > 0) {
+      _lastAudibleVolume = current;
+      _applyVolume(0);
+    } else {
+      _applyVolume((_lastAudibleVolume ?? 100).clamp(1, 100));
     }
-    // Header + progress row + controls keep roughly 196 px; on 660 px-tall
-    // landscapes the .34 share lands in the 190-240 px band, on short
-    // landscapes it shrinks instead of overflowing the details column.
-    final maxAllowed = math.max(64.0, availableHeight - 196.0);
-    final upper = math.min(240.0, maxAllowed);
-    final lower = math.min(140.0, upper);
-    return (availableHeight * .34).clamp(lower, upper).toDouble();
   }
 
-  bool _can(String command) {
-    if (!widget.state.remoteControl.available) return false;
-    final commands = widget.state.remoteControl.commands;
-    return commands.contains(command) ||
-        (command == 'previous' && commands.contains('previous_track')) ||
-        (command == 'next' && commands.contains('next_track'));
+  void _applyVolume(int percent) {
+    final clamped = percent.clamp(0, 100);
+    setState(() {
+      _volumeDrag = null;
+      _optimisticVolume = clamped;
+    });
+    _volumeOptimisticTimer?.cancel();
+    _volumeOptimisticTimer = Timer(const Duration(milliseconds: 900), () {
+      if (mounted) setState(() => _optimisticVolume = null);
+    });
+    widget.onVolume(clamped);
   }
 
-  bool get _hasPlayback {
-    final playback = widget.state.playback;
-    return playback.streamActive ||
-        (playback.protocol?.trim().isNotEmpty ?? false) ||
-        (playback.mediaUrl?.trim().isNotEmpty ?? false) ||
-        (playback.title?.trim().isNotEmpty ?? false) ||
-        (playback.artist?.trim().isNotEmpty ?? false) ||
-        playback.durationMs != null;
+  void _commitVolume(int percent) {
+    _volumeDebounceTimer?.cancel();
+    _volumeDebounceTimer = null;
+    _applyVolume(percent);
   }
 
-  String _duration(int milliseconds) {
+  // ------------------------------------------------------------------
+  // Artwork direction helpers
+  // ------------------------------------------------------------------
+
+  void _changeTrack(PlaybackCommand command, ArtworkFlipDirection direction) {
+    setState(() {
+      artworkFlipDirection = direction;
+      artworkFlipDirectionPending = true;
+    });
+    artworkFlipDirectionTimer?.cancel();
+    artworkFlipDirectionTimer = Timer(const Duration(seconds: 3), () {
+      if (!mounted || !artworkFlipDirectionPending) return;
+      setState(() {
+        artworkFlipDirection = ArtworkFlipDirection.right;
+        artworkFlipDirectionPending = false;
+      });
+    });
+    widget.onPlayback(command);
+  }
+
+  String _formatDuration(int milliseconds) {
     final seconds = milliseconds ~/ 1000;
     return '${seconds ~/ 60}:${(seconds % 60).toString().padLeft(2, '0')}';
   }
 }
 
-/// Tiny one-shot staggered entrance for the transport controls.
+// ----------------------------------------------------------------------
+// Small internal widgets
+// ----------------------------------------------------------------------
+
+/// One-shot staggered entrance for transport controls.
 class _ControlEntrance extends StatelessWidget {
   const _ControlEntrance({
     required this.index,
@@ -1074,16 +1231,16 @@ class _ControlEntrance extends StatelessWidget {
   @override
   Widget build(BuildContext context) => TweenAnimationBuilder<double>(
     tween: Tween<double>(begin: 0, end: 1),
-    duration: reduceMotion ? Duration.zero : const Duration(milliseconds: 320),
+    duration: reduceMotion ? Duration.zero : const Duration(milliseconds: 300),
     curve: Interval(
-      (index * .09).clamp(0.0, .65),
+      (index * .08).clamp(0.0, .6),
       1,
       curve: Curves.easeOutCubic,
     ),
     builder: (context, reveal, child) => Opacity(
       opacity: reveal,
       child: Transform.translate(
-        offset: Offset(0, 6 * (1 - reveal)),
+        offset: Offset(0, 5 * (1 - reveal)),
         child: child,
       ),
     ),
@@ -1091,19 +1248,18 @@ class _ControlEntrance extends StatelessWidget {
   );
 }
 
-/// Very light "breathing" scale for the artwork while audio is playing.
-/// Amplitude stays under 1%; disabled with reduced motion.
-class _BreathingArtwork extends StatefulWidget {
-  const _BreathingArtwork({required this.enabled, required this.child});
+/// Very light breathing scale for the artwork while playing (≤0.8%).
+class _ArtworkBreath extends StatefulWidget {
+  const _ArtworkBreath({required this.enabled, required this.child});
 
   final bool enabled;
   final Widget child;
 
   @override
-  State<_BreathingArtwork> createState() => _BreathingArtworkState();
+  State<_ArtworkBreath> createState() => _ArtworkBreathState();
 }
 
-class _BreathingArtworkState extends State<_BreathingArtwork>
+class _ArtworkBreathState extends State<_ArtworkBreath>
     with SingleTickerProviderStateMixin {
   late final AnimationController _controller = AnimationController(
     vsync: this,
@@ -1117,7 +1273,7 @@ class _BreathingArtworkState extends State<_BreathingArtwork>
   }
 
   @override
-  void didUpdateWidget(covariant _BreathingArtwork oldWidget) {
+  void didUpdateWidget(covariant _ArtworkBreath oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (widget.enabled == oldWidget.enabled) return;
     if (widget.enabled) {

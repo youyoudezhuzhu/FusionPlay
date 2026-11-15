@@ -7,9 +7,7 @@ import 'package:fusionplay_android_flutter/models/app_state.dart';
 import 'package:fusionplay_android_flutter/ui/settings_view.dart';
 
 void main() {
-  testWidgets('menu toggles settings and remote back closes it', (
-    tester,
-  ) async {
+  testWidgets('三点菜单打开设置浮层，Escape 逐层关闭', (tester) async {
     final controller = NativeAppController();
     addTearDown(controller.dispose);
     tester.view.physicalSize = const Size(1200, 600);
@@ -22,31 +20,32 @@ void main() {
         home: FusionPlayHome(
           controller: controller,
           state: const AppState(initialized: true),
+          isAndroid: false,
+          forceGlassFallback: true,
         ),
       ),
     );
     await tester.pump();
 
-    AnimatedPositioned panel() =>
-        tester.widget<AnimatedPositioned>(find.byType(AnimatedPositioned));
-
-    expect(panel().right, lessThan(0));
-    expect(panel().duration, Duration.zero);
+    expect(find.byKey(const ValueKey('app-menu')), findsNothing);
     await tester.sendKeyEvent(LogicalKeyboardKey.contextMenu);
     await tester.pumpAndSettle();
-    expect(panel().right, 0);
+    expect(find.byKey(const ValueKey('app-menu')), findsOneWidget);
 
     await tester.sendKeyEvent(LogicalKeyboardKey.contextMenu);
     await tester.pumpAndSettle();
-    expect(panel().right, lessThan(0));
+    expect(find.byKey(const ValueKey('app-menu')), findsNothing);
 
     await tester.sendKeyEvent(LogicalKeyboardKey.contextMenu);
     await tester.pumpAndSettle();
-    expect(panel().right, 0);
+    await tester.tap(find.text('设置'));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('settings-sheet')), findsOneWidget);
 
     await tester.sendKeyEvent(LogicalKeyboardKey.escape);
     await tester.pumpAndSettle();
-    expect(panel().right, lessThan(0));
+    expect(find.byKey(const ValueKey('settings-sheet')), findsNothing);
+    expect(find.byKey(const ValueKey('app-menu')), findsNothing);
   });
 
   testWidgets('up from protocol switches focuses the receiver name field', (
@@ -154,6 +153,8 @@ void main() {
               streamActive: true,
             ),
           ),
+          isAndroid: false,
+          forceGlassFallback: true,
         ),
       ),
     );
@@ -169,10 +170,8 @@ void main() {
     await tester.sendKeyEvent(LogicalKeyboardKey.select);
     await tester.pumpAndSettle();
 
-    final panel = tester.widget<AnimatedPositioned>(
-      find.byType(AnimatedPositioned),
-    );
-    expect(panel.right, lessThan(0));
+    expect(find.byKey(const ValueKey('settings-sheet')), findsNothing);
+    expect(find.byKey(const ValueKey('app-menu')), findsNothing);
   });
 
   testWidgets('player focus follows settings progress and play pause space', (
@@ -202,6 +201,8 @@ void main() {
               commands: {'play_pause', 'seek'},
             ),
           ),
+          isAndroid: false,
+          forceGlassFallback: true,
         ),
       ),
     );
@@ -215,7 +216,7 @@ void main() {
       (node) => node.debugLabel == 'player-play-pause',
     );
     final settings = nodes.singleWhere(
-      (node) => node.debugLabel == 'settings-button',
+      (node) => node.debugLabel == 'player-menu',
     );
 
     progress.requestFocus();
@@ -234,8 +235,10 @@ void main() {
     await tester.pump();
     expect(progress.hasPrimaryFocus, isTrue);
 
-    final settingsRect = tester.getRect(find.byTooltip('设置'));
-    expect(settingsRect.top, 14);
-    expect(1200 - settingsRect.right, 14);
+    final settingsRect = tester.getRect(
+      find.byKey(const ValueKey('playback-menu-button')),
+    );
+    expect(settingsRect.top, 16);
+    expect(1200 - settingsRect.right, 22);
   });
 }

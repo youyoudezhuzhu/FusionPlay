@@ -1,6 +1,5 @@
 import 'dart:async';
 import 'dart:io';
-import 'dart:ui';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -10,10 +9,12 @@ import 'backend/native_app_controller.dart';
 import 'backend/windows_app_controller.dart';
 import 'models/app_state.dart';
 import 'theme/fusion_theme.dart';
+import 'ui/app_menu.dart';
 import 'ui/artwork.dart';
 import 'ui/player_view.dart';
 import 'ui/remote_focus.dart';
 import 'ui/settings_view.dart';
+import 'ui/update_dialogs.dart';
 import 'ui/vector_icon.dart';
 
 Future<void> main() async {
@@ -32,8 +33,8 @@ Future<void> main() async {
         statusBarColor: Colors.transparent,
         systemNavigationBarColor: Colors.transparent,
         systemNavigationBarDividerColor: Colors.transparent,
-        statusBarIconBrightness: Brightness.dark,
-        systemNavigationBarIconBrightness: Brightness.dark,
+        statusBarIconBrightness: Brightness.light,
+        systemNavigationBarIconBrightness: Brightness.light,
         systemNavigationBarContrastEnforced: false,
       ),
     );
@@ -88,10 +89,18 @@ class FusionPlayHome extends StatefulWidget {
     super.key,
     required this.controller,
     required this.state,
+    this.isAndroid,
+    this.forceGlassFallback = false,
   });
 
   final FusionPlayController controller;
   final AppState state;
+
+  /// Overrides platform update availability (tests).
+  final bool? isAndroid;
+
+  /// Test hook: render LiquidGlass surfaces as the frosted fallback.
+  final bool forceGlassFallback;
 
   @override
   State<FusionPlayHome> createState() => _FusionPlayHomeState();
@@ -102,15 +111,18 @@ class _FusionPlayHomeState extends State<FusionPlayHome> {
     'com.fusionplay.android/navigation_keys',
   );
 
+  bool menuOpen = false;
   bool settingsOpen = false;
-  final FocusNode _settingsButtonFocus = FocusNode(
-    debugLabel: 'settings-button',
-  );
+  final FocusNode _menuButtonFocus = FocusNode(debugLabel: 'player-menu');
   final FocusNode _playerProgressFocus = FocusNode(
     debugLabel: 'player-progress',
   );
   final FocusNode _settingsInitialFocus = FocusNode(
     debugLabel: 'settings-miplay',
+  );
+  final List<FocusNode> _menuItemFocus = List<FocusNode>.generate(
+    4,
+    (index) => FocusNode(debugLabel: 'menu-item-$index'),
   );
   String? _displayedArtworkSource;
   String? _requestedArtworkSource;
@@ -118,6 +130,8 @@ class _FusionPlayHomeState extends State<FusionPlayHome> {
   String? _requestedArtworkIdentity;
   bool _artworkPreparationStarted = false;
   Timer? _artworkClearTimer;
+
+  bool get _isAndroid => widget.isAndroid ?? Platform.isAndroid;
 
   @override
   void initState() {
@@ -161,9 +175,12 @@ class _FusionPlayHomeState extends State<FusionPlayHome> {
   void dispose() {
     _navigationKeyChannel.setMethodCallHandler(null);
     _artworkClearTimer?.cancel();
-    _settingsButtonFocus.dispose();
+    _menuButtonFocus.dispose();
     _playerProgressFocus.dispose();
     _settingsInitialFocus.dispose();
+    for (final node in _menuItemFocus) {
+      node.dispose();
+    }
     super.dispose();
   }
 
@@ -205,7 +222,30 @@ class _FusionPlayHomeState extends State<FusionPlayHome> {
     return value == null || value.isEmpty ? null : value;
   }
 
+  // ------------------------------------------------------------------
+  // Menu / settings / update actions
+  // ------------------------------------------------------------------
+
+  void _openMenu() {
+    if (menuOpen || settingsOpen) return;
+    setState(() => menuOpen = true);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      _menuItemFocus.first.requestFocus();
+    });
+  }
+
+  void _closeMenu({bool returnFocus = true}) {
+    if (!menuOpen) return;
+    setState(() => menuOpen = false);
+    if (!returnFocus) return;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) _menuButtonFocus.requestFocus();
+    });
+  }
+
   void _openSettings() {
+    _closeMenu(returnFocus: false);
     setState(() => settingsOpen = true);
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) _settingsInitialFocus.requestFocus();
@@ -213,28 +253,189 @@ class _FusionPlayHomeState extends State<FusionPlayHome> {
   }
 
   void _closeSettings() {
+    if (!settingsOpen) return;
     setState(() => settingsOpen = false);
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (mounted) _settingsButtonFocus.requestFocus();
+      if (mounted) _menuButtonFocus.requestFocus();
+    });
+  }
+
+  void _settingsAction() {
+    _openSettings();
+  }
+
+  void _exportLogsAction() {
+    _closeMenu(returnFocus: false);
+    unawaited(widget.controller.exportLogs());
+    _returnFocusToMenuButton();
+  }
+
+  Future<void> _checkForUpdatesAction() async {
+    _closeMenu(returnFocus: false);
+    await runUpdateFlow(
+      context: context,
+      onCheckUpdate: widget.controller.checkForUpdate,
+      onInstallUpdate: widget.controller.downloadAndInstallUpdate,
+    );
+    _returnFocusToMenuButton();
+  }
+
+  Future<void> _showAboutAction() async {
+    _closeMenu(returnFocus: false);
+    await showDialog<void>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        backgroundColor: Colors.white,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
+        title: const Text(
+          'FusionPlay',
+          style: TextStyle(
+            fontSize: 20,
+            fontWeight: FusionTypography.semiBoldFontWeight,
+            fontVariations: FusionTypography.semiBold,
+            color: SettingsStyle.primaryText,
+          ),
+        ),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            _aboutRow('版本', fusionPlayVersion),
+            _aboutRow(
+              '协议',
+              _protocolLabel(widget.state.playback.protocol) ?? '—',
+            ),
+            _aboutRow('设备名', widget.state.receiverName),
+          ],
+        ),
+        actions: [
+          FilledButton(
+            style: FilledButton.styleFrom(
+              backgroundColor: Colors.black,
+              foregroundColor: Colors.white,
+            ),
+            onPressed: () => Navigator.of(dialogContext).pop(),
+            child: const Text('好'),
+          ),
+        ],
+      ),
+    );
+    _returnFocusToMenuButton();
+  }
+
+  Widget _aboutRow(String label, String value) => Padding(
+    padding: const EdgeInsets.only(bottom: 6),
+    child: Row(
+      children: [
+        SizedBox(
+          width: 64,
+          child: Text(
+            label,
+            style: const TextStyle(
+              fontSize: 13,
+              color: SettingsStyle.secondaryText,
+            ),
+          ),
+        ),
+        Expanded(
+          child: Text(
+            value,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: const TextStyle(
+              fontSize: 13,
+              color: SettingsStyle.primaryText,
+            ),
+          ),
+        ),
+      ],
+    ),
+  );
+
+  String? _protocolLabel(String? protocol) {
+    final value = protocol?.trim();
+    if (value == null || value.isEmpty) return null;
+    final normalized = value.toLowerCase();
+    if (normalized.contains('miplay') ||
+        normalized.contains('xiaomi') ||
+        value == '小米妙播') {
+      return '小米妙播';
+    }
+    if (normalized.contains('airplay')) return 'AirPlay';
+    if (normalized.contains('dlna')) return 'DLNA';
+    return value;
+  }
+
+  void _returnFocusToMenuButton() {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) _menuButtonFocus.requestFocus();
     });
   }
 
   void _handleBackShortcut() {
-    if (settingsOpen) _closeSettings();
+    if (settingsOpen) {
+      _closeSettings();
+    } else if (menuOpen) {
+      _closeMenu();
+    }
   }
 
   void _handleMenuShortcut() {
     if (settingsOpen) {
       _closeSettings();
+    } else if (menuOpen) {
+      _closeMenu();
     } else {
-      _openSettings();
+      _openMenu();
     }
   }
+
+  List<FusionMenuItem> _menuItems() {
+    final items = <FusionMenuItem>[
+      FusionMenuItem(
+        icon: const FusionVectorIcon(
+          FusionIcons.settings,
+          size: 19,
+          color: Colors.white,
+        ),
+        label: '设置',
+        onSelected: _settingsAction,
+      ),
+      if (_isAndroid)
+        FusionMenuItem(
+          icon: const Icon(Icons.system_update_rounded),
+          label: '检查更新',
+          onSelected: _checkForUpdatesAction,
+        ),
+      FusionMenuItem(
+        icon: const FusionVectorIcon(
+          FusionIcons.exportLogs,
+          size: 19,
+          color: Colors.white,
+        ),
+        label: '导出日志',
+        onSelected: _exportLogsAction,
+      ),
+      FusionMenuItem(
+        icon: const FusionVectorIcon(
+          FusionIcons.about,
+          size: 19,
+          color: Colors.white,
+        ),
+        label: '关于',
+        onSelected: _showAboutAction,
+      ),
+    ];
+    return items;
+  }
+
+  // ------------------------------------------------------------------
+  // Build
+  // ------------------------------------------------------------------
 
   @override
   Widget build(BuildContext context) {
     final mediaQuery = MediaQuery.of(context);
-    final landscape = mediaQuery.orientation == Orientation.landscape;
     final state = widget.state;
     final advancedEffectsEnabled =
         state.settings.advancedEffectsEnabled && !mediaQuery.disableAnimations;
@@ -248,149 +449,175 @@ class _FusionPlayHomeState extends State<FusionPlayHome> {
         (playback.title?.trim().isNotEmpty ?? false) ||
         (playback.artist?.trim().isNotEmpty ?? false) ||
         playback.durationMs != null;
-    final settingsWidth = landscape
-        ? (MediaQuery.sizeOf(context).height * 9 / 16).clamp(360.0, 480.0)
-        : MediaQuery.sizeOf(context).width;
+
     final playerSurface = Stack(
       children: [
         Positioned.fill(
           child: ArtworkBackground(source: artwork, hasPlayback: hasPlayback),
         ),
+        // Dark readability gradient over the artwork (YAQMC-style restraint).
+        Positioned.fill(
+          child: DecoratedBox(
+            decoration: BoxDecoration(
+              gradient: LinearGradient(
+                begin: Alignment.topLeft,
+                end: Alignment.bottomRight,
+                colors: hasArtwork
+                    ? const [Color(0xA6101316), Color(0xE6101316)]
+                    : const [Color(0xCC101316), Color(0xF0101316)],
+              ),
+            ),
+          ),
+        ),
         SafeArea(
           child: Stack(
             children: [
-              PlayerView(
-                state: state,
-                artworkSource: artwork,
-                artworkIdentity: _displayedArtworkIdentity,
-                progressFocusNode: _playerProgressFocus,
-                settingsFocusNode: _settingsButtonFocus,
-                onPlayback: widget.controller.playback,
-                onSeek: widget.controller.seek,
-                onVolume: widget.controller.volume,
-              ),
-              Positioned(
-                right: 14,
-                top: 14,
-                child: _SettingsButton(
-                  light: hasArtwork,
-                  focusNode: _settingsButtonFocus,
-                  downFocusNode: _playerProgressFocus,
-                  onPressed: _openSettings,
-                ),
-              ),
-            ],
-          ),
-        ),
-      ],
-    );
-
-    final content = CallbackShortcuts(
-      bindings: <ShortcutActivator, VoidCallback>{
-        const SingleActivator(LogicalKeyboardKey.escape): _handleBackShortcut,
-        const SingleActivator(LogicalKeyboardKey.browserBack):
-            _handleBackShortcut,
-        const SingleActivator(LogicalKeyboardKey.goBack): _handleBackShortcut,
-        const SingleActivator(LogicalKeyboardKey.contextMenu):
-            _handleMenuShortcut,
-      },
-      child: PopScope(
-        canPop: !settingsOpen,
-        onPopInvokedWithResult: (didPop, _) {
-          if (!didPop && settingsOpen) _closeSettings();
-        },
-        child: Scaffold(
-          backgroundColor: hasArtwork
-              ? const Color(0xFF202020)
-              : FusionColors.playerFallback,
-          body: Stack(
-            children: [
               Positioned.fill(
                 child: ExcludeFocus(
-                  excluding: settingsOpen,
-                  child: landscape && advancedEffectsEnabled
-                      ? TweenAnimationBuilder<double>(
-                          tween: Tween(end: settingsOpen ? 1 : 0),
-                          duration: settingsOpen
-                              ? SettingsStyle.blurEnter
-                              : SettingsStyle.blurExit,
-                          curve: const Cubic(.23, 1, .32, 1),
-                          child: playerSurface,
-                          builder: (context, progress, child) {
-                            if (progress <= 0.001) return child!;
-                            final sigma = SettingsStyle.blurRadius * progress;
-                            return ClipRect(
-                              child: ImageFiltered(
-                                imageFilter: ImageFilter.blur(
-                                  sigmaX: sigma,
-                                  sigmaY: sigma,
-                                  tileMode: TileMode.mirror,
-                                ),
-                                child: child,
-                              ),
-                            );
-                          },
-                        )
-                      : playerSurface,
+                  excluding: menuOpen || settingsOpen,
+                  child: PlayerView(
+                    state: state,
+                    artworkSource: artwork,
+                    artworkIdentity: _displayedArtworkIdentity,
+                    progressFocusNode: _playerProgressFocus,
+                    menuFocusNode: _menuButtonFocus,
+                    onOpenMenu: _openMenu,
+                    menuOpen: menuOpen,
+                    forceGlassFallback: widget.forceGlassFallback,
+                    onPlayback: widget.controller.playback,
+                    onSeek: widget.controller.seek,
+                    onVolume: widget.controller.volume,
+                  ),
                 ),
               ),
-              if (landscape)
+              if (menuOpen)
                 Positioned.fill(
-                  right: settingsWidth,
-                  child: IgnorePointer(
-                    ignoring: !settingsOpen,
-                    child: AnimatedOpacity(
-                      opacity: settingsOpen ? 1 : 0,
-                      duration: advancedEffectsEnabled
-                          ? (settingsOpen
-                                ? SettingsStyle.blurEnter
-                                : SettingsStyle.blurExit)
-                          : Duration.zero,
-                      curve: const Cubic(.23, 1, .32, 1),
-                      child: GestureDetector(
-                        onTap: _closeSettings,
-                        child: ColoredBox(
-                          color: Colors.black.withValues(
-                            alpha: SettingsStyle.dimAlpha,
-                          ),
+                  child: GestureDetector(
+                    behavior: HitTestBehavior.opaque,
+                    onTap: () => _closeMenu(),
+                  ),
+                ),
+              Positioned(
+                top: 70,
+                right: 22,
+                child: AnimatedSwitcher(
+                  duration: const Duration(milliseconds: 200),
+                  reverseDuration: const Duration(milliseconds: 140),
+                  switchInCurve: Curves.easeOutCubic,
+                  switchOutCurve: Curves.easeInCubic,
+                  transitionBuilder: (child, animation) {
+                    if (mediaQuery.disableAnimations) return child;
+                    final curved = CurvedAnimation(
+                      parent: animation,
+                      curve: Curves.easeOutCubic,
+                    );
+                    return FadeTransition(
+                      opacity: curved,
+                      child: ScaleTransition(
+                        alignment: Alignment.topRight,
+                        scale: Tween<double>(
+                          begin: .96,
+                          end: 1,
+                        ).animate(curved),
+                        child: SlideTransition(
+                          position: Tween<Offset>(
+                            begin: const Offset(0, .03),
+                            end: Offset.zero,
+                          ).animate(curved),
+                          child: child,
                         ),
                       ),
+                    );
+                  },
+                  child: menuOpen
+                      ? FusionAppMenu(
+                          key: const ValueKey('app-menu'),
+                          items: _menuItems(),
+                          focusNodes: _menuItemFocus,
+                          onDismiss: () => _closeMenu(),
+                          forceFallback: widget.forceGlassFallback,
+                        )
+                      : const SizedBox.shrink(key: ValueKey('app-menu-closed')),
+                ),
+              ),
+              if (settingsOpen)
+                Positioned.fill(
+                  child: GestureDetector(
+                    behavior: HitTestBehavior.opaque,
+                    onTap: _closeSettings,
+                    child: ColoredBox(
+                      color: Colors.black.withValues(alpha: .38),
                     ),
                   ),
                 ),
-              AnimatedPositioned(
-                duration: advancedEffectsEnabled
-                    ? (settingsOpen
+              Positioned.fill(
+                child: IgnorePointer(
+                  ignoring: !settingsOpen,
+                  child: ExcludeFocus(
+                    excluding: !settingsOpen,
+                    child: AnimatedSwitcher(
+                      duration: advancedEffectsEnabled
                           ? const Duration(milliseconds: 220)
-                          : const Duration(milliseconds: 160))
-                    : Duration.zero,
-                curve: const Cubic(.23, 1, .32, 1),
-                top: 0,
-                bottom: 0,
-                right: settingsOpen ? 0 : -settingsWidth,
-                width: settingsWidth,
-                child: ExcludeFocus(
-                  excluding: !settingsOpen,
-                  child: SettingsView(
-                    state: state,
-                    initialFocusNode: _settingsInitialFocus,
-                    onClose: _closeSettings,
-                    onReceiverName: widget.controller.setReceiverName,
-                    onStartup: widget.controller.setStartupEnabled,
-                    onAutoWake: widget.controller.setAutoWakeEnabled,
-                    onAdvancedEffects:
-                        widget.controller.setAdvancedEffectsEnabled,
-                    onMiPlay: (value) =>
-                        widget.controller.setProtocolEnabled('miplay', value),
-                    onMiPlayIdentity: widget.controller.setMiPlayDeviceIdentity,
-                    onAirPlay: (value) =>
-                        widget.controller.setProtocolEnabled('airplay', value),
-                    onDlna: (value) =>
-                        widget.controller.setProtocolEnabled('dlna', value),
-                    onExportLogs: widget.controller.exportLogs,
-                    isAndroid: Platform.isAndroid,
-                    onCheckUpdate: widget.controller.checkForUpdate,
-                    onInstallUpdate: widget.controller.downloadAndInstallUpdate,
+                          : Duration.zero,
+                      reverseDuration: advancedEffectsEnabled
+                          ? const Duration(milliseconds: 160)
+                          : Duration.zero,
+                      switchInCurve: Curves.easeOutCubic,
+                      switchOutCurve: Curves.easeInCubic,
+                      transitionBuilder: (child, animation) {
+                        if (mediaQuery.disableAnimations) return child;
+                        final curved = CurvedAnimation(
+                          parent: animation,
+                          curve: Curves.easeOutCubic,
+                        );
+                        return FadeTransition(
+                          opacity: curved,
+                          child: ScaleTransition(
+                            scale: Tween<double>(
+                              begin: .97,
+                              end: 1,
+                            ).animate(curved),
+                            child: child,
+                          ),
+                        );
+                      },
+                      child: settingsOpen
+                          ? FusionSettingsSheet(
+                              key: const ValueKey('settings-sheet'),
+                              title: '设置',
+                              forceFallback: widget.forceGlassFallback,
+                              onClose: _closeSettings,
+                              child: SettingsView(
+                                state: state,
+                                showHeader: false,
+                                initialFocusNode: _settingsInitialFocus,
+                                onClose: _closeSettings,
+                                onReceiverName:
+                                    widget.controller.setReceiverName,
+                                onStartup: widget.controller.setStartupEnabled,
+                                onAutoWake:
+                                    widget.controller.setAutoWakeEnabled,
+                                onAdvancedEffects:
+                                    widget.controller.setAdvancedEffectsEnabled,
+                                onMiPlay: (value) => widget.controller
+                                    .setProtocolEnabled('miplay', value),
+                                onMiPlayIdentity:
+                                    widget.controller.setMiPlayDeviceIdentity,
+                                onAirPlay: (value) => widget.controller
+                                    .setProtocolEnabled('airplay', value),
+                                onDlna: (value) => widget.controller
+                                    .setProtocolEnabled('dlna', value),
+                                onExportLogs: widget.controller.exportLogs,
+                                isAndroid: _isAndroid,
+                                onCheckUpdate: widget.controller.checkForUpdate,
+                                onInstallUpdate:
+                                    widget.controller.downloadAndInstallUpdate,
+                              ),
+                            )
+                          : const SizedBox.shrink(
+                              key: ValueKey('settings-sheet-closed'),
+                            ),
+                    ),
                   ),
                 ),
               ),
@@ -440,6 +667,32 @@ class _FusionPlayHomeState extends State<FusionPlayHome> {
             ],
           ),
         ),
+      ],
+    );
+
+    final content = CallbackShortcuts(
+      bindings: <ShortcutActivator, VoidCallback>{
+        const SingleActivator(LogicalKeyboardKey.escape): _handleBackShortcut,
+        const SingleActivator(LogicalKeyboardKey.browserBack):
+            _handleBackShortcut,
+        const SingleActivator(LogicalKeyboardKey.goBack): _handleBackShortcut,
+        const SingleActivator(LogicalKeyboardKey.contextMenu):
+            _handleMenuShortcut,
+      },
+      child: PopScope(
+        canPop: !settingsOpen && !menuOpen,
+        onPopInvokedWithResult: (didPop, _) {
+          if (didPop) return;
+          if (settingsOpen) {
+            _closeSettings();
+          } else if (menuOpen) {
+            _closeMenu();
+          }
+        },
+        child: Scaffold(
+          backgroundColor: const Color(0xFF101316),
+          body: playerSurface,
+        ),
       ),
     );
     return MediaQuery(
@@ -451,63 +704,4 @@ class _FusionPlayHomeState extends State<FusionPlayHome> {
       child: content,
     );
   }
-}
-
-class _SettingsButton extends StatelessWidget {
-  const _SettingsButton({
-    required this.light,
-    required this.focusNode,
-    required this.downFocusNode,
-    required this.onPressed,
-  });
-
-  final bool light;
-  final FocusNode focusNode;
-  final FocusNode downFocusNode;
-  final VoidCallback onPressed;
-
-  void _activateFromRemote() {
-    if (focusNode.hasPrimaryFocus) onPressed();
-  }
-
-  @override
-  Widget build(BuildContext context) => RemoteFocusFrame(
-    autofocus: true,
-    focusNode: focusNode,
-    onActivate: _activateFromRemote,
-    shortcuts: const <ShortcutActivator, Intent>{
-      SingleActivator(LogicalKeyboardKey.arrowDown): DirectionalFocusIntent(
-        TraversalDirection.down,
-      ),
-    },
-    actions: <Type, Action<Intent>>{
-      DirectionalFocusIntent: CallbackAction<DirectionalFocusIntent>(
-        onInvoke: (_) {
-          downFocusNode.requestFocus();
-          return null;
-        },
-      ),
-    },
-    borderColor: light ? Colors.white : Colors.black,
-    shape: const CircleBorder(),
-    child: SizedBox.square(
-      dimension: 42,
-      child: Material(
-        color: light
-            ? Colors.black.withValues(alpha: .30)
-            : Colors.white.withValues(alpha: .72),
-        shape: const CircleBorder(),
-        child: IconButton(
-          padding: EdgeInsets.zero,
-          tooltip: '设置',
-          onPressed: onPressed,
-          icon: FusionVectorIcon(
-            FusionIcons.settings,
-            size: 18,
-            color: (light ? Colors.white : Colors.black).withValues(alpha: .88),
-          ),
-        ),
-      ),
-    ),
-  );
 }

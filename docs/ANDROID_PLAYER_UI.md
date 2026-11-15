@@ -1,0 +1,61 @@
+# Android 播放页（YAQMC 风格 + 液态玻璃）
+
+播放页参考 YAQMC 的音乐播放界面重做：左侧大封面与曲目信息，右侧常驻大号歌词，
+底部悬浮播放控制栏；设置不再从侧边展开，改为右上角三点菜单（液态玻璃浮层）+ 居中设置浮层。
+
+## 布局
+
+- **顶部**：左上「正在播放」+ 协议/音质 chips；右上三点玻璃按钮（遥控器可聚焦）。
+- **左列**（约 36% 宽，210–380px）：大圆角封面卡（24–26 圆角、阴影、播放中轻微呼吸 1.008），
+  下方标题/艺人/歌词状态 chip。
+- **右列**：歌词区（常有歌词时），当前行高亮、非当前行降透明度、上下渐隐、自动居中滚动、
+  手动滚动后暂停并显示「回到当前」；逐字歌词沿用卡拉 OK 填色。无歌词时显示空态。
+- **底部悬浮 dock**：进度条 + 时间；上一曲/播放/下一曲；右侧音量图标 + 滑杆（0–100，静音切换）。
+- **紧凑/矮屏**：<260px 内容高度进入 dense 模式（隐藏艺人/chip、单行标题），620x320 不溢出。
+
+## 交互与能力 gating
+
+- 每帧数据来自 `stateMap().controls`：
+  - `playPause`：本地可播放即显示（AirPlay/DLNA 可在接收端暂停/恢复）；
+  - `previous` / `next`：仅当来源支持反向控制（妙播 reverse control 的
+    `previous_track`/`next_track`，或 AirPlay/DLNA 发送端声明的 remote commands）；
+  - `seek`：时长已知且可 seek。
+- 不支持的控制不渲染，避免 D-pad 死焦点。
+- 三点菜单：设置、检查更新（仅 Android）、导出日志、关于（版本/协议/设备名）；
+  点击外部/Escape/返回关闭，焦点回到三点按钮。
+- 设置：居中液态玻璃浮层（宽 min(720, 屏宽-32)、高 86%、圆角 28），内部滚动，
+  首个焦点进入设置内容，关闭回三点按钮。
+
+## 液态玻璃实现
+
+Flutter 官方目前没有提供 Liquid Glass 原生 API（上游 issue
+[flutter#170310](https://github.com/flutter/flutter/issues/170310) 仍 open）；社区包
+（liquid_glass_widgets / liquid_glass_renderer 等）要求 Flutter 3.41+，本项目固定在
+Flutter 3.32.8。因此这里自研实现，参考了以下开源项目的做法：
+
+- [YAQMC](https://github.com/YAQMC/YAQMC)：播放页信息层级、歌词排版、ActionMenu 锚定逻辑；
+- [FlClash](https://github.com/chen08209/FlClash)：玻璃面板的模糊/动效组织；
+- [flutter_liquid_glass](https://github.com/colbymaloy/flutter_liquid_glass) 与
+  [liquid_glass_widgets](https://github.com/sdegenaar/liquid_glass_widgets)：镜片折射、
+  色散、Beer-Lambert 边缘吸收、Fresnel/specular 高光等 shader 思路（MIT）。
+
+实现位置：`flutter/lib/ui/liquid_glass.dart` + `flutter/shaders/liquid_glass.frag`。
+
+- 使用 `BackdropFilter` + `ImageFilter.compose(inner: blur, outer: ImageFilter.shader(...))`：
+  shader 接收已模糊的背景，做圆角 SDF、边缘折射、随边缘增强的色散、边缘变暗、方向高光、
+  缓慢流动的 sheen；
+- `ImageFilter.shader` 仅在 Impeller 后端可用（Android 默认 Impeller；Windows/Skia/测试环境
+  自动退化为毛玻璃 + 同样的 tint/描边/高光叠层，外观接近）；
+- 组件会对 `MediaQuery.disableAnimations` 关闭时间动画；
+- 可调参数：`borderRadius`、`blurSigma`、`tint`、`refraction`、`specular`、`thickness`、
+  `absorption`、`animate`。
+
+使用位置：三点按钮、三点菜单、设置浮层、底部 dock；主内容避免大面积玻璃，保持 YAQMC 的
+深色 + 封面取色风格。
+
+## 已知限制
+
+- 液态玻璃真实折射只能在 Android 真机（Impeller）目测，单测/桌面走 fallback。
+- 设置浮层背后是半透明压暗而非整屏 BackdropFilter 模糊（性能考虑）。
+- 菜单锚点固定右上，不做视口翻转/夹取。
+- 大歌词字号上限 32px，超宽屏右侧留白略多。

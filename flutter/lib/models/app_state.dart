@@ -1,6 +1,8 @@
 import 'lyrics.dart';
+import 'playback_controls.dart';
 
 export 'lyrics.dart';
+export 'playback_controls.dart';
 
 enum PlaybackCommand { playPause, previous, next }
 
@@ -323,6 +325,7 @@ class AppState {
     this.settings = const AppSettings(),
     this.playback = const PlaybackSnapshot(),
     this.remoteControl = const RemoteControlState(),
+    this.controls = const PlaybackControls(),
     this.lastError,
   });
 
@@ -339,24 +342,53 @@ class AppState {
   final AppSettings settings;
   final PlaybackSnapshot playback;
   final RemoteControlState remoteControl;
+
+  /// Capabilities of the current source (skip/seek/play-pause gating).
+  final PlaybackControls controls;
+
   final String? lastError;
 
-  factory AppState.fromMap(Map<Object?, Object?> map) => AppState(
-    initialized: map['initialized'] as bool? ?? false,
-    busy: map['busy'] as bool? ?? false,
-    coreRunning: map['coreRunning'] as bool? ?? false,
-    receiverReady: map['receiverReady'] as bool? ?? false,
-    receiverPort: _integer(map['receiverPort']),
-    receiverDeviceId: _string(map['receiverDeviceId']),
-    connectedClient: _string(map['connectedClient']),
-    activeMediaSource: _string(map['activeMediaSource']),
-    selectedCoreMediaSource: _string(map['selectedCoreMediaSource']),
-    receiverName: _string(map['receiverName']) ?? 'FusionPlay',
-    settings: AppSettings.fromMap(_map(map['settings'])),
-    playback: PlaybackSnapshot.fromMap(_map(map['playback'])),
-    remoteControl: RemoteControlState.fromMap(_map(map['remoteControl'])),
-    lastError: _string(map['lastError']),
-  );
+  factory AppState.fromMap(Map<Object?, Object?> map) {
+    final playbackMap = _map(map['playback']);
+    final playback = PlaybackSnapshot.fromMap(playbackMap);
+    final remoteControl = RemoteControlState.fromMap(
+      _map(map['remoteControl']),
+    );
+    final controlsMap = _map(map['controls'] ?? playbackMap['controls']);
+    final hasPlayback =
+        playback.streamActive ||
+        (playback.protocol?.trim().isNotEmpty ?? false) ||
+        (playback.mediaUrl?.trim().isNotEmpty ?? false) ||
+        (playback.title?.trim().isNotEmpty ?? false) ||
+        (playback.artist?.trim().isNotEmpty ?? false) ||
+        playback.durationMs != null;
+    final controls = controlsMap.isEmpty
+        ? PlaybackControls.fallback(
+            protocol: playback.protocol,
+            remoteControlAvailable: remoteControl.available,
+            remoteCommands: remoteControl.commands,
+            durationMs: playback.durationMs,
+            hasPlayback: hasPlayback,
+          )
+        : PlaybackControls.fromMap(controlsMap);
+    return AppState(
+      initialized: map['initialized'] as bool? ?? false,
+      busy: map['busy'] as bool? ?? false,
+      coreRunning: map['coreRunning'] as bool? ?? false,
+      receiverReady: map['receiverReady'] as bool? ?? false,
+      receiverPort: _integer(map['receiverPort']),
+      receiverDeviceId: _string(map['receiverDeviceId']),
+      connectedClient: _string(map['connectedClient']),
+      activeMediaSource: _string(map['activeMediaSource']),
+      selectedCoreMediaSource: _string(map['selectedCoreMediaSource']),
+      receiverName: _string(map['receiverName']) ?? 'FusionPlay',
+      settings: AppSettings.fromMap(_map(map['settings'])),
+      playback: playback,
+      remoteControl: remoteControl,
+      controls: controls,
+      lastError: _string(map['lastError']),
+    );
+  }
 
   AppState copyWith({String? lastError}) => AppState(
     initialized: initialized,
@@ -372,6 +404,7 @@ class AppState {
     settings: settings,
     playback: playback,
     remoteControl: remoteControl,
+    controls: controls,
     lastError: lastError ?? this.lastError,
   );
 
@@ -392,6 +425,7 @@ class AppState {
           settings == other.settings &&
           playback == other.playback &&
           remoteControl == other.remoteControl &&
+          controls == other.controls &&
           lastError == other.lastError;
 
   @override
@@ -409,6 +443,7 @@ class AppState {
     settings,
     playback,
     remoteControl,
+    controls,
     lastError,
   ]);
 }

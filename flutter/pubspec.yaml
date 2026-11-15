@@ -21,6 +21,8 @@ dev_dependencies:
 
 flutter:
   uses-material-design: true
+  shaders:
+    - shaders/liquid_glass.frag
   assets:
     - assets/DLNA.svg
     - assets/airplay-broadcast.svg
