@@ -16,12 +16,14 @@ FusionPlay 的 DLNA 侧是 **MediaRenderer（DMR）**：SSDP 发现 + AVTranspor
 | **FLV 封装 MP3** | ✅ | FLV SoundFormat=2；按 MP3 帧头切帧后交给 MP3 解码器 |
 | ALAC / AIFF | ✅ | symphonia `alac`/`aiff` feature |
 | WMA / APE / 真实视频 / HLS / 转码 | ❌ | 明确报错；不静默失败 |
-| M4A/ALAC 走 HTTP 且 moov 在文件尾 | ⚠️ | 无 HTTP Range 时无法 seek 到 moov；`file://` 正常 |
-| HTTPS 媒体源 | ❌ | 当前未打包 TLS 栈（见 §4） |
+| M4A/ALAC 走 HTTP 且 moov 在文件尾 | ✅ | 服务器支持 `Range` 时可直接 seek 到 moov；无 Range 时仍退回顺序读取 |
+| HTTPS 媒体源 | ✅ | rustls + Mozilla 根证书，强制校验证书链/主机名（自签证书会被拒绝） |
+| HTTP `Range` 跳转 | ✅ | 支持 `206`/`Content-Range`；不可 Range 的服务器回退顺序解码丢弃 |
 
 ## 2. HTTP 拉流行为
 
-- 支持 `Content-Length`、`Transfer-Encoding: chunked`、连接关闭定界；跟随 301/302/303/307/308（最多 4 次）。
+- 支持 `Content-Length`、`Transfer-Encoding: chunked`、连接关闭定界；跟随 301/302/303/307/308（最多 4 次，http↔https 跨 scheme 额外限次）。
+- 支持 `https://`（默认 443，SNI/证书校验，TLS 握手受 timeout/abort 约束）与 HTTP `Range: bytes=N-` 断点/跳转读取。
 - **User-Agent 默认使用浏览器 UA**（Chrome/126 系列）：QQ 音乐 CDN 会对非浏览器 UA 返回 403，网易云等 CDN 接受通用 UA。
 - **401/403 自动回退**：首次用浏览器 UA；若被拒，重连并改用旧式 `FusionPlay-Windows/<版本>` / `FusionPlay-fnOS/<版本>` UA 重试一次，日志记录 `used_fallback_ua`。
 - 可用 `FUSIONPLAY_DLNA_USER_AGENT` 覆盖默认 UA、`FUSIONPLAY_DLNA_FALLBACK_USER_AGENT` 覆盖回退 UA（排查个别服务器时有用）。
@@ -36,28 +38,39 @@ FusionPlay 的 DLNA 侧是 **MediaRenderer（DMR）**：SSDP 发现 + AVTranspor
 | QQ 音乐 | CDN 对非浏览器 UA 返回 403；`SetPosition` 调用频繁 | 浏览器 UA + 401/403 回退；控制面按现有节流处理 |
 | 网易云/QQ | 切歌时 Stop→SetURI→Play 间隔很短、`SetNextAVTransportURI` 可能延迟 | DMR 状态机已有测试覆盖；如遇具体时序问题，需要抓包后针对性调整（见 §5） |
 
-## 4. 暂未实现：HTTPS 媒体源
+## 4. HTTPS / TLS
 
-许多 NAS/云音乐直链使用 `https://`。当前两个宿主只实现 HTTP/1.1 明文拉流（无 TLS 栈），因为：
+两个宿主的 `dlna_player` 已接入 rustls（ring provider）+ webpki/Mozilla 根证书：
 
-- 需要引入 rustls + 根证书，并把两端 `HttpBody`/`HttpSource` 的 `TcpStream` 泛型化（超时轮询、chunked、重定向都要保留）；
-- 需要在 Windows/fnOS/CI 上做真实证书握手与超时行为测试；
-- 增加二进制体积与安全面（SNI、证书验证策略）。
+- 证书链与主机名（SNI + SAN）强制校验，没有“跳过校验”开关；
+- 握手受连接超时/abort 约束，失败返回中文错误；
+- 重定向允许 http↔https，但跨 scheme 有次数上限；
+- **自签名证书目前会被拒绝**。如果 NAS 场景确实需要，应增加“自定义 CA / 信任列表”配置，而不是默认关闭校验。
 
-建议作为独立变更（TLS 网络栈）而不是混在本次兼容性修复里；实现时优先复用一份共享的 `HttpTransport` 抽象，避免两端再复制一遍。
+## 5. HTTP Range 与 seek
 
-## 5. 暂未实现：DMR 控制面 edge case
+- HTTP 源实现了 `Seek`：服务器 `Accept-Ranges: bytes` 或 `Range` 请求返回 `206` 时启用，`Content-Range`/`Content-Length` 做严格一致性校验。
+- DLNA `Seek` 优先走 Symphonia 时间 seek（`seek_mode=format`）；不支持时用 `Range: bytes=<估算偏移>-` 重开（`seek_mode=range`），再不行才顺序解码丢弃（`seek_mode=discard`）。
+- moov 在文件尾的 M4A 现在可以经 HTTP Range 直接播放/拖动；无 Range 的服务器仍按原顺序回退。
 
-以下行为需要真实 App 抓包才能确认差异，未做盲改：
+## 6. 控制面更新（2026-11）
+
+- Sink ProtocolInfo 已与真实解码能力对齐：只广告 MP3/MP4/AAC/FLAC/WAV/OGG/OPUS/ALAC/AIFF，移除视频/HLS。
+- GENA：回调允许同 peer 或双方私网（RFC1918 / IPv6 ULA），继续拒绝 loopback（异主）/link-local/组播/公网/域名；NOTIFY 失败 200ms 后同 SID/SEQ 重试一次；订阅数限制（单 peer ≤8、总 ≤64）；过期订阅清理。
+- SSDP：解析 `MX` 并在 0..min(MX,3s) 随机延迟后异步应答；M-SEARCH/NOTIFY 增加 `BOOTID.UPNP.ORG`/`CONFIGID.UPNP.ORG`；支持 IPv6 SSDP（`ff02::c`）与双栈 HTTP listener（失败回退 IPv4）；纯 link-local IPv6 环境不回 v6 广告。
+- ConnectionManager 增加 `PrepareForConnection`（按规范返回 ConnectionID/AVTransportID/RcsID）。
+
+## 7. 仍需真实 App 抓包确认的时序
 
 - QQ 音乐高频 `SetPosition` 的相对/绝对映射与节流；
 - 网易云 `Stop → SetAVTransportURI → Play` 极短间隔下的状态广播顺序；
-- QQ `SetNextAVTransportURI` 延迟到达时的"下一曲"预加载语义；
-- GENA 订阅续订/断线重连时序。
+- QQ `SetNextAVTransportURI` 延迟到达时的“下一曲”预加载语义；
+- 复杂 NAT/多网卡环境下的 GENA 回调与事件丢失对账。
 
 如果遇到具体问题，导出 `%LOCALAPPDATA%\FusionPlay\exports\FusionPlay-diagnostics-*.txt`（含 SOAP 请求/事件日志）后可针对性补测试与修复。
 
-## 6. 参考
+## 8. 参考
 
 - [gitee mennian/esp_miplay](https://gitee.com/mennian/esp_miplay)（MIT）：ESP32 DLNA 渲染器，含 QQ/网易云/酷狗兼容注释（FLV MIME、QQ CDN UA、GENA 事件、切歌时序）。
 - [MYHealer/dlna-esp32](https://github.com/MYHealer/dlna-esp32)：ESP32 DLNA 渲染器参考实现。
+- [hzeller/gmrender-resurrect](https://github.com/hzeller/gmrender-resurrect)（GPL-2.0）：成熟 UPnP/DLNA MediaRenderer，仅阅读其 SSDP/GENA/AVTransport 行为。

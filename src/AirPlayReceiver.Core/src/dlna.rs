@@ -1,20 +1,33 @@
 use crate::events::{CoreEvent, EventSink};
 use crate::takeover::{MediaLease, MediaSource, PlaybackArbiter};
 use anyhow::{Context, Result, anyhow, bail};
-use rand::RngCore;
+use rand::{Rng, RngCore};
 use socket2::{Domain, Protocol, Socket, Type};
 use std::collections::HashMap;
-use std::net::{IpAddr, Ipv4Addr, SocketAddr, SocketAddrV4, UdpSocket as StdUdpSocket};
+use std::net::{
+    IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6,
+    TcpListener as StdTcpListener, UdpSocket as StdUdpSocket,
+};
 use std::sync::{Arc, Mutex};
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream, UdpSocket};
 use tokio::sync::watch;
 use tokio::task::JoinHandle;
 
 const SSDP_MULTICAST: Ipv4Addr = Ipv4Addr::new(239, 255, 255, 250);
+const SSDP_MULTICAST_V6: Ipv6Addr = Ipv6Addr::new(0xff02, 0, 0, 0, 0, 0, 0, 0x000c);
 const SSDP_PORT: u16 = 1900;
 const SSDP_MAX_AGE_SECONDS: u32 = 1_800;
+/// UPnP 1.1 CONFIGID.UPNP.ORG: bump whenever the device description changes.
+const SSDP_CONFIG_ID: u32 = 1;
+/// Upper bound for M-SEARCH `MX` (UPnP allows 1..5, network stacks clamp it).
+const SSDP_MAX_MX_SECONDS: f64 = 3.0;
+/// GENA subscription limits: protects the event hub from unbounded growth.
+const GENA_MAX_SUBSCRIPTIONS: usize = 64;
+const GENA_MAX_SUBSCRIPTIONS_PER_PEER: usize = 8;
+/// One retry with the same SID/SEQ keeps events ordered on lossy links.
+const GENA_NOTIFY_RETRY_DELAY: Duration = Duration::from_millis(200);
 const HTTP_REQUEST_LIMIT: usize = 512 * 1024;
 const HTTP_HEADER_LIMIT: usize = 64 * 1024;
 const MEDIA_URI_LIMIT: usize = 8 * 1024;
@@ -25,6 +38,11 @@ const AV_TRANSPORT_TYPE: &str = "urn:schemas-upnp-org:service:AVTransport:1";
 const RENDERING_CONTROL_TYPE: &str = "urn:schemas-upnp-org:service:RenderingControl:1";
 const CONNECTION_MANAGER_TYPE: &str = "urn:schemas-upnp-org:service:ConnectionManager:1";
 
+/// Sink protocols advertised to control points.
+///
+/// Keep this list in sync with the host decoders: video containers and HLS are
+/// explicitly rejected by both `dlna_player` implementations, so advertising
+/// them only makes control points send unplayable content.
 const SINK_PROTOCOL_INFO: &str = concat!(
     "http-get:*:audio/mpeg:*,",
     "http-get:*:audio/mp4:*,",
@@ -32,11 +50,10 @@ const SINK_PROTOCOL_INFO: &str = concat!(
     "http-get:*:audio/flac:*,",
     "http-get:*:audio/wav:*,",
     "http-get:*:audio/x-wav:*,",
-    "http-get:*:video/mp4:*,",
-    "http-get:*:video/mpeg:*,",
-    "http-get:*:video/x-matroska:*,",
-    "http-get:*:application/vnd.apple.mpegurl:*,",
-    "http-get:*:application/x-mpegURL:*"
+    "http-get:*:audio/ogg:*,",
+    "http-get:*:audio/opus:*,",
+    "http-get:*:audio/alac:*,",
+    "http-get:*:audio/aiff:*"
 );
 
 pub struct DmrService {
@@ -52,16 +69,34 @@ impl DmrService {
         events: Arc<EventSink>,
         arbiter: Arc<PlaybackArbiter>,
     ) -> Result<Self> {
-        let http_listener = TcpListener::bind((Ipv4Addr::UNSPECIFIED, 0))
-            .await
-            .context("无法监听 DLNA HTTP 服务")?;
+        // Prefer a dual-stack listener so IPv6 control points can fetch the
+        // description/SCPD; fall back to IPv4-only when the host has no IPv6.
+        let (http_listener, dual_stack_http) = create_http_listener().await?;
         let http_port = http_listener
             .local_addr()
             .context("无法读取 DLNA HTTP 端口")?
             .port();
         let interface_addresses = interface_ipv4_addresses().context("无法枚举 SSDP 网络接口")?;
+        let ipv6_interface_addresses = if dual_stack_http {
+            interface_ipv6_addresses()
+        } else {
+            Vec::new()
+        };
         let ssdp_socket =
             create_ssdp_socket(&interface_addresses).context("无法监听 SSDP 1900 端口")?;
+        // IPv6 discovery is best-effort: hosts without IPv6 multicast simply
+        // keep the IPv4 SSDP service.
+        let ssdp_socket_v6 = if dual_stack_http {
+            match create_ssdp_socket_v6(&ipv6_interface_addresses) {
+                Ok(socket) => Some(socket),
+                Err(error) => {
+                    tracing::debug!("IPv6 SSDP 不可用，仅启用 IPv4 发现：{error:#}");
+                    None
+                }
+            }
+        } else {
+            None
+        };
         let device_uuid = stable_device_uuid(device_key);
         let udn = format!("uuid:{device_uuid}");
         let gena = Arc::new(GenaHub::default());
@@ -81,6 +116,8 @@ impl DmrService {
             udn,
             http_port,
             interface_addresses,
+            ipv6_interface_addresses,
+            boot_id: generate_boot_id(),
             controller: Arc::clone(&controller),
             gena,
         });
@@ -95,12 +132,23 @@ impl DmrService {
         });
 
         let ssdp_context = Arc::clone(&context);
+        let ssdp_shutdown = shutdown_receiver.clone();
         let ssdp_task = tokio::spawn(async move {
-            if let Err(error) = run_ssdp_server(ssdp_socket, ssdp_context, shutdown_receiver).await
-            {
+            if let Err(error) = run_ssdp_server(ssdp_socket, ssdp_context, ssdp_shutdown).await {
                 tracing::warn!("DLNA SSDP 服务已退出：{error:#}");
             }
         });
+        let mut tasks = vec![http_task, ssdp_task];
+        if let Some(ssdp_socket_v6) = ssdp_socket_v6 {
+            let ssdp_context = Arc::clone(&context);
+            tasks.push(tokio::spawn(async move {
+                if let Err(error) =
+                    run_ssdp_server_v6(ssdp_socket_v6, ssdp_context, shutdown_receiver).await
+                {
+                    tracing::debug!("DLNA IPv6 SSDP 服务已退出：{error:#}");
+                }
+            }));
+        }
 
         events.emit(CoreEvent::DlnaReady {
             port: http_port,
@@ -110,7 +158,7 @@ impl DmrService {
         Ok(Self {
             controller,
             shutdown,
-            tasks: vec![http_task, ssdp_task],
+            tasks,
         })
     }
 
@@ -137,6 +185,10 @@ struct DmrContext {
     udn: String,
     http_port: u16,
     interface_addresses: Vec<Ipv4Addr>,
+    /// `(address, interface index)` for global/ULA IPv6 interfaces used by SSDP.
+    ipv6_interface_addresses: Vec<(Ipv6Addr, u32)>,
+    /// UPnP 1.1 boot instance id, generated once per service start.
+    boot_id: u32,
     controller: Arc<DmrController>,
     gena: Arc<GenaHub>,
 }
@@ -1182,13 +1234,52 @@ struct CallbackUrl {
     path_and_query: String,
 }
 
+impl CallbackUrl {
+    fn host_header(&self) -> String {
+        format_host_port(&self.host, self.port)
+    }
+}
+
+fn format_host_port(host: &str, port: u16) -> String {
+    if host.contains(':') {
+        format!("[{host}]:{port}")
+    } else {
+        format!("{host}:{port}")
+    }
+}
+
 #[derive(Debug, Clone)]
 struct GenaSubscription {
     service: ServiceKind,
     callback: CallbackUrl,
+    peer: IpAddr,
     expires_at: Instant,
     timeout_seconds: u64,
     sequence: u32,
+}
+
+/// GENA failures that map to different HTTP statuses on the event endpoints.
+#[derive(Debug, Clone, Copy)]
+enum GenaError {
+    /// Malformed or unknown subscription (HTTP 412 Precondition Failed).
+    Precondition(&'static str),
+    /// Hub saturation (HTTP 503 Service Unavailable).
+    ServiceUnavailable(&'static str),
+}
+
+impl GenaError {
+    fn status(self) -> (u16, &'static str) {
+        match self {
+            Self::Precondition(_) => (412, "Precondition Failed"),
+            Self::ServiceUnavailable(_) => (503, "Service Unavailable"),
+        }
+    }
+
+    fn message(self) -> &'static str {
+        match self {
+            Self::Precondition(message) | Self::ServiceUnavailable(message) => message,
+        }
+    }
 }
 
 #[derive(Default)]
@@ -1197,31 +1288,38 @@ struct GenaHub {
 }
 
 impl GenaHub {
+    fn purge_expired(subscriptions: &mut HashMap<String, GenaSubscription>) {
+        let now = Instant::now();
+        subscriptions.retain(|_, subscription| subscription.expires_at > now);
+    }
+
     fn subscribe(
         self: &Arc<Self>,
         service: ServiceKind,
         request: &HttpRequest,
         peer: SocketAddr,
         initial_body: String,
-    ) -> std::result::Result<(String, u64), &'static str> {
+    ) -> std::result::Result<(String, u64), GenaError> {
         let timeout_seconds = parse_gena_timeout(request.headers.get("timeout"));
+        let mut subscriptions = self
+            .subscriptions
+            .lock()
+            .map_err(|_| GenaError::ServiceUnavailable("订阅状态不可用"))?;
+        // Drop expired SIDs before counting so a long-lived control point can
+        // reconnect without leaking map entries.
+        Self::purge_expired(&mut subscriptions);
         if let Some(sid) = request.headers.get("sid") {
             if request.headers.contains_key("callback") || request.headers.contains_key("nt") {
-                return Err("续订请求不能同时包含 CALLBACK 或 NT");
+                return Err(GenaError::Precondition(
+                    "续订请求不能同时包含 CALLBACK 或 NT",
+                ));
             }
-            let mut subscriptions = self.subscriptions.lock().map_err(|_| "订阅状态不可用")?;
             let sid = sid.trim();
-            if subscriptions
-                .get(sid)
-                .is_some_and(|subscription| subscription.expires_at <= Instant::now())
-            {
-                subscriptions.remove(sid);
-            }
             let Some(subscription) = subscriptions.get_mut(sid) else {
-                return Err("未知或已过期的 SID");
+                return Err(GenaError::Precondition("未知或已过期的 SID"));
             };
             if subscription.service != service {
-                return Err("SID 与事件服务不匹配");
+                return Err(GenaError::Precondition("SID 与事件服务不匹配"));
             }
             subscription.timeout_seconds = timeout_seconds;
             subscription.expires_at = Instant::now() + Duration::from_secs(timeout_seconds);
@@ -1233,27 +1331,42 @@ impl GenaHub {
             .get("nt")
             .is_some_and(|value| value.eq_ignore_ascii_case("upnp:event"))
         {
-            return Err("新订阅缺少 NT: upnp:event");
+            return Err(GenaError::Precondition("新订阅缺少 NT: upnp:event"));
         }
         let callback = request
             .headers
             .get("callback")
-            .ok_or("新订阅缺少 CALLBACK")
+            .ok_or(GenaError::Precondition("新订阅缺少 CALLBACK"))
             .and_then(|value| parse_callback_url(value, peer))?;
+        if subscriptions.len() >= GENA_MAX_SUBSCRIPTIONS {
+            return Err(GenaError::ServiceUnavailable(
+                "GENA 订阅总数已达上限，请稍后重试",
+            ));
+        }
+        let peer_ip = peer.ip();
+        if subscriptions
+            .values()
+            .filter(|subscription| subscription.peer == peer_ip)
+            .count()
+            >= GENA_MAX_SUBSCRIPTIONS_PER_PEER
+        {
+            return Err(GenaError::ServiceUnavailable(
+                "同一控制点的 GENA 订阅数已达上限",
+            ));
+        }
         let sid = generate_subscription_id();
-        self.subscriptions
-            .lock()
-            .map_err(|_| "订阅状态不可用")?
-            .insert(
-                sid.clone(),
-                GenaSubscription {
-                    service,
-                    callback,
-                    expires_at: Instant::now() + Duration::from_secs(timeout_seconds),
-                    timeout_seconds,
-                    sequence: 0,
-                },
-            );
+        subscriptions.insert(
+            sid.clone(),
+            GenaSubscription {
+                service,
+                callback,
+                peer: peer_ip,
+                expires_at: Instant::now() + Duration::from_secs(timeout_seconds),
+                timeout_seconds,
+                sequence: 0,
+            },
+        );
+        drop(subscriptions);
         self.notify_sid_after_delay(sid.clone(), initial_body);
         Ok((sid, timeout_seconds))
     }
@@ -1262,21 +1375,27 @@ impl GenaHub {
         &self,
         service: ServiceKind,
         request: &HttpRequest,
-    ) -> std::result::Result<(), &'static str> {
+    ) -> std::result::Result<(), GenaError> {
         if request.headers.contains_key("callback") || request.headers.contains_key("nt") {
-            return Err("取消订阅请求不能包含 CALLBACK 或 NT");
+            return Err(GenaError::Precondition(
+                "取消订阅请求不能包含 CALLBACK 或 NT",
+            ));
         }
         let sid = request
             .headers
             .get("sid")
             .map(|value| value.trim())
-            .ok_or("取消订阅缺少 SID")?;
-        let mut subscriptions = self.subscriptions.lock().map_err(|_| "订阅状态不可用")?;
+            .ok_or(GenaError::Precondition("取消订阅缺少 SID"))?;
+        let mut subscriptions = self
+            .subscriptions
+            .lock()
+            .map_err(|_| GenaError::ServiceUnavailable("订阅状态不可用"))?;
+        Self::purge_expired(&mut subscriptions);
         if subscriptions
             .get(sid)
             .is_none_or(|subscription| subscription.service != service)
         {
-            return Err("未知或不匹配的 SID");
+            return Err(GenaError::Precondition("未知或不匹配的 SID"));
         }
         subscriptions.remove(sid);
         Ok(())
@@ -1287,8 +1406,7 @@ impl GenaHub {
             let Ok(mut subscriptions) = self.subscriptions.lock() else {
                 return;
             };
-            let now = Instant::now();
-            subscriptions.retain(|_, subscription| subscription.expires_at > now);
+            Self::purge_expired(&mut subscriptions);
             subscriptions
                 .iter_mut()
                 .filter(|(_, subscription)| subscription.service == service)
@@ -1306,7 +1424,9 @@ impl GenaHub {
         };
         for (sid, callback, sequence, body) in pending {
             tokio::spawn(async move {
-                if let Err(error) = send_gena_notify(&callback, &sid, sequence, &body).await {
+                if let Err(error) = deliver_gena_notify(&callback, &sid, sequence, &body).await {
+                    // The subscriber may be gone; the sequence was already
+                    // advanced above so the next event keeps UPnP ordering.
                     tracing::debug!("GENA NOTIFY {sid} 失败：{error:#}");
                 }
             });
@@ -1323,10 +1443,11 @@ impl GenaHub {
                 let Ok(mut subscriptions) = hub.subscriptions.lock() else {
                     return;
                 };
+                let now = Instant::now();
                 let Some(subscription) = subscriptions.get_mut(&sid) else {
                     return;
                 };
-                if subscription.expires_at <= Instant::now() {
+                if subscription.expires_at <= now {
                     subscriptions.remove(&sid);
                     return;
                 }
@@ -1334,65 +1455,151 @@ impl GenaHub {
                 subscription.sequence = subscription.sequence.wrapping_add(1);
                 (subscription.callback.clone(), sequence)
             };
-            if let Err(error) = send_gena_notify(&pending.0, &sid, pending.1, &body).await {
+            if let Err(error) = deliver_gena_notify(&pending.0, &sid, pending.1, &body).await {
+                // A failing initial NOTIFY must not drop the subscription: the
+                // control point often starts its callback server slightly late.
                 tracing::debug!("GENA 初始 NOTIFY {sid} 失败：{error:#}");
             }
         });
     }
 }
 
+const MAX_CALLBACK_LENGTH: usize = 2_048;
+
 fn parse_callback_url(
     header: &str,
     peer: SocketAddr,
-) -> std::result::Result<CallbackUrl, &'static str> {
-    if header.len() > 2_048 || header.bytes().any(|byte| byte.is_ascii_control()) {
-        return Err("CALLBACK 过长或包含控制字符");
+) -> std::result::Result<CallbackUrl, GenaError> {
+    if header.len() > MAX_CALLBACK_LENGTH || header.bytes().any(|byte| byte.is_ascii_control()) {
+        return Err(GenaError::Precondition("CALLBACK 过长或包含控制字符"));
     }
     let value = header
         .trim()
         .strip_prefix('<')
         .and_then(|value| value.strip_suffix('>'))
-        .ok_or("CALLBACK 必须使用尖括号")?;
+        .ok_or(GenaError::Precondition("CALLBACK 必须使用尖括号"))?;
     if value.contains("><")
         || value.contains('#')
         || value.bytes().any(|byte| byte.is_ascii_whitespace())
     {
-        return Err("仅支持单个无片段 CALLBACK");
+        return Err(GenaError::Precondition("仅支持单个无片段 CALLBACK"));
     }
     let remainder = value
         .strip_prefix("http://")
         .or_else(|| value.strip_prefix("HTTP://"))
-        .ok_or("CALLBACK 仅允许 HTTP")?;
+        .ok_or(GenaError::Precondition("CALLBACK 仅允许 HTTP"))?;
     let (authority, path) = remainder
         .split_once('/')
         .map(|(authority, path)| (authority, format!("/{path}")))
         .unwrap_or((remainder, "/".to_owned()));
     if authority.is_empty() || authority.contains('@') {
-        return Err("CALLBACK 不允许凭据或空主机");
+        return Err(GenaError::Precondition("CALLBACK 不允许凭据或空主机"));
     }
-    let (host, port) = if let Some((host, port)) = authority.rsplit_once(':') {
-        let port = port.parse::<u16>().map_err(|_| "CALLBACK 端口无效")?;
-        (host, port)
-    } else {
-        (authority, 80)
-    };
+    let (host, port) = split_callback_authority(authority)?;
     if port == 0 {
-        return Err("CALLBACK 端口无效");
+        return Err(GenaError::Precondition("CALLBACK 端口无效"));
     }
     let callback_ip = host
-        .parse::<Ipv4Addr>()
-        .map_err(|_| "CALLBACK 必须使用订阅端的 IPv4 地址，不能使用域名")?;
-    let SocketAddr::V4(peer) = peer else {
-        return Err("当前 DLNA 服务仅接受 IPv4 订阅");
-    };
-    if callback_ip != *peer.ip() {
-        return Err("CALLBACK 地址必须与订阅连接来源相同");
-    }
+        .parse::<IpAddr>()
+        .map_err(|_| GenaError::Precondition("CALLBACK 必须使用 IP 地址，不能使用域名"))?;
+    validate_callback_target(callback_ip, peer.ip())?;
     Ok(CallbackUrl {
         host: callback_ip.to_string(),
         port,
         path_and_query: path,
     })
+}
+
+fn split_callback_authority(authority: &str) -> std::result::Result<(&str, u16), GenaError> {
+    if let Some(rest) = authority.strip_prefix('[') {
+        let (host, tail) = rest
+            .split_once(']')
+            .ok_or(GenaError::Precondition("CALLBACK IPv6 地址格式无效"))?;
+        if host.is_empty() || host.contains('%') {
+            return Err(GenaError::Precondition("CALLBACK IPv6 地址格式无效"));
+        }
+        let port = if tail.is_empty() {
+            80
+        } else {
+            tail.strip_prefix(':')
+                .ok_or(GenaError::Precondition("CALLBACK 端口无效"))?
+                .parse::<u16>()
+                .map_err(|_| GenaError::Precondition("CALLBACK 端口无效"))?
+        };
+        return Ok((host, port));
+    }
+    match authority.rsplit_once(':') {
+        Some((host, port_text)) => {
+            if port_text.is_empty() {
+                return Err(GenaError::Precondition("CALLBACK 端口无效"));
+            }
+            let port = port_text
+                .parse::<u16>()
+                .map_err(|_| GenaError::Precondition("CALLBACK 不能使用域名或无效端口"))?;
+            if host.is_empty() {
+                return Err(GenaError::Precondition("CALLBACK 不允许空主机"));
+            }
+            Ok((host, port))
+        }
+        None => Ok((authority, 80)),
+    }
+}
+
+/// GENA callback policy.
+///
+/// The callback must target the subscriber itself, or a different address as
+/// long as both the subscriber and the callback live in RFC1918/ULA space. This
+/// keeps container / multi-NIC control points working (their CALLBACK address
+/// does not necessarily equal the source address of the SUBSCRIBE connection)
+/// while refusing loopback, link-local, multicast, public or hostname targets
+/// that could turn the renderer into an SSRF proxy.
+fn validate_callback_target(callback: IpAddr, peer: IpAddr) -> std::result::Result<(), GenaError> {
+    if callback == peer {
+        // The subscriber itself: no cross-host request can be triggered. This
+        // also keeps local/loopback test harnesses and same-host containers
+        // functional.
+        return Ok(());
+    }
+    if is_forbidden_callback_target(callback) {
+        return Err(GenaError::Precondition(
+            "CALLBACK 不允许回环/链路本地/组播/未指定地址",
+        ));
+    }
+    if is_forbidden_callback_target(peer) {
+        return Err(GenaError::Precondition("订阅来源地址不是合法的 GENA 目标"));
+    }
+    if is_private_network_ip(callback) && is_private_network_ip(peer) {
+        Ok(())
+    } else {
+        Err(GenaError::Precondition("CALLBACK 必须与订阅端同为私网地址"))
+    }
+}
+
+fn is_forbidden_callback_target(address: IpAddr) -> bool {
+    match address {
+        IpAddr::V4(address) => {
+            address.is_loopback()
+                || address.is_unspecified()
+                || address.is_multicast()
+                || address.is_link_local()
+                || address.is_broadcast()
+        }
+        IpAddr::V6(address) => {
+            address.is_loopback()
+                || address.is_unspecified()
+                || address.is_multicast()
+                || address.is_unicast_link_local()
+        }
+    }
+}
+
+fn is_private_network_ip(address: IpAddr) -> bool {
+    match address {
+        // 10/8, 172.16/12, 192.168/16.
+        IpAddr::V4(address) => address.is_private(),
+        // IPv6 unique local addresses (fc00::/7).
+        IpAddr::V6(address) => address.octets()[0] & 0xfe == 0xfc,
+    }
 }
 
 fn parse_gena_timeout(header: Option<&String>) -> u64 {
@@ -1451,7 +1658,7 @@ async fn send_gena_notify(
             .context("无法连接 GENA CALLBACK")?;
         let request = format!(
             "NOTIFY {} HTTP/1.1\r\n\
-             HOST: {}:{}\r\n\
+             HOST: {}\r\n\
              CONTENT-TYPE: text/xml; charset=utf-8\r\n\
              NT: upnp:event\r\n\
              NTS: upnp:propchange\r\n\
@@ -1461,8 +1668,7 @@ async fn send_gena_notify(
              CONNECTION: close\r\n\
              \r\n{}",
             callback.path_and_query,
-            callback.host,
-            callback.port,
+            callback.host_header(),
             body.len(),
             body
         );
@@ -1487,6 +1693,31 @@ async fn send_gena_notify(
     tokio::time::timeout(Duration::from_secs(5), operation)
         .await
         .context("GENA CALLBACK 超时")?
+}
+
+/// Deliver one event with a single retry.
+///
+/// UPnP control points lose the first NOTIFY when their callback listener is
+/// still starting; retrying with the *same* SID/SEQ keeps event ordering
+/// unambiguous. Retries run inside the spawned task, so the event producer is
+/// never blocked.
+async fn deliver_gena_notify(
+    callback: &CallbackUrl,
+    sid: &str,
+    sequence: u32,
+    body: &str,
+) -> Result<()> {
+    match send_gena_notify(callback, sid, sequence, body).await {
+        Ok(()) => Ok(()),
+        Err(first) => {
+            tokio::time::sleep(GENA_NOTIFY_RETRY_DELAY).await;
+            send_gena_notify(callback, sid, sequence, body)
+                .await
+                .map_err(|second| {
+                    anyhow!("GENA NOTIFY 重试仍失败（首次：{first:#}；重试：{second:#}）")
+                })
+        }
+    }
 }
 
 fn initial_event_body(service: ServiceKind, controller: &DmrController) -> String {
@@ -1611,6 +1842,50 @@ fn interface_ipv4_addresses() -> Result<Vec<Ipv4Addr>> {
     Ok(addresses)
 }
 
+/// IPv6 interfaces usable for SSDP: `(address, interface index)`.
+///
+/// Loopback, link-local and multicast-only addresses are skipped because an
+/// SSDP LOCATION built from them needs scope ids that control points rarely
+/// handle; IPv4 remains the primary discovery channel.
+fn interface_ipv6_addresses() -> Vec<(Ipv6Addr, u32)> {
+    let Some(interfaces) = if_addrs::get_if_addrs().ok() else {
+        return Vec::new();
+    };
+    let mut entries = interfaces
+        .into_iter()
+        .filter_map(|interface| {
+            let if_addrs::IfAddr::V6(address) = &interface.addr else {
+                return None;
+            };
+            let ip = address.ip;
+            if ip.is_loopback()
+                || ip.is_unspecified()
+                || ip.is_multicast()
+                || ip.is_unicast_link_local()
+            {
+                return None;
+            }
+            let index = interface.index?;
+            (index > 0).then_some((index, ip))
+        })
+        .collect::<Vec<_>>();
+    entries.sort_unstable_by_key(|(index, _)| *index);
+    entries.dedup_by_key(|(index, _)| *index);
+    entries
+        .into_iter()
+        .map(|(index, address)| (address, index))
+        .collect()
+}
+
+/// UPnP 1.1 boot id: derived from the wall clock, never zero.
+fn generate_boot_id() -> u32 {
+    let seconds = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_secs())
+        .unwrap_or(0);
+    (seconds as u32).max(1)
+}
+
 fn create_ssdp_socket(interface_addresses: &[Ipv4Addr]) -> Result<UdpSocket> {
     let socket = Socket::new(Domain::IPV4, Type::DGRAM, Some(Protocol::UDP))
         .context("无法创建 SSDP UDP 套接字")?;
@@ -1642,12 +1917,55 @@ fn create_ssdp_socket(interface_addresses: &[Ipv4Addr]) -> Result<UdpSocket> {
     UdpSocket::from_std(socket).context("无法创建异步 SSDP 套接字")
 }
 
+fn create_ssdp_socket_v6(interface_addresses: &[(Ipv6Addr, u32)]) -> Result<UdpSocket> {
+    if interface_addresses.is_empty() {
+        bail!("没有可用于 IPv6 SSDP 的网络接口");
+    }
+    let socket = Socket::new(Domain::IPV6, Type::DGRAM, Some(Protocol::UDP))
+        .context("无法创建 IPv6 SSDP UDP 套接字")?;
+    socket
+        .set_reuse_address(true)
+        .context("无法启用 IPv6 SSDP 地址复用")?;
+    socket
+        .set_only_v6(true)
+        .context("无法将 IPv6 SSDP 套接字限制为 IPv6")?;
+    socket
+        .set_multicast_hops_v6(2)
+        .context("无法设置 IPv6 SSDP multicast hops")?;
+    socket
+        .bind(&SocketAddrV6::new(Ipv6Addr::UNSPECIFIED, SSDP_PORT, 0, 0).into())
+        .context("无法绑定 IPv6 SSDP 组播端口")?;
+    let mut joined = 0_usize;
+    let mut joined_indices = Vec::new();
+    for (_, index) in interface_addresses {
+        if joined_indices.contains(index) {
+            continue;
+        }
+        joined_indices.push(*index);
+        match socket.join_multicast_v6(&SSDP_MULTICAST_V6, *index) {
+            Ok(()) => joined += 1,
+            Err(error) => {
+                tracing::debug!("无法在接口索引 {index} 加入 IPv6 SSDP 组播：{error}");
+            }
+        }
+    }
+    if joined == 0 {
+        bail!("无法在任何 IPv6 网络接口加入 SSDP 组播组");
+    }
+    socket
+        .set_nonblocking(true)
+        .context("无法将 IPv6 SSDP 套接字设为非阻塞")?;
+    let socket: StdUdpSocket = socket.into();
+    UdpSocket::from_std(socket).context("无法创建异步 IPv6 SSDP 套接字")
+}
+
 async fn run_ssdp_server(
     socket: UdpSocket,
     context: Arc<DmrContext>,
     mut shutdown: watch::Receiver<bool>,
 ) -> Result<()> {
-    send_ssdp_notify(&socket, &context, "ssdp:alive").await;
+    let socket = Arc::new(socket);
+    send_ssdp_notify(&context, "ssdp:alive").await;
     let mut announce_interval =
         tokio::time::interval(Duration::from_secs((SSDP_MAX_AGE_SECONDS / 2) as u64));
     announce_interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
@@ -1663,12 +1981,12 @@ async fn run_ssdp_server(
                 }
             }
             _ = announce_interval.tick() => {
-                send_ssdp_notify(&socket, &context, "ssdp:alive").await;
+                send_ssdp_notify(&context, "ssdp:alive").await;
             }
             received = socket.recv_from(&mut buffer) => {
                 match received {
                     Ok((size, peer)) => {
-                        handle_ssdp_search(&socket, &context, &buffer[..size], peer).await;
+                        handle_ssdp_search(Arc::clone(&socket), &context, &buffer[..size], peer);
                     }
                     Err(error) => {
                         tracing::debug!("SSDP 接收失败：{error}");
@@ -1678,12 +1996,126 @@ async fn run_ssdp_server(
         }
     }
 
-    send_ssdp_notify(&socket, &context, "ssdp:byebye").await;
+    send_ssdp_notify(&context, "ssdp:byebye").await;
     Ok(())
 }
 
-async fn handle_ssdp_search(
-    socket: &UdpSocket,
+async fn run_ssdp_server_v6(
+    socket: UdpSocket,
+    context: Arc<DmrContext>,
+    mut shutdown: watch::Receiver<bool>,
+) -> Result<()> {
+    send_ssdp_notify_v6(&socket, &context, "ssdp:alive").await;
+    let mut announce_interval =
+        tokio::time::interval(Duration::from_secs((SSDP_MAX_AGE_SECONDS / 2) as u64));
+    announce_interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+    announce_interval.tick().await;
+    let mut buffer = [0_u8; 4_096];
+    let socket = Arc::new(socket);
+
+    loop {
+        tokio::select! {
+            changed = shutdown.changed() => {
+                if changed.is_err() || *shutdown.borrow() {
+                    break;
+                }
+            }
+            _ = announce_interval.tick() => {
+                send_ssdp_notify_v6(&socket, &context, "ssdp:alive").await;
+            }
+            received = socket.recv_from(&mut buffer) => {
+                match received {
+                    Ok((size, peer)) => {
+                        handle_ssdp_search_v6(Arc::clone(&socket), &context, &buffer[..size], peer);
+                    }
+                    Err(error) => {
+                        tracing::debug!("IPv6 SSDP 接收失败：{error}");
+                    }
+                }
+            }
+        }
+    }
+
+    send_ssdp_notify_v6(&socket, &context, "ssdp:byebye").await;
+    Ok(())
+}
+
+#[derive(Debug)]
+struct MsearchRequest {
+    target: String,
+    /// `MX` header in seconds; `None` when absent/invalid (respond immediately).
+    mx: Option<f64>,
+}
+
+fn parse_msearch(request: &str) -> Option<MsearchRequest> {
+    let mut lines = request.split("\r\n");
+    let request_line = lines.next()?.trim();
+    if !request_line.eq_ignore_ascii_case("M-SEARCH * HTTP/1.1") {
+        return None;
+    }
+
+    let mut target = None;
+    let mut discover = false;
+    let mut mx = None;
+    for line in lines {
+        let Some((name, value)) = line.split_once(':') else {
+            continue;
+        };
+        match name.trim().to_ascii_lowercase().as_str() {
+            "st" => target = Some(value.trim().to_owned()),
+            "man" => {
+                if value.to_ascii_lowercase().contains("ssdp:discover") {
+                    discover = true;
+                }
+            }
+            "mx" => {
+                mx = value
+                    .trim()
+                    .parse::<f64>()
+                    .ok()
+                    .filter(|seconds| seconds.is_finite() && *seconds >= 0.0);
+            }
+            _ => {}
+        }
+    }
+    if !discover {
+        return None;
+    }
+    let target = target.filter(|target| !target.is_empty())?;
+    Some(MsearchRequest { target, mx })
+}
+
+/// Random response delay inside the control point's `MX` window (capped at 3s).
+///
+/// Responding immediately makes some control points de-duplicate our response
+/// against their own retransmissions; UPnP requires the answer to arrive within
+/// `MX`. No `MX` means an immediate answer.
+fn msearch_response_delay(mx: Option<f64>) -> Duration {
+    let maximum = mx
+        .filter(|seconds| seconds.is_finite())
+        .unwrap_or(0.0)
+        .clamp(0.0, SSDP_MAX_MX_SECONDS);
+    if maximum <= f64::EPSILON {
+        return Duration::ZERO;
+    }
+    let maximum_millis = (maximum * 1_000.0) as u64;
+    Duration::from_millis(rand::thread_rng().gen_range(0..=maximum_millis))
+}
+
+fn matching_ssdp_targets(search_target: &str, udn: &str) -> Vec<String> {
+    let targets = ssdp_targets(udn);
+    if search_target.eq_ignore_ascii_case("ssdp:all") {
+        targets
+    } else {
+        targets
+            .into_iter()
+            .filter(|target| target.eq_ignore_ascii_case(search_target))
+            .collect()
+    }
+}
+
+fn handle_ssdp_search(
+    socket: Arc<UdpSocket>,
     context: &DmrContext,
     packet: &[u8],
     peer: SocketAddr,
@@ -1691,65 +2123,126 @@ async fn handle_ssdp_search(
     let Ok(request) = std::str::from_utf8(packet) else {
         return;
     };
-    let Some(search_target) = parse_msearch_target(request) else {
+    let Some(request) = parse_msearch(request) else {
         return;
     };
-    let targets = ssdp_targets(&context.udn);
-    let matches = if search_target.eq_ignore_ascii_case("ssdp:all") {
-        targets
-    } else {
-        targets
-            .into_iter()
-            .filter(|target| target.eq_ignore_ascii_case(&search_target))
-            .collect()
-    };
-    if matches.is_empty() {
+    let targets = matching_ssdp_targets(&request.target, &context.udn);
+    if targets.is_empty() {
         return;
     }
-
     let Some(local_ip) = local_ipv4_for_peer(peer) else {
         return;
     };
-    let location = format!(
-        "http://{}:{}/description.xml",
-        format_ipv4_host(local_ip),
-        context.http_port
+    let location = location_for(IpAddr::V4(local_ip), context.http_port);
+    spawn_ssdp_responses(
+        socket,
+        context.udn.clone(),
+        context.boot_id,
+        peer,
+        targets,
+        request.mx,
+        location,
     );
-    for target in matches {
-        let response = build_ssdp_search_response(&target, &context.udn, &location);
-        let _ = socket.send_to(response.as_bytes(), peer).await;
-    }
 }
 
-async fn send_ssdp_notify(_socket: &UdpSocket, context: &DmrContext, nts: &str) {
+fn handle_ssdp_search_v6(
+    socket: Arc<UdpSocket>,
+    context: &DmrContext,
+    packet: &[u8],
+    peer: SocketAddr,
+) {
+    let Ok(request) = std::str::from_utf8(packet) else {
+        return;
+    };
+    let Some(request) = parse_msearch(request) else {
+        return;
+    };
+    let targets = matching_ssdp_targets(&request.target, &context.udn);
+    if targets.is_empty() {
+        return;
+    }
+    let Some(local_ip) = local_ipv6_for_peer(peer) else {
+        return;
+    };
+    let location = location_for(IpAddr::V6(local_ip), context.http_port);
+    spawn_ssdp_responses(
+        socket,
+        context.udn.clone(),
+        context.boot_id,
+        peer,
+        targets,
+        request.mx,
+        location,
+    );
+}
+
+/// Send the M-SEARCH responses from a detached task so a large `MX` never
+/// stalls the shared SSDP receive loop.
+fn spawn_ssdp_responses(
+    socket: Arc<UdpSocket>,
+    udn: String,
+    boot_id: u32,
+    peer: SocketAddr,
+    targets: Vec<String>,
+    mx: Option<f64>,
+    location: String,
+) {
+    let delay = msearch_response_delay(mx);
+    tokio::spawn(async move {
+        if !delay.is_zero() {
+            tokio::time::sleep(delay).await;
+        }
+        for target in targets {
+            let response = build_ssdp_search_response(&target, &udn, &location, boot_id);
+            if let Err(error) = socket.send_to(response.as_bytes(), peer).await {
+                tracing::debug!("发送 SSDP 响应到 {peer} 失败：{error}");
+                break;
+            }
+        }
+    });
+}
+
+async fn send_ssdp_notify(context: &DmrContext, nts: &str) {
     let destination = SocketAddrV4::new(SSDP_MULTICAST, SSDP_PORT);
+    let host_header = format!("{SSDP_MULTICAST}:{SSDP_PORT}");
     for local_ip in &context.interface_addresses {
         let Ok(sender) = create_ssdp_sender(*local_ip) else {
             continue;
         };
-        let location = format!(
-            "http://{}:{}/description.xml",
-            format_ipv4_host(*local_ip),
-            context.http_port
-        );
+        let location = location_for(IpAddr::V4(*local_ip), context.http_port);
         for target in ssdp_targets(&context.udn) {
-            let usn = ssdp_usn(&context.udn, &target);
-            let mut message = format!(
-                "NOTIFY * HTTP/1.1\r\n\
-                 HOST: {SSDP_MULTICAST}:{SSDP_PORT}\r\n\
-                 NT: {target}\r\n\
-                 NTS: {nts}\r\n\
-                 USN: {usn}\r\n\
-                 SERVER: {SERVER_HEADER}\r\n"
+            let message = build_ssdp_notify_message(
+                &target,
+                nts,
+                &context.udn,
+                &location,
+                &host_header,
+                context.boot_id,
             );
-            if nts.eq_ignore_ascii_case("ssdp:alive") {
-                message.push_str(&format!(
-                    "CACHE-CONTROL: max-age={SSDP_MAX_AGE_SECONDS}\r\n\
-                     LOCATION: {location}\r\n"
-                ));
-            }
-            message.push_str("\r\n");
             let _ = sender.send_to(message.as_bytes(), destination).await;
+        }
+    }
+}
+
+async fn send_ssdp_notify_v6(socket: &UdpSocket, context: &DmrContext, nts: &str) {
+    if context.ipv6_interface_addresses.is_empty() {
+        return;
+    }
+    let host_header = format!("[{SSDP_MULTICAST_V6}]:{SSDP_PORT}");
+    for (address, index) in &context.ipv6_interface_addresses {
+        let destination =
+            SocketAddr::V6(SocketAddrV6::new(SSDP_MULTICAST_V6, SSDP_PORT, 0, *index));
+        let location = location_for(IpAddr::V6(*address), context.http_port);
+        for target in ssdp_targets(&context.udn) {
+            let message = build_ssdp_notify_message(
+                &target,
+                nts,
+                &context.udn,
+                &location,
+                &host_header,
+                context.boot_id,
+            );
+            let _ = socket.send_to(message.as_bytes(), destination).await;
         }
     }
 }
@@ -1773,33 +2266,7 @@ fn create_ssdp_sender(interface: Ipv4Addr) -> Result<UdpSocket> {
     UdpSocket::from_std(socket).context("无法创建异步 SSDP 通告套接字")
 }
 
-fn parse_msearch_target(request: &str) -> Option<String> {
-    let mut lines = request.split("\r\n");
-    let request_line = lines.next()?.trim();
-    if !request_line.eq_ignore_ascii_case("M-SEARCH * HTTP/1.1") {
-        return None;
-    }
-
-    let mut target = None;
-    let mut discover = false;
-    for line in lines {
-        let Some((name, value)) = line.split_once(':') else {
-            continue;
-        };
-        if name.trim().eq_ignore_ascii_case("st") {
-            target = Some(value.trim().to_owned());
-        } else if name.trim().eq_ignore_ascii_case("man")
-            && value.to_ascii_lowercase().contains("ssdp:discover")
-        {
-            discover = true;
-        }
-    }
-    discover
-        .then_some(target?)
-        .filter(|target| !target.is_empty())
-}
-
-fn build_ssdp_search_response(target: &str, udn: &str, location: &str) -> String {
+fn build_ssdp_search_response(target: &str, udn: &str, location: &str, boot_id: u32) -> String {
     let usn = ssdp_usn(udn, target);
     format!(
         "HTTP/1.1 200 OK\r\n\
@@ -1809,9 +2276,40 @@ fn build_ssdp_search_response(target: &str, udn: &str, location: &str) -> String
          SERVER: {SERVER_HEADER}\r\n\
          ST: {target}\r\n\
          USN: {usn}\r\n\
+         BOOTID.UPNP.ORG: {boot_id}\r\n\
+         CONFIGID.UPNP.ORG: {SSDP_CONFIG_ID}\r\n\
          CONTENT-LENGTH: 0\r\n\
          \r\n"
     )
+}
+
+fn build_ssdp_notify_message(
+    target: &str,
+    nts: &str,
+    udn: &str,
+    location: &str,
+    host_header: &str,
+    boot_id: u32,
+) -> String {
+    let usn = ssdp_usn(udn, target);
+    let mut message = format!(
+        "NOTIFY * HTTP/1.1\r\n\
+         HOST: {host_header}\r\n\
+         NT: {target}\r\n\
+         NTS: {nts}\r\n\
+         USN: {usn}\r\n\
+         SERVER: {SERVER_HEADER}\r\n\
+         BOOTID.UPNP.ORG: {boot_id}\r\n\
+         CONFIGID.UPNP.ORG: {SSDP_CONFIG_ID}\r\n"
+    );
+    if nts.eq_ignore_ascii_case("ssdp:alive") {
+        message.push_str(&format!(
+            "CACHE-CONTROL: max-age={SSDP_MAX_AGE_SECONDS}\r\n\
+             LOCATION: {location}\r\n"
+        ));
+    }
+    message.push_str("\r\n");
+    message
 }
 
 fn ssdp_targets(udn: &str) -> Vec<String> {
@@ -1848,8 +2346,84 @@ fn local_ipv4_for_peer(peer: SocketAddr) -> Option<Ipv4Addr> {
     }
 }
 
-fn format_ipv4_host(address: Ipv4Addr) -> String {
-    address.to_string()
+fn local_ipv6_for_peer(peer: SocketAddr) -> Option<Ipv6Addr> {
+    let SocketAddr::V6(peer) = peer else {
+        return None;
+    };
+    let socket = StdUdpSocket::bind((Ipv6Addr::UNSPECIFIED, 0)).ok()?;
+    socket.connect(peer).ok()?;
+    match socket.local_addr().ok()?.ip() {
+        std::net::IpAddr::V6(address)
+            if !address.is_unspecified()
+                && !address.is_loopback()
+                && !address.is_unicast_link_local() =>
+        {
+            Some(address)
+        }
+        _ => None,
+    }
+}
+
+fn location_for(address: IpAddr, port: u16) -> String {
+    format!(
+        "http://{}:{}/description.xml",
+        format_url_host(address),
+        port
+    )
+}
+
+fn format_url_host(address: IpAddr) -> String {
+    match address {
+        IpAddr::V4(address) => address.to_string(),
+        IpAddr::V6(address) => format!("[{address}]"),
+    }
+}
+
+/// Try a dual-stack `[::]` listener first; fall back to IPv4-only hosts.
+async fn create_http_listener() -> Result<(TcpListener, bool)> {
+    match create_dual_stack_http_listener() {
+        Ok(listener) => Ok((listener, true)),
+        Err(error) => {
+            tracing::debug!("DLNA HTTP 无法启用 IPv6 双栈，回退为 IPv4：{error:#}");
+            let listener = TcpListener::bind((Ipv4Addr::UNSPECIFIED, 0))
+                .await
+                .context("无法监听 DLNA HTTP 服务")?;
+            Ok((listener, false))
+        }
+    }
+}
+
+fn create_dual_stack_http_listener() -> Result<TcpListener> {
+    let socket = Socket::new(Domain::IPV6, Type::STREAM, Some(Protocol::TCP))
+        .context("无法创建 IPv6 DLNA HTTP 套接字")?;
+    socket
+        .set_reuse_address(true)
+        .context("无法启用 DLNA HTTP 地址复用")?;
+    socket
+        .set_only_v6(false)
+        .context("无法启用 DLNA HTTP 双栈")?;
+    socket
+        .bind(&SocketAddrV6::new(Ipv6Addr::UNSPECIFIED, 0, 0, 0).into())
+        .context("无法绑定 DLNA HTTP 双栈端口")?;
+    socket.listen(1024).context("无法监听 DLNA HTTP 双栈端口")?;
+    socket
+        .set_nonblocking(true)
+        .context("无法将 DLNA HTTP 套接字设为非阻塞")?;
+    let listener: StdTcpListener = socket.into();
+    TcpListener::from_std(listener).context("无法创建异步 DLNA HTTP 监听")
+}
+
+/// Normalise IPv4-mapped IPv6 peers produced by a dual-stack listener so the
+/// rest of the DMR (owner tracking, GENA callback checks, logs) keeps working
+/// with plain IPv4 addresses.
+fn normalize_peer(peer: SocketAddr) -> SocketAddr {
+    match peer {
+        SocketAddr::V6(address) => match address.ip().to_ipv4_mapped() {
+            Some(ipv4) => SocketAddr::V4(SocketAddrV4::new(ipv4, address.port())),
+            None => SocketAddr::V6(address),
+        },
+        SocketAddr::V4(_) => peer,
+    }
 }
 
 async fn run_http_server(
@@ -1866,6 +2440,7 @@ async fn run_http_server(
             }
             accepted = listener.accept() => {
                 let (stream, peer) = accepted.context("DLNA HTTP accept 失败")?;
+                let peer = normalize_peer(peer);
                 let request_context = Arc::clone(&context);
                 tokio::spawn(async move {
                     if let Err(error) =
@@ -2124,7 +2699,10 @@ fn handle_subscribe(
                 .push(("TIMEOUT".to_owned(), format!("Second-{timeout_seconds}")));
             response
         }
-        Err(message) => HttpResponse::plain(412, "Precondition Failed", message.to_owned()),
+        Err(error) => {
+            let (status, reason) = error.status();
+            HttpResponse::plain(status, reason, error.message().to_owned())
+        }
     }
 }
 
@@ -2135,7 +2713,10 @@ fn handle_unsubscribe(
 ) -> HttpResponse {
     match context.gena.unsubscribe(service, request) {
         Ok(()) => HttpResponse::plain(200, "OK", String::new()),
-        Err(message) => HttpResponse::plain(412, "Precondition Failed", message.to_owned()),
+        Err(error) => {
+            let (status, reason) = error.status();
+            HttpResponse::plain(status, reason, error.message().to_owned())
+        }
     }
 }
 
@@ -2477,6 +3058,20 @@ fn handle_connection_manager(
                 ("Status", "OK".to_owned()),
             ])
         }
+        "PrepareForConnection" => {
+            // Optional ConnectionManager action used by some Windows/Android
+            // control points before SetAVTransportURI. FusionPlay always uses
+            // the single instance 0, so the request only needs validation.
+            let direction = argument(arguments, "direction").unwrap_or("Input");
+            if !direction.eq_ignore_ascii_case("Input") {
+                return Err(SoapError::new(702, "Incompatible directions"));
+            }
+            Ok(vec![
+                ("ConnectionID", "0".to_owned()),
+                ("AVTransportID", "0".to_owned()),
+                ("RcsID", "0".to_owned()),
+            ])
+        }
         "ConnectionComplete" => Ok(Vec::new()),
         _ => Err(SoapError::new(401, "Invalid Action")),
     }
@@ -2528,6 +3123,10 @@ fn soap_arguments(body: &str) -> HashMap<String, String> {
         "DesiredMute",
         "DesiredVolume",
         "ConnectionID",
+        "RemoteProtocolInfo",
+        "PeerConnectionManager",
+        "PeerConnectionID",
+        "Direction",
     ];
     NAMES
         .iter()
@@ -3521,6 +4120,15 @@ const CONNECTION_MANAGER_SCPD: &str = r#"<?xml version="1.0" encoding="utf-8"?>
 <argument><name>Direction</name><direction>out</direction><relatedStateVariable>A_ARG_TYPE_Direction</relatedStateVariable></argument>
 <argument><name>Status</name><direction>out</direction><relatedStateVariable>A_ARG_TYPE_ConnectionStatus</relatedStateVariable></argument>
 </argumentList></action>
+<action><name>PrepareForConnection</name><argumentList>
+<argument><name>RemoteProtocolInfo</name><direction>in</direction><relatedStateVariable>A_ARG_TYPE_ProtocolInfo</relatedStateVariable></argument>
+<argument><name>PeerConnectionManager</name><direction>in</direction><relatedStateVariable>A_ARG_TYPE_ConnectionManager</relatedStateVariable></argument>
+<argument><name>PeerConnectionID</name><direction>in</direction><relatedStateVariable>A_ARG_TYPE_ConnectionID</relatedStateVariable></argument>
+<argument><name>Direction</name><direction>in</direction><relatedStateVariable>A_ARG_TYPE_Direction</relatedStateVariable></argument>
+<argument><name>ConnectionID</name><direction>out</direction><relatedStateVariable>A_ARG_TYPE_ConnectionID</relatedStateVariable></argument>
+<argument><name>AVTransportID</name><direction>out</direction><relatedStateVariable>A_ARG_TYPE_AVTransportID</relatedStateVariable></argument>
+<argument><name>RcsID</name><direction>out</direction><relatedStateVariable>A_ARG_TYPE_RcsID</relatedStateVariable></argument>
+</argumentList></action>
 </actionList>
 <serviceStateTable>
 <stateVariable sendEvents="yes"><name>SourceProtocolInfo</name><dataType>string</dataType></stateVariable>
@@ -3595,10 +4203,14 @@ mod tests {
             "M-SEARCH * HTTP/1.1\r\n",
             "HOST: 239.255.255.250:1900\r\n",
             "MAN: \"ssdp:discover\"\r\n",
+            "MX: 2\r\n",
             "ST: urn:schemas-upnp-org:device:MediaRenderer:1\r\n\r\n"
         );
-        assert_eq!(parse_msearch_target(request).as_deref(), Some(DEVICE_TYPE));
-        assert!(parse_msearch_target("NOTIFY * HTTP/1.1\r\n\r\n").is_none());
+        let parsed = parse_msearch(request).expect("valid M-SEARCH");
+        assert_eq!(parsed.target, DEVICE_TYPE);
+        assert_eq!(parsed.mx, Some(2.0));
+        assert!(parse_msearch("NOTIFY * HTTP/1.1\r\n\r\n").is_none());
+        assert!(parse_msearch("M-SEARCH * HTTP/1.1\r\nST: ssdp:all\r\n\r\n").is_none());
     }
 
     #[test]
@@ -3607,10 +4219,13 @@ mod tests {
             DEVICE_TYPE,
             "uuid:test-device",
             "http://192.0.2.10:54321/description.xml",
+            42,
         );
         assert!(response.starts_with("HTTP/1.1 200 OK\r\n"));
         assert!(response.contains("LOCATION: http://192.0.2.10:54321/description.xml\r\n"));
         assert!(response.contains(&format!("USN: uuid:test-device::{DEVICE_TYPE}\r\n")));
+        assert!(response.contains("BOOTID.UPNP.ORG: 42\r\n"));
+        assert!(response.contains(&format!("CONFIGID.UPNP.ORG: {SSDP_CONFIG_ID}\r\n")));
     }
 
     #[test]
@@ -4130,7 +4745,7 @@ mod tests {
     }
 
     #[test]
-    fn connection_manager_advertises_audio_and_video_sinks() {
+    fn connection_manager_advertises_only_decodable_audio_sinks() {
         let controller = controller();
         let response =
             handle_connection_manager(&controller, "GetProtocolInfo", &HashMap::new()).unwrap();
@@ -4139,8 +4754,38 @@ mod tests {
             .find(|(name, _)| *name == "Sink")
             .map(|(_, value)| value)
             .unwrap();
-        assert!(sink.contains("audio/flac"));
-        assert!(sink.contains("video/mp4"));
+        for mime in [
+            "audio/mpeg",
+            "audio/mp4",
+            "audio/aac",
+            "audio/flac",
+            "audio/wav",
+            "audio/x-wav",
+            "audio/ogg",
+            "audio/opus",
+            "audio/alac",
+            "audio/aiff",
+        ] {
+            assert!(
+                sink.contains(&format!("http-get:*:{mime}:*")),
+                "Sink is missing supported {mime}: {sink}"
+            );
+        }
+        // Video containers and HLS are rejected by the host decoders, so they
+        // must never be advertised.
+        for mime in [
+            "video/mp4",
+            "video/mpeg",
+            "video/x-matroska",
+            "application/vnd.apple.mpegurl",
+            "application/x-mpegURL",
+        ] {
+            assert!(
+                !sink.contains(mime),
+                "Sink must not advertise unsupported {mime}: {sink}"
+            );
+        }
+        assert_eq!(sink, SINK_PROTOCOL_INFO);
     }
 
     #[test]
@@ -4386,6 +5031,8 @@ mod tests {
             udn: "uuid:test".to_owned(),
             http_port: 43210,
             interface_addresses: vec![Ipv4Addr::new(192, 0, 2, 10)],
+            ipv6_interface_addresses: Vec::new(),
+            boot_id: 42,
             controller: Arc::clone(&controller),
             gena,
         };
@@ -4473,5 +5120,702 @@ mod tests {
         hub.unsubscribe(ServiceKind::AvTransport, &unsubscribe)
             .unwrap();
         assert!(!hub.subscriptions.lock().unwrap().contains_key(&sid));
+    }
+
+    // -- helpers for the DLNA control-plane compatibility tests ------------
+
+    fn socket_v4(octets: [u8; 4], port: u16) -> SocketAddr {
+        SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::from(octets), port))
+    }
+
+    fn socket_v6(address: Ipv6Addr, port: u16) -> SocketAddr {
+        SocketAddr::V6(SocketAddrV6::new(address, port, 0, 0))
+    }
+
+    fn dmr_context(gena: Arc<GenaHub>) -> DmrContext {
+        let events = Arc::new(EventSink::new());
+        let arbiter = Arc::new(PlaybackArbiter::new(Arc::clone(&events)));
+        let controller = Arc::new(DmrController::new(events, Arc::clone(&gena), arbiter));
+        DmrContext {
+            name: "Test".to_owned(),
+            udn: "uuid:test-device".to_owned(),
+            http_port: 43210,
+            interface_addresses: vec![Ipv4Addr::LOCALHOST],
+            ipv6_interface_addresses: Vec::new(),
+            boot_id: 7,
+            controller,
+            gena,
+        }
+    }
+
+    fn subscribe_request(callback: &str) -> HttpRequest {
+        let mut request = request("SUBSCRIBE", "/upnp/event/avtransport");
+        request
+            .headers
+            .insert("nt".to_owned(), "upnp:event".to_owned());
+        request
+            .headers
+            .insert("callback".to_owned(), callback.to_owned());
+        request
+            .headers
+            .insert("timeout".to_owned(), "Second-300".to_owned());
+        request
+    }
+
+    fn gena_subscription(peer: IpAddr, expires_at: Instant) -> GenaSubscription {
+        GenaSubscription {
+            service: ServiceKind::AvTransport,
+            callback: CallbackUrl {
+                host: peer.to_string(),
+                port: 9,
+                path_and_query: "/events".to_owned(),
+            },
+            peer,
+            expires_at,
+            timeout_seconds: 300,
+            sequence: 0,
+        }
+    }
+
+    fn fill_subscriptions(hub: &GenaHub, prefix: &str, peers: impl Iterator<Item = IpAddr>) {
+        let mut subscriptions = hub.subscriptions.lock().unwrap();
+        for (index, peer) in peers.enumerate() {
+            subscriptions.insert(
+                format!("uuid:{prefix}-{index}"),
+                gena_subscription(peer, Instant::now() + Duration::from_secs(300)),
+            );
+        }
+    }
+
+    fn closed_loopback_port() -> u16 {
+        let listener = std::net::TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).unwrap();
+        listener.local_addr().unwrap().port()
+    }
+
+    // -- P0: sink protocol info -------------------------------------------
+
+    #[test]
+    fn sink_protocol_info_is_exactly_the_decodable_audio_set() {
+        let entries = SINK_PROTOCOL_INFO.split(',').collect::<Vec<_>>();
+        assert_eq!(
+            entries,
+            vec![
+                "http-get:*:audio/mpeg:*",
+                "http-get:*:audio/mp4:*",
+                "http-get:*:audio/aac:*",
+                "http-get:*:audio/flac:*",
+                "http-get:*:audio/wav:*",
+                "http-get:*:audio/x-wav:*",
+                "http-get:*:audio/ogg:*",
+                "http-get:*:audio/opus:*",
+                "http-get:*:audio/alac:*",
+                "http-get:*:audio/aiff:*",
+            ]
+        );
+        assert!(!SINK_PROTOCOL_INFO.contains("video/"));
+        assert!(!SINK_PROTOCOL_INFO.to_ascii_lowercase().contains("mpegurl"));
+    }
+
+    // -- P1: GENA callback validation -------------------------------------
+
+    #[test]
+    fn gena_callback_accepts_same_peer_and_rfc1918_targets() {
+        let peer = socket_v4([192, 168, 1, 10], 50_000);
+        for callback in [
+            "<http://192.168.1.10:1400/events>",
+            "<http://192.168.1.99:1400/events>",
+            "<http://10.1.2.3/events>",
+            "<http://172.16.0.5:9000/event?x=1>",
+            "<http://172.31.255.1:1400/events>",
+            "<http://192.168.1.10/events>",
+        ] {
+            let parsed = parse_callback_url(callback, peer)
+                .unwrap_or_else(|error| panic!("{callback} must be accepted: {error:?}"));
+            assert!(!parsed.path_and_query.is_empty());
+        }
+
+        // Loopback callback that equals the (loopback) subscriber is allowed:
+        // it cannot pivot to another host and keeps local/container clients
+        // functional.
+        let loopback_peer = socket_v4([127, 0, 0, 1], 50_001);
+        assert!(parse_callback_url("<http://127.0.0.1:1400/events>", loopback_peer).is_ok());
+
+        // IPv6: same peer and ULA-to-ULA are accepted.
+        let v6_peer = socket_v6(Ipv6Addr::LOCALHOST, 50_002);
+        assert!(parse_callback_url("<http://[::1]:1400/events>", v6_peer).is_ok());
+        let ula_peer = socket_v6("fd00::1".parse().unwrap(), 50_003);
+        let callback = parse_callback_url("<http://[fd00::2]:1400/events>", ula_peer).unwrap();
+        assert_eq!(callback.host, "fd00::2");
+        assert_eq!(callback.host_header(), "[fd00::2]:1400");
+    }
+
+    #[test]
+    fn gena_callback_rejects_unsafe_targets() {
+        let private_peer = socket_v4([192, 168, 1, 10], 50_000);
+        for callback in [
+            // Loopback / link-local / multicast / unspecified.
+            "<http://127.0.0.1:1400/events>",
+            "<http://169.254.10.20:1400/events>",
+            "<http://239.1.1.1:1400/events>",
+            "<http://0.0.0.0:1400/events>",
+            // Public addresses are rejected unless they equal the peer.
+            "<http://8.8.8.8:1400/events>",
+            "<http://192.0.2.5/events>",
+            "<http://172.32.0.1/events>",
+            // Hostnames, credentials, fragments, https, multiple callbacks,
+            // whitespace and bad ports.
+            "<http://renderer.test:1400/events>",
+            "<http://user@192.168.1.99:1400/events>",
+            "<http://192.168.1.99:1400/events#fragment>",
+            "<https://192.168.1.99:1400/events>",
+            "<http://192.168.1.99/a><http://192.168.1.98/b>",
+            "<http://192.168.1.99:1400/a b>",
+            "<http://192.168.1.99:0/events>",
+            "<http://192.168.1.99:99999/events>",
+            "<http:///events>",
+            "<http://192.168.1.99/events",
+        ] {
+            assert!(
+                parse_callback_url(callback, private_peer).is_err(),
+                "{callback} must be rejected"
+            );
+        }
+        // IPv6: link-local and global targets do not match the private peer.
+        let ula_peer = socket_v6("fd00::1".parse().unwrap(), 50_003);
+        assert!(parse_callback_url("<http://[fe80::1]:1400/events>", ula_peer).is_err());
+        assert!(parse_callback_url("<http://[2001:db8::1]:1400/events>", ula_peer).is_err());
+        assert!(parse_callback_url("<http://[fd00::1%25eth0]:1400/events>", ula_peer).is_err());
+        // Oversized / control characters.
+        assert!(parse_callback_url(&"<".repeat(4_096), private_peer).is_err());
+        assert!(parse_callback_url("<http://192.168.1.99/events>\u{0}", private_peer).is_err());
+    }
+
+    #[test]
+    fn gena_callback_host_header_formats_ipv4_and_ipv6() {
+        assert_eq!(format_host_port("192.168.1.5", 1400), "192.168.1.5:1400");
+        assert_eq!(format_host_port("fd00::5", 1400), "[fd00::5]:1400");
+    }
+
+    // -- P1: GENA notify retry / lifecycle --------------------------------
+
+    #[tokio::test]
+    async fn gena_notify_retries_once_with_the_same_sequence() {
+        let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let server = tokio::spawn(async move {
+            let (mut first, _) = listener.accept().await.unwrap();
+            let mut buffer = [0_u8; 4_096];
+            let first_size = first.read(&mut buffer).await.unwrap_or(0);
+            let first_request = String::from_utf8_lossy(&buffer[..first_size]).into_owned();
+            // Drop without replying: the sender must retry.
+            drop(first);
+            let (mut second, _) = listener.accept().await.unwrap();
+            let second_size = second.read(&mut buffer).await.unwrap();
+            let second_request = String::from_utf8_lossy(&buffer[..second_size]).into_owned();
+            second
+                .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n")
+                .await
+                .unwrap();
+            (first_request, second_request)
+        });
+        let callback = CallbackUrl {
+            host: "127.0.0.1".to_owned(),
+            port,
+            path_and_query: "/events".to_owned(),
+        };
+        deliver_gena_notify(&callback, "uuid:retry", 9, "<e:propertyset/>")
+            .await
+            .expect("second attempt succeeds");
+        let (first, second) = tokio::time::timeout(Duration::from_secs(3), server)
+            .await
+            .expect("retry must happen within the test timeout")
+            .unwrap();
+        assert!(first.contains("SEQ: 9\r\n"));
+        assert!(second.contains("SEQ: 9\r\n"), "retry must reuse the SEQ");
+        assert!(second.contains("SID: uuid:retry\r\n"));
+        assert!(second.contains("HOST: 127.0.0.1:"));
+    }
+
+    #[tokio::test]
+    async fn gena_notify_supports_ipv6_callbacks() {
+        let listener = match TcpListener::bind((Ipv6Addr::LOCALHOST, 0)).await {
+            Ok(listener) => listener,
+            // Hosts without IPv6 loopback simply skip this coverage.
+            Err(_) => return,
+        };
+        let port = listener.local_addr().unwrap().port();
+        let server = tokio::spawn(async move {
+            let (mut stream, _) = listener.accept().await.unwrap();
+            let mut buffer = [0_u8; 2_048];
+            let size = stream.read(&mut buffer).await.unwrap();
+            let request = String::from_utf8_lossy(&buffer[..size]).into_owned();
+            stream
+                .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n")
+                .await
+                .unwrap();
+            request
+        });
+        let callback = CallbackUrl {
+            host: "::1".to_owned(),
+            port,
+            path_and_query: "/events".to_owned(),
+        };
+        send_gena_notify(&callback, "uuid:v6", 3, "<e:propertyset/>")
+            .await
+            .expect("IPv6 NOTIFY");
+        let request = tokio::time::timeout(Duration::from_secs(2), server)
+            .await
+            .expect("IPv6 NOTIFY within timeout")
+            .unwrap();
+        assert!(request.starts_with("NOTIFY /events HTTP/1.1\r\n"));
+        assert!(request.contains("HOST: [::1]:"));
+        assert!(request.contains("SID: uuid:v6\r\n"));
+        assert!(request.contains("SEQ: 3\r\n"));
+    }
+
+    #[tokio::test]
+    async fn gena_initial_notify_failure_keeps_the_subscription() {
+        let hub = Arc::new(GenaHub::default());
+        let peer = socket_v4([127, 0, 0, 1], 55_000);
+        let port = closed_loopback_port();
+        let initial_subscribe = subscribe_request(&format!("<http://127.0.0.1:{port}/events>"));
+        let (sid, _) = hub
+            .subscribe(
+                ServiceKind::AvTransport,
+                &initial_subscribe,
+                peer,
+                last_change_propertyset("<Event/>"),
+            )
+            .unwrap();
+        // Wait for the initial NOTIFY (20 ms delay) plus the retry (200 ms).
+        tokio::time::sleep(Duration::from_millis(600)).await;
+        assert!(
+            hub.subscriptions.lock().unwrap().contains_key(&sid),
+            "a failed initial NOTIFY must not drop the subscription"
+        );
+        let mut unsubscribe = request("UNSUBSCRIBE", "/upnp/event/avtransport");
+        unsubscribe.headers.insert("sid".to_owned(), sid);
+        hub.unsubscribe(ServiceKind::AvTransport, &unsubscribe)
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn gena_expired_subscriptions_are_purged_and_limits_enforced() {
+        let hub = Arc::new(GenaHub::default());
+        {
+            let mut subscriptions = hub.subscriptions.lock().unwrap();
+            subscriptions.insert(
+                "uuid:expired".to_owned(),
+                gena_subscription(
+                    IpAddr::V4(Ipv4Addr::new(192, 168, 1, 50)),
+                    Instant::now() - Duration::from_secs(5),
+                ),
+            );
+        }
+        let request = subscribe_request("<http://192.168.1.20:1400/events>");
+        let peer = socket_v4([192, 168, 1, 10], 50_000);
+        hub.subscribe(
+            ServiceKind::AvTransport,
+            &request,
+            peer,
+            last_change_propertyset("<Event/>"),
+        )
+        .unwrap();
+        assert!(
+            !hub.subscriptions
+                .lock()
+                .unwrap()
+                .contains_key("uuid:expired"),
+            "expired SIDs must be purged on subscribe"
+        );
+
+        // Per-peer limit (8): 7 extra subscriptions for the same peer.
+        fill_subscriptions(
+            &hub,
+            "peer",
+            (0..7).map(|_| IpAddr::V4(Ipv4Addr::new(192, 168, 1, 10))),
+        );
+        let error = hub
+            .subscribe(
+                ServiceKind::AvTransport,
+                &request,
+                peer,
+                last_change_propertyset("<Event/>"),
+            )
+            .expect_err("per-peer subscription limit");
+        assert!(matches!(error, GenaError::ServiceUnavailable(_)));
+
+        // Total limit (64) with fresh peers.
+        let total_hub = Arc::new(GenaHub::default());
+        fill_subscriptions(
+            &total_hub,
+            "total",
+            (1..=64).map(|index| IpAddr::V4(Ipv4Addr::new(10, 0, 0, u8::try_from(index).unwrap()))),
+        );
+        let error = total_hub
+            .subscribe(
+                ServiceKind::AvTransport,
+                &subscribe_request("<http://10.0.1.20:1400/events>"),
+                socket_v4([10, 0, 1, 10], 50_000),
+                last_change_propertyset("<Event/>"),
+            )
+            .expect_err("global subscription limit");
+        assert!(matches!(error, GenaError::ServiceUnavailable(_)));
+    }
+
+    #[test]
+    fn gena_handler_returns_503_when_the_hub_is_saturated() {
+        let gena = Arc::new(GenaHub::default());
+        fill_subscriptions(
+            &gena,
+            "saturated",
+            (1..=64).map(|index| IpAddr::V4(Ipv4Addr::new(10, 0, 0, index))),
+        );
+        let context = dmr_context(Arc::clone(&gena));
+        let request = subscribe_request("<http://192.168.1.20:1400/events>");
+        let response = route_http_request(&request, socket_v4([192, 168, 1, 10], 50000), &context);
+        assert_eq!(response.status, 503);
+        assert_eq!(response.reason, "Service Unavailable");
+    }
+
+    #[test]
+    fn gena_bad_subscribe_and_unsubscribe_shapes_are_rejected() {
+        let hub = Arc::new(GenaHub::default());
+        let peer = socket_v4([192, 168, 1, 10], 50_000);
+
+        let mut missing_nt = request("SUBSCRIBE", "/upnp/event/avtransport");
+        missing_nt.headers.insert(
+            "callback".to_owned(),
+            "<http://192.168.1.20:1400/events>".to_owned(),
+        );
+        assert!(matches!(
+            hub.subscribe(
+                ServiceKind::AvTransport,
+                &missing_nt,
+                peer,
+                last_change_propertyset("<Event/>")
+            ),
+            Err(GenaError::Precondition(_))
+        ));
+
+        let mut missing_callback = request("SUBSCRIBE", "/upnp/event/avtransport");
+        missing_callback
+            .headers
+            .insert("nt".to_owned(), "upnp:event".to_owned());
+        assert!(matches!(
+            hub.subscribe(
+                ServiceKind::AvTransport,
+                &missing_callback,
+                peer,
+                last_change_propertyset("<Event/>")
+            ),
+            Err(GenaError::Precondition(_))
+        ));
+
+        let mut renew_with_callback = subscribe_request("<http://192.168.1.20:1400/events>");
+        renew_with_callback
+            .headers
+            .insert("sid".to_owned(), "uuid:test".to_owned());
+        assert!(matches!(
+            hub.subscribe(
+                ServiceKind::AvTransport,
+                &renew_with_callback,
+                peer,
+                last_change_propertyset("<Event/>")
+            ),
+            Err(GenaError::Precondition(_))
+        ));
+
+        let mut unknown = request("UNSUBSCRIBE", "/upnp/event/avtransport");
+        unknown
+            .headers
+            .insert("sid".to_owned(), "uuid:missing".to_owned());
+        assert!(matches!(
+            hub.unsubscribe(ServiceKind::AvTransport, &unknown),
+            Err(GenaError::Precondition(_))
+        ));
+    }
+
+    // -- P1/P2: SSDP ------------------------------------------------------
+
+    #[test]
+    fn msearch_mx_is_parsed_and_response_delay_is_bounded() {
+        let parsed = parse_msearch(concat!(
+            "M-SEARCH * HTTP/1.1\r\n",
+            "MAN: \"ssdp:discover\"\r\n",
+            "MX: 10\r\n",
+            "ST: ssdp:all\r\n\r\n"
+        ))
+        .unwrap();
+        assert_eq!(parsed.mx, Some(10.0));
+        assert_eq!(msearch_response_delay(None), Duration::ZERO);
+        assert_eq!(msearch_response_delay(Some(0.0)), Duration::ZERO);
+        assert_eq!(msearch_response_delay(Some(-3.0)), Duration::ZERO);
+        assert_eq!(msearch_response_delay(Some(f64::NAN)), Duration::ZERO);
+        for _ in 0..64 {
+            let delay = msearch_response_delay(Some(10.0));
+            assert!(delay <= Duration::from_secs(3));
+        }
+        // Invalid MX values are ignored (immediate response).
+        let parsed = parse_msearch(concat!(
+            "M-SEARCH * HTTP/1.1\r\n",
+            "MAN: \"ssdp:discover\"\r\n",
+            "MX: not-a-number\r\n",
+            "ST: ssdp:all\r\n\r\n"
+        ))
+        .unwrap();
+        assert_eq!(parsed.mx, None);
+    }
+
+    #[test]
+    fn ssdp_notify_messages_advertise_bootid_configid_and_location() {
+        let udn = "uuid:test-device";
+        let alive = build_ssdp_notify_message(
+            DEVICE_TYPE,
+            "ssdp:alive",
+            udn,
+            "http://192.168.1.5:8080/description.xml",
+            "239.255.255.250:1900",
+            7,
+        );
+        assert!(alive.starts_with("NOTIFY * HTTP/1.1\r\n"));
+        assert!(alive.contains(&format!("NT: {DEVICE_TYPE}\r\n")));
+        assert!(alive.contains(&format!("USN: {udn}::{DEVICE_TYPE}\r\n")));
+        assert!(alive.contains("BOOTID.UPNP.ORG: 7\r\n"));
+        assert!(alive.contains(&format!("CONFIGID.UPNP.ORG: {SSDP_CONFIG_ID}\r\n")));
+        assert!(alive.contains("LOCATION: http://192.168.1.5:8080/description.xml\r\n"));
+        assert!(alive.contains("CACHE-CONTROL: max-age="));
+
+        let byebye = build_ssdp_notify_message(
+            DEVICE_TYPE,
+            "ssdp:byebye",
+            udn,
+            "http://192.168.1.5:8080/description.xml",
+            "239.255.255.250:1900",
+            7,
+        );
+        assert!(byebye.contains("NTS: ssdp:byebye\r\n"));
+        assert!(byebye.contains("BOOTID.UPNP.ORG: 7\r\n"));
+        assert!(byebye.contains(&format!("CONFIGID.UPNP.ORG: {SSDP_CONFIG_ID}\r\n")));
+        assert!(!byebye.contains("LOCATION:"));
+
+        let ipv6 = build_ssdp_notify_message(
+            DEVICE_TYPE,
+            "ssdp:alive",
+            udn,
+            "http://[fd00::5]:8080/description.xml",
+            "[ff02::c]:1900",
+            7,
+        );
+        assert!(ipv6.contains("HOST: [ff02::c]:1900\r\n"));
+    }
+
+    #[tokio::test]
+    async fn ssdp_msearch_with_zero_mx_answers_every_matching_target() {
+        let socket = Arc::new(
+            UdpSocket::bind((Ipv4Addr::LOCALHOST, 0))
+                .await
+                .expect("loopback udp"),
+        );
+        let peer = socket.local_addr().unwrap();
+        let context = dmr_context(Arc::new(GenaHub::default()));
+        let packet = concat!(
+            "M-SEARCH * HTTP/1.1\r\n",
+            "HOST: 239.255.255.250:1900\r\n",
+            "MAN: \"ssdp:discover\"\r\n",
+            "MX: 0\r\n",
+            "ST: ssdp:all\r\n\r\n"
+        )
+        .as_bytes()
+        .to_vec();
+        handle_ssdp_search(Arc::clone(&socket), &context, &packet, peer);
+
+        let expected = ssdp_targets(&context.udn).len();
+        let mut seen = Vec::new();
+        for _ in 0..expected {
+            let mut buffer = [0_u8; 2_048];
+            let (size, _) =
+                tokio::time::timeout(Duration::from_secs(2), socket.recv_from(&mut buffer))
+                    .await
+                    .expect("SSDP response within the MX window")
+                    .unwrap();
+            let response = String::from_utf8_lossy(&buffer[..size]).into_owned();
+            assert!(response.starts_with("HTTP/1.1 200 OK\r\n"), "{response}");
+            assert!(response.contains("BOOTID.UPNP.ORG: 7\r\n"), "{response}");
+            assert!(
+                response.contains(&format!("CONFIGID.UPNP.ORG: {SSDP_CONFIG_ID}\r\n")),
+                "{response}"
+            );
+            seen.push(response);
+        }
+        assert!(
+            seen.iter()
+                .any(|response| response.contains("ST: upnp:rootdevice\r\n"))
+        );
+        assert!(seen.iter().any(|response| response.contains(DEVICE_TYPE)));
+    }
+
+    #[test]
+    fn ipv6_ssdp_and_location_helpers_are_consistent() {
+        assert!(generate_boot_id() >= 1);
+        assert_eq!(
+            format_url_host(IpAddr::V6("fd00::5".parse().unwrap())),
+            "[fd00::5]"
+        );
+        assert_eq!(
+            location_for(IpAddr::V6("fd00::5".parse().unwrap()), 8080),
+            "http://[fd00::5]:8080/description.xml"
+        );
+        assert_eq!(
+            location_for(IpAddr::V4(Ipv4Addr::new(192, 168, 1, 5)), 8080),
+            "http://192.168.1.5:8080/description.xml"
+        );
+        // Enumerating IPv6 interfaces must never panic; CI hosts may have none.
+        let _ = interface_ipv6_addresses();
+    }
+
+    #[test]
+    fn dual_stack_peers_are_normalised_to_ipv4() {
+        let mapped = SocketAddr::V6(SocketAddrV6::new(
+            Ipv6Addr::new(0, 0, 0, 0, 0, 0xffff, 0x0a00, 0x0102),
+            5_000,
+            0,
+            0,
+        ));
+        assert_eq!(normalize_peer(mapped), socket_v4([10, 0, 1, 2], 5_000));
+        let pure_v6 = socket_v6(Ipv6Addr::LOCALHOST, 5_000);
+        assert_eq!(normalize_peer(pure_v6), pure_v6);
+    }
+
+    #[tokio::test]
+    async fn dual_stack_http_listener_accepts_ipv4_and_ipv6() {
+        let (listener, dual_stack) = create_http_listener().await.expect("http listener");
+        let (port, dual_stack) = (listener.local_addr().unwrap().port(), dual_stack);
+        let expected_accepts = if dual_stack { 2 } else { 1 };
+        let accepts = tokio::spawn(async move {
+            let mut peers = Vec::new();
+            for _ in 0..expected_accepts {
+                let (_stream, peer) = listener.accept().await.unwrap();
+                peers.push(normalize_peer(peer));
+            }
+            peers
+        });
+        let ipv4 = TcpStream::connect((Ipv4Addr::LOCALHOST, port))
+            .await
+            .expect("IPv4 control connection");
+        if dual_stack {
+            let ipv6 = TcpStream::connect((Ipv6Addr::LOCALHOST, port))
+                .await
+                .expect("IPv6 control connection");
+            drop(ipv6);
+        }
+        drop(ipv4);
+        let peers = accepts.await.unwrap();
+        assert!(
+            peers
+                .iter()
+                .any(|peer| *peer == socket_v4([127, 0, 0, 1], peer.port())),
+            "IPv4 peer must be normalised to a plain v4 address: {peers:?}"
+        );
+        if dual_stack {
+            assert!(
+                peers
+                    .iter()
+                    .any(|peer| matches!(peer, SocketAddr::V6(address) if address.ip() == &Ipv6Addr::LOCALHOST)),
+                "IPv6 peer must stay a v6 address: {peers:?}"
+            );
+        }
+    }
+
+    // -- P2: ConnectionManager PrepareForConnection -----------------------
+
+    #[test]
+    fn prepare_for_connection_returns_zero_ids_and_is_advertised() {
+        let controller = controller();
+        let arguments = HashMap::from([
+            ("direction".to_owned(), "Input".to_owned()),
+            (
+                "remoteprotocolinfo".to_owned(),
+                "http-get:*:audio/flac:*".to_owned(),
+            ),
+            ("peerconnectionmanager".to_owned(), "uuid:cp".to_owned()),
+            ("peerconnectionid".to_owned(), "-1".to_owned()),
+        ]);
+        let values =
+            handle_connection_manager(&controller, "PrepareForConnection", &arguments).unwrap();
+        assert_eq!(
+            values,
+            vec![
+                ("ConnectionID", "0".to_owned()),
+                ("AVTransportID", "0".to_owned()),
+                ("RcsID", "0".to_owned()),
+            ]
+        );
+
+        let mut output_direction = arguments.clone();
+        output_direction.insert("direction".to_owned(), "Output".to_owned());
+        assert!(
+            handle_connection_manager(&controller, "PrepareForConnection", &output_direction)
+                .is_err()
+        );
+
+        assert!(CONNECTION_MANAGER_SCPD.contains("<name>PrepareForConnection</name>"));
+        assert!(CONNECTION_MANAGER_SCPD.contains("<name>RemoteProtocolInfo</name>"));
+        assert!(CONNECTION_MANAGER_SCPD.contains("<name>Direction</name>"));
+        // Existing actions must stay intact.
+        assert!(CONNECTION_MANAGER_SCPD.contains("<name>GetCurrentConnectionInfo</name>"));
+        assert!(CONNECTION_MANAGER_SCPD.contains("<name>GetProtocolInfo</name>"));
+    }
+
+    // -- P2: security / robustness ---------------------------------------
+
+    #[test]
+    fn malformed_or_oversized_soap_xml_is_rejected_without_panic() {
+        let controller = controller();
+        let peer: IpAddr = Ipv4Addr::LOCALHOST.into();
+        let mut av_request = request("POST", "/upnp/control/avtransport");
+        av_request.headers.insert(
+            "soapaction".to_owned(),
+            format!("\"{AV_TRANSPORT_TYPE}#SetAVTransportURI\""),
+        );
+        av_request.body = "<".repeat(200_000).into_bytes();
+        let response = route_soap(&av_request, AV_TRANSPORT_TYPE, |action, arguments| {
+            handle_av_transport(&controller, peer, action, arguments)
+        });
+        assert_eq!(response.status, 500, "malformed SOAP must produce a fault");
+
+        let mut invalid_utf8 = request("POST", "/upnp/control/avtransport");
+        invalid_utf8.headers.insert(
+            "soapaction".to_owned(),
+            format!("\"{AV_TRANSPORT_TYPE}#Play\""),
+        );
+        invalid_utf8.body = vec![0xff; 32];
+        let response = route_soap(&invalid_utf8, AV_TRANSPORT_TYPE, |action, arguments| {
+            handle_av_transport(&controller, peer, action, arguments)
+        });
+        assert_eq!(response.status, 500);
+
+        let missing_action = request("POST", "/upnp/control/avtransport");
+        let response = route_soap(&missing_action, AV_TRANSPORT_TYPE, |action, arguments| {
+            handle_av_transport(&controller, peer, action, arguments)
+        });
+        assert_eq!(response.status, 500);
+
+        // A deeply nested / huge payload must not panic the hand-rolled parser.
+        let deep = "<a>".repeat(50_000);
+        assert_eq!(extract_xml_text(&deep, "title"), None);
+        let huge = format!("<item><dc:title>{}</dc:title></item>", "a".repeat(200_000));
+        let _ = parse_didl_metadata(&huge);
+        let _ = soap_arguments(&"<".repeat(100_000));
+    }
+
+    #[test]
+    fn media_uri_only_allows_http_and_https() {
+        assert!(validate_media_uri("http://192.168.1.5/music.flac").is_ok());
+        assert!(validate_media_uri("https://nas.local/music.flac").is_ok());
+        assert!(validate_media_uri("ftp://192.168.1.5/music.flac").is_err());
+        assert!(validate_media_uri("file:///etc/passwd").is_err());
+        assert!(validate_media_uri("").is_err());
+        assert!(validate_media_uri(&format!("http://x/{}", "a".repeat(MEDIA_URI_LIMIT))).is_err());
     }
 }

@@ -421,6 +421,183 @@ fn serve_ua_fallback(body: Vec<u8>) -> (u16, JoinHandle<()>, Arc<Mutex<Vec<Strin
     (port, handle, agents)
 }
 
+/// Loopback HTTP server that optionally honours `Range: bytes=N-` and records
+/// every requested range, so tests can assert the seek transport path.
+struct TestHttpServer {
+    port: u16,
+    stop: Arc<AtomicBool>,
+    requests: Arc<Mutex<Vec<Option<String>>>>,
+    handle: Option<JoinHandle<()>>,
+}
+
+impl TestHttpServer {
+    fn url(&self, path: &str) -> String {
+        format!("http://127.0.0.1:{}{path}", self.port)
+    }
+
+    fn ranges(&self) -> Vec<String> {
+        self.requests
+            .lock()
+            .unwrap()
+            .iter()
+            .flatten()
+            .cloned()
+            .collect()
+    }
+
+    fn request_count(&self) -> usize {
+        self.requests.lock().unwrap().len()
+    }
+}
+
+impl Drop for TestHttpServer {
+    fn drop(&mut self) {
+        self.stop.store(true, Ordering::SeqCst);
+        if let Some(handle) = self.handle.take() {
+            let _ = handle.join();
+        }
+    }
+}
+
+/// Serve `body` over loopback HTTP until dropped. `range_capable` controls
+/// whether `Range: bytes=N-` yields a `206 Partial Content` response.
+fn serve_http_bytes(
+    body: Vec<u8>,
+    content_type: &'static str,
+    range_capable: bool,
+    throttle: Option<Duration>,
+) -> TestHttpServer {
+    let listener = listen();
+    listener
+        .set_nonblocking(true)
+        .expect("loopback listener non-blocking");
+    let port = listener.local_addr().unwrap().port();
+    let stop = Arc::new(AtomicBool::new(false));
+    let requests = Arc::new(Mutex::new(Vec::<Option<String>>::new()));
+    let server_stop = Arc::clone(&stop);
+    let server_requests = Arc::clone(&requests);
+    let handle = thread::spawn(move || {
+        let body = Arc::new(body);
+        while !server_stop.load(Ordering::SeqCst) {
+            match listener.accept() {
+                Ok((stream, _)) => {
+                    let request = read_request(&stream);
+                    let text = String::from_utf8_lossy(&request);
+                    let range = text
+                        .lines()
+                        .find(|line| line.to_ascii_lowercase().starts_with("range:"))
+                        .map(|line| line.trim().to_string());
+                    let requested_range = range.as_deref().and_then(parse_range_header);
+                    let start = requested_range.unwrap_or(0);
+                    server_requests.lock().unwrap().push(range);
+                    let mut stream = stream;
+                    let (status, extra_headers, payload) =
+                        if range_capable
+                            && requested_range.is_some()
+                            && (start as usize) < body.len()
+                        {
+                            let start = start as usize;
+                            (
+                                "206 Partial Content",
+                                format!(
+                                    "Content-Range: bytes {start}-{}/{}\r\n",
+                                    body.len() - 1,
+                                    body.len()
+                                ),
+                                body[start..].to_vec(),
+                            )
+                        } else {
+                            ("200 OK", String::new(), body.as_ref().clone())
+                        };
+                    let accept_ranges = if range_capable {
+                        "Accept-Ranges: bytes\r\n"
+                    } else {
+                        ""
+                    };
+                    let response = format!(
+                        "HTTP/1.1 {status}\r\nContent-Type: {content_type}\r\n{accept_ranges}{extra_headers}Content-Length: {}\r\nConnection: close\r\n\r\n",
+                        payload.len()
+                    );
+                    if stream.write_all(response.as_bytes()).is_err() {
+                        continue;
+                    }
+                    match throttle {
+                        Some(delay) => {
+                            for chunk in payload.chunks(16 * 1024) {
+                                if stream.write_all(chunk).is_err() {
+                                    break;
+                                }
+                                thread::sleep(delay);
+                            }
+                        }
+                        None => {
+                            let _ = stream.write_all(&payload);
+                        }
+                    }
+                }
+                Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                    thread::sleep(Duration::from_millis(2));
+                }
+                Err(_) => return,
+            }
+        }
+    });
+    TestHttpServer {
+        port,
+        stop,
+        requests,
+        handle: Some(handle),
+    }
+}
+
+fn parse_range_header(value: &str) -> Option<u64> {
+    let rest = value.trim();
+    let rest = rest
+        .strip_prefix("Range:")
+        .or_else(|| rest.strip_prefix("range:"))?
+        .trim();
+    let rest = rest.strip_prefix("bytes=")?;
+    rest.split('-').next()?.trim().parse().ok()
+}
+
+/// Minimal TLS server presenting a **self-signed** certificate from the test
+/// fixtures; used to prove the client rejects untrusted certificates.
+fn serve_self_signed_tls(connections: usize) -> (u16, JoinHandle<()>) {
+    let certificate = rustls::pki_types::CertificateDer::from(
+        include_bytes!("data/tls_test_cert.der").to_vec(),
+    );
+    let key = rustls::pki_types::PrivatePkcs8KeyDer::from(
+        include_bytes!("data/tls_test_key.der").to_vec(),
+    );
+    let config = rustls::ServerConfig::builder()
+        .with_no_client_auth()
+        .with_single_cert(
+            vec![certificate],
+            rustls::pki_types::PrivateKeyDer::Pkcs8(key),
+        )
+        .expect("self-signed TLS server config");
+    let config = Arc::new(config);
+    let listener = listen();
+    let port = listener.local_addr().unwrap().port();
+    let handle = thread::spawn(move || {
+        for _ in 0..connections {
+            let Ok((tcp, _)) = listener.accept() else {
+                return;
+            };
+            let config = Arc::clone(&config);
+            let _ = thread::spawn(move || {
+                let Ok(connection) = rustls::ServerConnection::new(config) else {
+                    return;
+                };
+                let mut stream = rustls::StreamOwned::new(connection, tcp);
+                let mut buffer = [0u8; 1024];
+                let _ = stream.read(&mut buffer);
+            });
+        }
+    });
+    (port, handle)
+}
+
 fn play_in_background(player: Arc<DlnaPlayer>, uri: String) -> Receiver<Result<(), String>> {
     let (sender, receiver) = mpsc::channel();
     thread::spawn(move || {
@@ -624,24 +801,33 @@ fn missing_media_reports_http_404_in_state() {
 }
 
 #[test]
-fn https_empty_hls_and_video_are_rejected_explicitly() {
+fn https_network_errors_empty_hls_and_video_are_rejected_explicitly() {
     let harness = harness();
 
+    // P1-1: https:// is now supported, so a dead port produces a network/TLS
+    // error instead of "HTTPS not supported".
     let error = harness
         .player
         .play_uri("https://127.0.0.1:9/a.wav")
-        .expect_err("https must be rejected");
+        .expect_err("https to a dead port must fail");
+    let text = format!("{error:#}");
     assert!(
-        format!("{error:#}").contains("HTTPS"),
-        "https error should be explicit: {error:#}"
+        !text.contains("HTTPS 媒体暂不支持"),
+        "https must no longer be rejected up-front: {text}"
     );
     assert!(
-        harness
-            .state
-            .snapshot()
-            .last_error
-            .as_deref()
-            .is_some_and(|last| last.contains("HTTPS"))
+        text.contains("连接") || text.contains("TLS"),
+        "expected a connect/TLS error: {text}"
+    );
+
+    // Invalid TLS hostnames are rejected before any connection attempt.
+    let error = harness
+        .player
+        .play_uri("https://nas_name/a.wav")
+        .expect_err("invalid host must be rejected");
+    assert!(
+        format!("{error:#}").contains("主机名非法"),
+        "invalid host error: {error:#}"
     );
 
     let error = harness.player.play_uri("   ").expect_err("empty URI must fail");
@@ -968,4 +1154,167 @@ fn http_403_retries_once_with_the_legacy_user_agent() {
         "retry must use the legacy FusionPlay UA: {:?}",
         agents[1]
     );
+}
+
+/// P1-2: an M4A whose `moov` atom sits at the end can only be demuxed if the
+/// HTTP source supports byte-range seeking. This exercises the full path
+/// (initial `Range: bytes=0-` probe -> 206 -> Symphonia seek -> playback).
+#[test]
+fn http_range_enables_m4a_streaming_from_network() {
+    let harness = harness();
+    let body = std::fs::read(
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/data/sine_alac.m4a"),
+    )
+    .expect("fixture");
+    let server = serve_http_bytes(body, "audio/mp4", true, None);
+    harness
+        .player
+        .play_uri(&server.url("/music/track.m4a"))
+        .expect("Range-capable M4A should stream over HTTP");
+
+    expect_frames(harness.backend.frames(), 48_000.0);
+    harness.backend.assert_48k_stereo();
+    let state = harness.state.snapshot();
+    assert!(
+        state.last_error.is_none(),
+        "unexpected error: {:?}",
+        state.last_error
+    );
+    let ranges = server.ranges();
+    assert!(
+        ranges
+            .iter()
+            .filter_map(|range| parse_range_header(range))
+            .any(|start| start > 0),
+        "expected a byte-range seek into the file (moov at end), got {ranges:?}"
+    );
+}
+
+/// P1-2: seeking while playing a Range-capable HTTP stream keeps the stream
+/// open (format seek) or reopens it with `Range: bytes=N-`; both must produce
+/// a `Range` start > 0 and keep playback going to the end.
+#[test]
+fn seek_while_playing_uses_range_and_keeps_playback() {
+    let harness = harness();
+    let wav = wav_bytes(48_000, 2, 4.0);
+    let server = serve_http_bytes(wav, "audio/wav", true, Some(Duration::from_millis(10)));
+    let receiver = play_in_background(Arc::clone(&harness.player), server.url("/music/seek.wav"));
+    assert!(
+        wait_for(
+            || harness.state.snapshot().dlna.state == "playing",
+            Duration::from_secs(5)
+        ),
+        "playback did not start"
+    );
+    thread::sleep(Duration::from_millis(120));
+    harness
+        .player
+        .seek(2_000)
+        .expect("seek while playing must be accepted");
+    receiver
+        .recv_timeout(Duration::from_secs(15))
+        .expect("playback must finish")
+        .expect("playback after seek");
+
+    let state = harness.state.snapshot();
+    assert!(
+        state.last_error.is_none(),
+        "unexpected error: {:?}",
+        state.last_error
+    );
+    let position = state.media.position_ms.unwrap_or(0);
+    assert!(
+        position >= 3_000,
+        "final position should be near the end after seeking to 2 s: {position}"
+    );
+    let ranges = server.ranges();
+    assert!(
+        ranges
+            .iter()
+            .filter_map(|range| parse_range_header(range))
+            .any(|start| start > 0),
+        "seek must use a byte range, got {ranges:?}"
+    );
+}
+
+/// P1-2 fallback: a server that ignores `Range` (always 200) cannot seek, so
+/// the player reopens the stream and discards decoded audio instead.
+#[test]
+fn seek_without_range_falls_back_to_discard() {
+    let harness = harness();
+    let wav = wav_bytes(48_000, 2, 3.0);
+    let server = serve_http_bytes(wav, "audio/wav", false, Some(Duration::from_millis(10)));
+    let receiver = play_in_background(Arc::clone(&harness.player), server.url("/music/no-range.wav"));
+    assert!(
+        wait_for(
+            || harness.state.snapshot().dlna.state == "playing",
+            Duration::from_secs(5)
+        ),
+        "playback did not start"
+    );
+    thread::sleep(Duration::from_millis(100));
+    harness
+        .player
+        .seek(1_500)
+        .expect("seek must be accepted even without Range");
+    receiver
+        .recv_timeout(Duration::from_secs(15))
+        .expect("playback must finish")
+        .expect("playback after discard fallback");
+
+    let state = harness.state.snapshot();
+    assert!(
+        state.last_error.is_none(),
+        "unexpected error: {:?}",
+        state.last_error
+    );
+    assert!(
+        state.media.position_ms.unwrap_or(0) >= 2_500,
+        "final position should be near the end: {:?}",
+        state.media.position_ms
+    );
+    // Either the format supported an in-place seek (no reopen) or the stream
+    // was reopened and decoded audio discarded; both must keep the position
+    // honest and produce no error.
+    assert!(
+        server.request_count() >= 1,
+        "request log should not be empty"
+    );
+}
+
+/// P2-2: TLS certificates are always validated; a self-signed certificate must
+/// be rejected with an explicit Chinese error (no hidden insecure fallback).
+#[test]
+fn https_self_signed_certificate_is_rejected() {
+    let harness = harness();
+    let (port, server) = serve_self_signed_tls(1);
+    let error = harness
+        .player
+        .play_uri(&format!("https://localhost:{port}/a.wav"))
+        .expect_err("self-signed certificate must be rejected");
+    let _ = server.join();
+    let text = format!("{error:#}");
+    assert!(
+        text.contains("TLS") || text.contains("证书"),
+        "expected an explicit TLS/certificate error: {text}"
+    );
+    assert_eq!(harness.backend.frames(), 0);
+}
+
+/// P1-1: speaking TLS to a plaintext HTTP endpoint fails the handshake with an
+/// explicit error instead of hanging or silently playing.
+#[test]
+fn https_against_plain_http_server_fails_handshake() {
+    let harness = harness();
+    let (port, server) = serve_status("400 Bad Request");
+    let error = harness
+        .player
+        .play_uri(&format!("https://127.0.0.1:{port}/a.wav"))
+        .expect_err("TLS handshake against plain HTTP must fail");
+    let _ = server.join();
+    assert!(
+        format!("{error:#}").contains("TLS"),
+        "expected a TLS handshake error: {error:#}"
+    );
+    assert_eq!(harness.backend.frames(), 0);
 }

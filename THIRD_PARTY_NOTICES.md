@@ -21,6 +21,8 @@ AndroidX Core、Media、Media3、Kotlin Coroutines、Kotlin Serialization 和 An
 
 Rust 依赖主要采用 MIT、Apache-2.0、BSD、MPL-2.0、Zlib 或这些许可证的双重/多重许可组合。Cargo 元数据中没有发现许可证字段为空的依赖。完整清单以 Cargo 锁定文件及各 crate 的 `license` 元数据和许可证文件为准。
 
+DLNA 宿主播放器新增的 TLS 传输依赖：`rustls`（Apache-2.0/MIT/ISC 组合）、`webpki-roots`（MPL-2.0）及其 `ring` 加密后端（ISC）；均只用于 HTTPS 媒体拉流，未修改其源码。
+
 ## shairplay 0.7.0
 
 `vendor/shairplay` 是项目内维护的上游 `shairplay` 0.7.0 源码副本，并包含 FusionPlay 所需的本地修复。crate 元数据声明 `LGPL-3.0-or-later`，个别源码文件另带 `GPL-3.0-only` 标识；这些文件继续受各自声明约束。本地修改见 `vendor/shairplay/LOCAL_PATCHES.md`，上游许可证全文见 `vendor/shairplay/LICENSE`。

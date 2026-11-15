@@ -8,6 +8,7 @@ FusionPlay 为 AGPL-3.0。以下项目仅用于**协议行为研究、实测数�
 | [gitee mennian/esp_miplay](https://gitee.com/mennian/esp_miplay) | MIT | 参考 5355 legacy 应答报文结构、256KB 大帧经验、QQ/网易云 DLNA 兼容注释；未拷贝代码 |
 | [MYHealer/esp-sonic-sync](https://github.com/MYHealer/esp-sonic-sync) | MIT | 参考 4 档漂移模型与 Sonic 旁路经验；FusionPlay 侧用自有 resampler 实现分级控制 |
 | [MYHealer/dlna-esp32](https://github.com/MYHealer/dlna-esp32) | 未标注 | 仅阅读其 DLNA 行为说明 |
+| [hzeller/gmrender-resurrect](https://github.com/hzeller/gmrender-resurrect) | GPL-2.0 | 参考成熟 DMR 的 SSDP/GENA/AVTransport 行为；未拷贝代码 |
 | [MYHealer/airkan-sdk](https://github.com/MYHealer/airkan-sdk) | Apache-2.0 | 仅评估"小米妙享/互联遥控"（HTTP 6095 认证 + TCP 6091 长连）协议；FusionPlay 尚未实现，若将来移植需保留其 Apache-2.0 声明 |
 | [rbouteiller/airplay-esp32](https://github.com/rbouteiller/airplay-esp32) | GPL-3.0 + Espressif linking exception | 仅用于评估 ESP32 可行性；未拷贝 |
 | [shairplay-rust](https://github.com/fabianlindfors/shairplay)（vendored 上游） | LGPL-3.0-or-later | 本仓库 `vendor/shairplay` 的上游；保持原有许可与版权头 |
