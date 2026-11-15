@@ -2,14 +2,14 @@
   "schema_version": 1,
   "channel": "stable",
   "published": true,
-  "version_name": "1.3.4",
-  "version_code": 10304,
-  "sha256": "4b789c962edd423c3c34cd44588d97e9e25302d1da45287ceea120db5cc56a22",
+  "version_name": "1.3.5",
+  "version_code": 10305,
+  "sha256": "f19857c6d992d76aad30ccfb3fc025c487071a347294aa1fc9fa181fb3f09450",
   "signer_sha256": "4836fb96c2ef76fd81ac385455f1b0154af77fadae1b45bbb752b192499dc12f",
-  "apk_url": "https://youyoudezhuzhu.github.io/FusionPlay/update/android/dl/latest.apk?v=10304",
-  "apk_url_alt": "https://github.com/youyoudezhuzhu/FusionPlay/releases/download/android-v1.3.4/FusionPlay-Android-1.3.4.apk",
-  "apk_size": 31483802,
-  "source_commit": "6fb3c3bd4f70e6557332f54e056436c4f837c4b5",
-  "notes": "## FusionPlay Android 1.3.4\n\n### 新增：应用内在线更新\n\n- 设置 → 关于应用 → **检查更新**：从 GitHub Pages 读取更新清单并对比 versionCode。\n- 发现新版本后可**在应用内下载 APK**，校验 SHA-256 与官方 release 签名证书后拉起系统安装器。\n- 首次使用需要允许「安装未知应用」；APK 使用固定 release 签名，可直接覆盖安装 1.2.7 及之后的版本。\n- 更新清单与 APK 由 CI 自动发布：下载页 <https://youyoudezhuzhu.github.io/FusionPlay/>，GitHub Releases 作为镜像。\n\n### 妙播（MiPlay）\n\n- **接收器名清洗**：名称含 `.` 或超长时不再破坏 mDNS 实例名，修复部分情况下设备从手机妙播列表\"消失\"的问题。\n- 设置页增加设备类型提示（部分 HyperOS 版本下「音响」可能不出现在妙播列表，可改用「电视」）。\n- 新增 HE-AAC 诊断事件（排查有连接无声/变调）；`media_info` 增加歌词字段；迟到丢帧阈值可用环境变量调整；新增可选的 UDP 5355 legacy 发现通道（默认关闭）。\n\n### DLNA\n\n- 网易云音乐 `video/flv` 纯音频投屏在 DLNA 控制面归类为音频，不再按视频拒绝；新增 `.aiff/.aif` 识别。\n- 播放仍由系统 Media3 负责，遇到不支持的编码会明确报错。\n\n### 安装与兼容\n\n- 版本 1.3.4 / versionCode 10304，包名 `com.fusionplay.android`，最低 Android 5.0（API 21）。\n- 覆盖安装保留设置与数据；从 1.2.6 或更早的 debug 签名版本升级需要先卸载一次。\n- 本版 APK 继续使用固定 release 密钥签名，构建时校验证书 SHA-256。",
-  "published_at": "2026-11-14T17:25:55Z"
+  "apk_url": "https://youyoudezhuzhu.github.io/FusionPlay/update/android/dl/latest.apk?v=10305",
+  "apk_url_alt": "https://github.com/youyoudezhuzhu/FusionPlay/releases/download/android-v1.3.5/FusionPlay-Android-1.3.5.apk",
+  "apk_size": 31577719,
+  "source_commit": "b42984cc2a53b6fda0e5770aa8a5123d305e0438",
+  "notes": "## FusionPlay Android 1.3.5\n\n### 新增：歌词显示 + 逐字高亮\n\n- 播放页新增「歌词」入口（遥控器可聚焦）：进入后标题缩小、封面平滑缩小左移，中间显示歌词，进度条与控制栏保留。\n- **妙播（MiPlay）**：解析手机下发的歌词（yrc 逐字、增强 LRC、QRC 风格毫秒时间），当前行放大加粗，**按字/词卡拉 OK 式填色**。\n- **DLNA**：支持 LRC / 嵌入歌词 / `lyricsURI` / `.lrc` sidecar，行级高亮；带词时间戳也能逐字。\n- 自动居中滚动；手动滚动后暂停自动滚动 4 秒，并出现「回到当前」按钮。\n- 状态齐全：加载中 shimmer、无歌词空态、非同步歌词静态列表。\n- 全部动画遵循系统「减少动态效果」设置。\n\n### 播放页动效优化\n\n- 歌词模式进入/退出 fade + 位移 + 轻微缩放；\n- 播放/暂停图标 morph、进度条数值平滑、控制栏错峰入场、播放中封面轻微呼吸感；\n- 歌词行切换 200ms 缓动，逐字进度帧间平滑（本地时钟外推，减少 10Hz 状态跳变感）。\n\n### 其他\n\n- 继续包含 1.3.4 的在线更新、妙播/DLNA 兼容性修复。\n- 版本 1.3.5 / versionCode 10305，固定 release 签名，可直接覆盖安装 1.3.4。\n\n### 说明\n\n- 歌词格式来自发送端；若某台手机/某个 App 显示不出歌词，可反馈 `media_info` 的歌词样本，便于补充解析。",
+  "published_at": "2026-11-15T02:36:29Z"
 }
