@@ -166,8 +166,24 @@ class FusionSettingsSheet extends StatelessWidget {
           ],
         ),
       ),
-      const Divider(height: 1, thickness: 1, color: Color(0x1FFFFFFF)),
-      Expanded(child: child),
+      Expanded(
+        child: ShaderMask(
+          // Instead of a hard 1px divider, let scrolled settings content fade
+          // out as it approaches the title bar. The mask is cheap (no backdrop
+          // filter) and only affects the body, never the header controls.
+          shaderCallback: (rect) {
+            final fade = (24.0 / math.max(1.0, rect.height)).clamp(0.0, .4);
+            return LinearGradient(
+              begin: Alignment.topCenter,
+              end: Alignment.bottomCenter,
+              colors: const [Colors.transparent, Colors.white],
+              stops: [0.0, fade],
+            ).createShader(rect);
+          },
+          blendMode: BlendMode.dstIn,
+          child: Padding(padding: const EdgeInsets.only(top: 10), child: child),
+        ),
+      ),
     ],
   );
 }
