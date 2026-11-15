@@ -120,7 +120,7 @@ abstract final class SettingsStyle {
   static const iconColor = Color(0xFF1F1F1F);
   static const inputBackground = Colors.white;
   static const inputText = Color(0xFF202020);
-  static const switchOnTrack = Color(0xFF68CE67);
+  static const switchOnTrack = Color(0xEFFFFFFF);
   static const switchOnThumb = Colors.white;
   static const switchOffTrack = Colors.white;
   static const switchOffThumb = Color(0xFF242424);

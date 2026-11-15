@@ -33,7 +33,11 @@ abstract final class _GlassStyle {
   static const textDisabled = Color(0x59FFFFFF);
   static const icon = Color(0xB8FFFFFF);
   static const iconMuted = Color(0x94FFFFFF);
-  static const accent = Color(0xFF68CE67);
+  // Monochrome glass accent: the selected device identity uses the same
+  // white/black language as the player controls instead of a green tint.
+  static const accent = Color(0xF2FFFFFF);
+  static const switchOffThumb = Color(0xCCFFFFFF);
+  static const switchOnThumb = Color(0xFF17191D);
   static const inputFill = Color(0x14FFFFFF);
   static const inputBorder = Color(0x1FFFFFFF);
   static const inputFocusBorder = Color(0x73FFFFFF);
@@ -855,8 +859,10 @@ class _G2SettingsSwitch extends StatelessWidget {
                       top: 4,
                       child: DecoratedBox(
                         decoration: ShapeDecoration(
-                          color: Colors.white.withValues(
-                            alpha: .78 + .22 * progress,
+                          color: Color.lerp(
+                            _GlassStyle.switchOffThumb,
+                            _GlassStyle.switchOnThumb,
+                            progress,
                           ),
                           shape: const CircleBorder(),
                         ),
