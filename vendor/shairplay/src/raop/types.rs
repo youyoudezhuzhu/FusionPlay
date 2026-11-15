@@ -78,6 +78,18 @@ pub trait AudioHandler: Send + Sync + 'static {
 
     /// Volume change in dB (0.0 = max, -144.0 = mute).
     fn on_volume(&self, _volume: f32) {}
+    /// Current receiver output volume in dB (0.0 = full scale, -144.0 = mute).
+    ///
+    /// AirPlay volume is a receiver-side property: the sender asks for it with
+    /// `GET_PARAMETER volume` and changes it with `SET_PARAMETER volume`. Return
+    /// the gain the receiver is actually applying so the sender's UI matches
+    /// the local output. Default reports full scale.
+    fn volume(&self) -> f32 {
+        0.0
+    }
+    /// Rate-limited diagnostic message from the audio pipeline (framing,
+    /// decrypt or decode anomalies). Never called per packet. Default: no-op.
+    fn on_diagnostic(&self, _level: &str, _message: &str) {}
     /// Track metadata (parsed from DMAP).
     fn on_metadata(&self, _metadata: &crate::proto::dmap::TrackMetadata) {}
     /// Album artwork (JPEG or PNG).

@@ -714,6 +714,16 @@ async fn receive_loop<R: tokio::io::AsyncRead + Unpin>(
     let mut source_channels: u8 = 2;
     let mut output_channels: u8 = 2;
     let mut unknown_ssrc_warn = RateLimitedWarn::new(Duration::from_secs(5));
+    // Diagnostic counters: exported through `on_diagnostic` so the next device
+    // log shows whether PCM is missing because of decrypt, decode or framing.
+    let mut packets: u64 = 0;
+    let mut decrypt_failures: u64 = 0;
+    let mut decode_failures: u64 = 0;
+    let mut silent_decodes: u64 = 0;
+    let mut first_decrypt_warn = RateLimitedWarn::new(Duration::from_secs(60));
+    let mut first_decode_warn = RateLimitedWarn::new(Duration::from_secs(60));
+    let mut first_silent_warn = RateLimitedWarn::new(Duration::from_secs(60));
+    let mut last_diagnostic = now_ns();
 
     loop {
         if state.0.lock().is_ok_and(|state| state.stopped) {
@@ -822,16 +832,63 @@ async fn receive_loop<R: tokio::io::AsyncRead + Unpin>(
             continue;
         };
 
+        packets = packets.saturating_add(1);
         // Decrypt the ChaCha20-Poly1305 RTP frame.
         let Some(plaintext) = decrypt_rtp_chacha(&cipher, &packet) else {
             debug!("Audio decrypt failed");
+            decrypt_failures = decrypt_failures.saturating_add(1);
+            if first_decrypt_warn.allow(now_ns()) {
+                handler.on_diagnostic(
+                    "warning",
+                    &format!(
+                        "AirPlay 缓冲音频解密失败（累计 {decrypt_failures} 包，最近包长 {} 字节）；请检查 SETUP 会话密钥/分包",
+                        packet.len()
+                    ),
+                );
+            }
             continue;
         };
 
         let Some(samples) = decoder.decode(&plaintext) else {
             debug!("Audio decode failed");
+            decode_failures = decode_failures.saturating_add(1);
+            if first_decode_warn.allow(now_ns()) {
+                handler.on_diagnostic(
+                    "warning",
+                    &format!(
+                        "AirPlay 缓冲音频解码失败（累计 {decode_failures} 包，SSRC={:?}，明文 {} 字节）",
+                        current_ssrc,
+                        plaintext.len()
+                    ),
+                );
+            }
             continue;
         };
+
+        if samples.iter().all(|sample| *sample == 0.0) && plaintext.iter().any(|byte| *byte != 0) {
+            silent_decodes = silent_decodes.saturating_add(1);
+            if first_silent_warn.allow(now_ns()) {
+                handler.on_diagnostic(
+                    "warning",
+                    &format!(
+                        "AirPlay 缓冲音频解码结果为静音（SSRC={:?}，明文 {} 字节）；疑似帧格式/解码器不匹配",
+                        current_ssrc,
+                        plaintext.len()
+                    ),
+                );
+            }
+        }
+
+        if now_ns().saturating_sub(last_diagnostic) >= 10_000_000_000 {
+            last_diagnostic = now_ns();
+            handler.on_diagnostic(
+                "info",
+                &format!(
+                    "AirPlay 缓冲音频诊断：收包 {packets}、解密失败 {decrypt_failures}、解码失败 {decode_failures}、解码静音 {silent_decodes}、首帧 {} 个采样",
+                    samples.len()
+                ),
+            );
+        }
 
         // Mix down + resample to the output format.
         let samples = crate::codec::resample::mixdown_and_resample(
@@ -1526,6 +1583,70 @@ mod tests {
         assert_eq!(format.codec, SourceAudioCodec::Alac);
         assert_eq!(format.bits, Some(24));
         assert_eq!(format.sample_rate, Some(48_000));
+    }
+
+    /// Parse ADTS frames from the bundled AAC-LC 44.1 kHz stereo test asset and
+    /// return the raw AAC payloads (header stripped) that AirPlay carries.
+    fn aac_test_payloads() -> Vec<Vec<u8>> {
+        let data: &[u8] = include_bytes!("../../tests/data/aac/tone_44100_stereo.aac");
+        let mut frames = Vec::new();
+        let mut off = 0;
+        while off + 7 <= data.len() {
+            if data[off] != 0xFF || (data[off + 1] & 0xF6) != 0xF0 {
+                off += 1;
+                continue;
+            }
+            let len = (((data[off + 3] & 0x03) as usize) << 11)
+                | ((data[off + 4] as usize) << 3)
+                | ((data[off + 5] as usize) >> 5);
+            if len < 7 || off + len > data.len() {
+                break;
+            }
+            frames.push(data[off + 7..off + len].to_vec());
+            off += len;
+        }
+        // Skip the leading ffmpeg metadata frame; use real audio frames.
+        frames.into_iter().skip(1).collect()
+    }
+
+    #[tokio::test]
+    async fn decodes_real_aac_lc_frames_from_the_buffered_audio_path() {
+        let shk = [7u8; 32];
+        let payloads = aac_test_payloads();
+        assert!(payloads.len() > 4, "test asset must carry audio frames");
+        let mut packets = Vec::new();
+        for (index, payload) in payloads.iter().enumerate().take(12) {
+            let timestamp = 1_000 + (index as u32) * 1024;
+            packets.push(audio_packet(
+                &shk,
+                timestamp,
+                AudioSsrc::Aac44100F24Stereo as u32,
+                payload,
+            ));
+        }
+        let state = test_state(0);
+        run_receive_loop(
+            packets,
+            BufferedSourceConfig::default(),
+            OutputConfig {
+                sample_rate: Some(48_000),
+                max_channels: Some(2),
+            },
+            Arc::clone(&state),
+        )
+        .await;
+
+        let s = state.0.lock().unwrap();
+        assert_eq!(s.source_format.expect("source format").codec, SourceAudioCodec::Aac);
+        assert!(!s.buffer.is_empty(), "AAC packets must decode into the playout buffer");
+        let total: usize = s.buffer.values().map(Vec::len).sum();
+        assert!(total > 0, "decoded AAC must produce PCM samples");
+        let peak = s
+            .buffer
+            .values()
+            .flat_map(|frame| frame.iter())
+            .fold(0.0_f32, |peak, sample| peak.max(sample.abs()));
+        assert!(peak > 0.001, "decoded 440 Hz tone must not be silent, peak={peak}");
     }
 
     #[tokio::test]

@@ -110,7 +110,6 @@ class _PlayerViewState extends State<PlayerView> {
   double? _volumeDrag;
   int? _optimisticVolume;
   int? _lastAudibleVolume;
-  Timer? _volumeDebounceTimer;
   Timer? _volumeOptimisticTimer;
 
   FocusNode get _progressFocus =>
@@ -196,6 +195,19 @@ class _PlayerViewState extends State<PlayerView> {
   @override
   void didUpdateWidget(covariant PlayerView oldWidget) {
     super.didUpdateWidget(oldWidget);
+    // CoreEvent::Volume read-back: once the host echoes the committed value we
+    // can drop the optimistic override immediately (same value => no visual
+    // jump). A different read-back is ignored until the optimistic window ends
+    // so the thumb does not fight the echo mid-gesture.
+    final optimistic = _optimisticVolume;
+    final externalPercent = widget.state.playback.volumePercent;
+    if (optimistic != null &&
+        externalPercent != null &&
+        externalPercent.clamp(0, 100) == optimistic) {
+      _volumeOptimisticTimer?.cancel();
+      _volumeOptimisticTimer = null;
+      _optimisticVolume = null;
+    }
     final nextTrackKey = _trackKeyOf(widget.state.playback);
     final previousHadLyrics = _hasDisplayableLyricsFor(
       oldWidget.state.playback,
@@ -256,7 +268,6 @@ class _PlayerViewState extends State<PlayerView> {
   void dispose() {
     pendingSeekTimer?.cancel();
     artworkFlipDirectionTimer?.cancel();
-    _volumeDebounceTimer?.cancel();
     _volumeOptimisticTimer?.cancel();
     _fallbackProgressFocus.dispose();
     _fallbackMenuFocus.dispose();
@@ -1582,10 +1593,11 @@ class _PlayerViewState extends State<PlayerView> {
             focusBorderColor: Colors.white,
             activeColor: Colors.white.withValues(alpha: .82),
             inactiveColor: Colors.white.withValues(alpha: .22),
-            onChanged: (value) {
-              setState(() => _volumeDrag = value);
-              _scheduleVolumeCommit((value * 100).round());
-            },
+            // Drag only updates the local thumb (no volume command). The
+            // single command is sent exactly once on release; sending live
+            // updates made AirPlay report "unsupported remote command" on
+            // every drag tick.
+            onChanged: (value) => setState(() => _volumeDrag = value),
             onChangeEnd: (value) => _commitVolume((value * 100).round()),
           ),
         ),
@@ -1603,15 +1615,6 @@ class _PlayerViewState extends State<PlayerView> {
         ),
       ],
     );
-  }
-
-  /// Throttled live volume updates while dragging (120-150ms).
-  void _scheduleVolumeCommit(int percent) {
-    _volumeDebounceTimer?.cancel();
-    _volumeDebounceTimer = Timer(const Duration(milliseconds: 130), () {
-      if (!mounted) return;
-      _applyVolume(percent);
-    });
   }
 
   void _toggleMute() {
@@ -1637,10 +1640,17 @@ class _PlayerViewState extends State<PlayerView> {
     widget.onVolume(clamped);
   }
 
+  /// Exactly one volume command per finished drag / mute toggle.
   void _commitVolume(int percent) {
-    _volumeDebounceTimer?.cancel();
-    _volumeDebounceTimer = null;
-    _applyVolume(percent);
+    final clamped = percent.clamp(0, 100);
+    // Drop duplicate commits for the value already in flight/applied (e.g.
+    // tap-without-drag or an onChangeEnd after a RoundedProgressBar nudge).
+    if (_volumeDrag == null &&
+        _optimisticVolume != null &&
+        _optimisticVolume == clamped) {
+      return;
+    }
+    _applyVolume(clamped);
   }
 
   // ------------------------------------------------------------------

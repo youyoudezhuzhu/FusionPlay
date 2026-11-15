@@ -20,7 +20,7 @@ use std::collections::HashSet;
 use std::collections::{HashMap, VecDeque};
 use std::hash::{Hash, Hasher};
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 #[cfg(target_os = "android")]
 use std::sync::mpsc;
 use std::sync::{Arc, Mutex};
@@ -82,12 +82,11 @@ pub trait PcmOutput: Send + Sync {
 const OUTPUT_BACKLOG_MILLISECONDS: usize = 80;
 /// Android can briefly delay even a high-priority Oboe callback while the
 /// system changes routes, restores an AudioTrack, or schedules heavy UI work.
-/// 1.4.0 shipped a 240 ms cue and still stuttered on ColorOS; the AirPlay 2
-/// protocol buffer is 2 s, so spending 480 ms on the *local* output cushion
-/// only moves the audible delay to 2.48 s while removing the underrun/stutter
-/// cycle. Keep this a small fraction of the protocol latency.
+/// 1.4.0 was the last release that produced audible AirPlay output on ColorOS
+/// with a 240 ms cushion; 1.4.1's 480 ms / 240 ms cushion (with a larger
+/// prefill) never primed on the same device, so keep the known-good values.
 #[cfg(target_os = "android")]
-const OUTPUT_BACKLOG_MILLISECONDS: usize = 480;
+const OUTPUT_BACKLOG_MILLISECONDS: usize = 240;
 /// Amount of decoded PCM collected before the platform output starts draining.
 ///
 /// AirPlay realtime audio arrives in short network packets. Starting from the
@@ -99,7 +98,7 @@ const OUTPUT_PREFILL_MILLISECONDS: usize = 40;
 /// A larger one-time/recovery fill prevents a short scheduling delay at the
 /// start of a connection from becoming a repeating fill/drain cycle.
 #[cfg(target_os = "android")]
-const OUTPUT_PREFILL_MILLISECONDS: usize = 240;
+const OUTPUT_PREFILL_MILLISECONDS: usize = 120;
 
 struct AudioBuffer {
     samples: VecDeque<f32>,
@@ -125,6 +124,8 @@ struct AudioBufferStats {
     buffered_frames: usize,
     capacity_frames: usize,
     prefill_frames: usize,
+    /// True once the output has started draining real PCM.
+    primed: bool,
 }
 
 impl AudioBuffer {
@@ -219,6 +220,7 @@ impl AudioBuffer {
             buffered_frames: self.samples.len() / self.channels,
             capacity_frames: self.capacity / self.channels,
             prefill_frames: self.prefill / self.channels,
+            primed: self.primed,
         }
     }
 }
@@ -460,6 +462,7 @@ pub fn start_audio(
     };
     let buffer = Arc::new(Mutex::new(AudioBuffer::new(sample_rate, channels)));
     let gain_bits = Arc::new(AtomicU32::new(1.0_f32.to_bits()));
+    let volume_db_bits = Arc::new(AtomicU32::new(0.0_f32.to_bits()));
 
     let stream = match sample_format {
         cpal::SampleFormat::F32 => build_output_stream::<f32>(
@@ -491,6 +494,7 @@ pub fn start_audio(
     let handler = Arc::new(ReceiverAudioHandler {
         buffer,
         gain_bits,
+        volume_db_bits,
         events,
         arbiter,
         artwork_dir,
@@ -528,6 +532,7 @@ pub fn start_audio_external(
     const EXTERNAL_CHANNELS: u16 = 2;
     let buffer = Arc::new(Mutex::new(AudioBuffer::new(EXTERNAL_RATE, EXTERNAL_CHANNELS)));
     let gain_bits = Arc::new(AtomicU32::new(1.0_f32.to_bits()));
+    let volume_db_bits = Arc::new(AtomicU32::new(0.0_f32.to_bits()));
     let stop = Arc::new(AtomicBool::new(false));
     let pump = {
         let buffer = Arc::clone(&buffer);
@@ -568,6 +573,7 @@ pub fn start_audio_external(
     let handler = Arc::new(ReceiverAudioHandler {
         buffer,
         gain_bits,
+        volume_db_bits,
         events,
         arbiter,
         artwork_dir,
@@ -601,6 +607,7 @@ pub fn start_audio(
     let channels = 2;
     let buffer = Arc::new(Mutex::new(AudioBuffer::new(sample_rate, channels)));
     let gain_bits = Arc::new(AtomicU32::new(1.0_f32.to_bits()));
+    let volume_db_bits = Arc::new(AtomicU32::new(0.0_f32.to_bits()));
     let (commands, command_receiver) = mpsc::channel();
     let initial_stream = open_android_audio_stream(
         Arc::clone(&buffer),
@@ -631,6 +638,7 @@ pub fn start_audio(
     let handler = Arc::new(ReceiverAudioHandler {
         buffer,
         gain_bits,
+        volume_db_bits,
         events,
         arbiter,
         artwork_dir,
@@ -665,17 +673,15 @@ fn open_android_audio_stream(
         gain_bits,
         commands,
     };
-    // Stability beats a few milliseconds here: `LowLatency` + `Shared` on
-    // ColorOS/OPPO requests a very small hardware buffer, and scheduling
-    // hiccups on those devices drained it repeatedly (audible stutter even
-    // with a 240 ms app-level cushion). The AirPlay 2 protocol already buffers
-    // two seconds, so a normal-latency Oboe stream plus the 480/240 ms local
-    // cushion is imperceptible while being far more tolerant of callback
-    // jitter. See OUTPUT_BACKLOG_MILLISECONDS / OUTPUT_PREFILL_MILLISECONDS.
+    // 1.4.1 switched to `PerformanceMode::None` together with a 480/240 ms
+    // cushion and ColorOS then produced no sound at all. Restore the 1.4.0
+    // known-good settings: the protocol already buffers 2 s, so the small
+    // LowLatency hardware buffer plus the 240/120 ms app cushion is what last
+    // produced audible output on these devices.
     let mut stream = AudioStreamBuilder::default()
         .set_usage(Usage::Media)
         .set_content_type(ContentType::Music)
-        .set_performance_mode(PerformanceMode::None)
+        .set_performance_mode(PerformanceMode::LowLatency)
         .set_sharing_mode(SharingMode::Shared)
         .set_sample_rate(sample_rate as i32)
         .set_sample_rate_conversion_quality(SampleRateConversionQuality::Medium)
@@ -705,7 +711,7 @@ fn manage_android_audio_output(
     if let Ok(buffer) = buffer.lock() {
         let stats = buffer.stats();
         let message = format!(
-            "Android 音频输出已就绪：Oboe 稳定模式，本地缓冲 {} ms（容量 {} ms，{} 帧），采样率 {} Hz",
+            "Android 音频输出已就绪：Oboe 低延迟模式，本地缓冲 {} ms（容量 {} ms，{} 帧），采样率 {} Hz",
             stats.prefill_frames * 1_000 / sample_rate.max(1) as usize,
             stats.capacity_frames * 1_000 / sample_rate.max(1) as usize,
             stats.prefill_frames,
@@ -717,6 +723,7 @@ fn manage_android_audio_output(
         });
     }
     let mut last_stats = AudioBufferStats::default();
+    let mut announced_start = false;
     loop {
         let command = match receiver.recv_timeout(Duration::from_secs(2)) {
             Ok(command) => command,
@@ -724,6 +731,18 @@ fn manage_android_audio_output(
                 // Rate-limited observability: report only when an underrun or
                 // a prefill restart actually happened since the last report.
                 let stats = buffer.lock().map(|buffer| buffer.stats()).unwrap_or_default();
+                if stats.primed && !announced_start {
+                    announced_start = true;
+                    let message = format!(
+                        "Android 音频输出已开始播放：当前缓冲 {:.0} ms / 容量 {:.0} ms",
+                        stats.buffered_frames as f64 * 1_000.0 / sample_rate.max(1) as f64,
+                        stats.capacity_frames as f64 * 1_000.0 / sample_rate.max(1) as f64
+                    );
+                    events.emit(CoreEvent::Log {
+                        level: "info",
+                        message: &message,
+                    });
+                }
                 if stats.underruns > last_stats.underruns
                     || stats.prefill_waits > last_stats.prefill_waits
                 {
@@ -829,6 +848,10 @@ where
 pub struct ReceiverAudioHandler {
     buffer: Arc<Mutex<AudioBuffer>>,
     gain_bits: Arc<AtomicU32>,
+    /// Receiver volume in dB (0.0 = full scale, -144.0 = mute), reported to the
+    /// sender by `GET_PARAMETER volume` and updated by both the sender's
+    /// `SET_PARAMETER volume` and the local UI volume.
+    volume_db_bits: Arc<AtomicU32>,
     events: Arc<EventSink>,
     arbiter: Arc<PlaybackArbiter>,
     artwork_dir: PathBuf,
@@ -1076,6 +1099,35 @@ impl ReceiverAudioHandler {
             });
     }
 
+    /// Apply a UI volume percentage (0..=100) to the receiver's local output
+    /// gain and remember the matching attenuation for sender volume queries.
+    ///
+    /// AirPlay volume belongs to the receiver: Apple TV/HomePod-style senders
+    /// never expose a transport `SetVolume`, so treating this as a remote
+    /// command made the local volume control unusable.
+    pub fn apply_local_volume_percent(&self, percent: u8, lease: Option<MediaLease>) {
+        let percent = percent.min(100);
+        let gain = f32::from(percent as u16) / 100.0;
+        let db = if percent == 0 {
+            -144.0
+        } else {
+            20.0 * gain.log10()
+        };
+        self.gain_bits.store(gain.to_bits(), Ordering::Relaxed);
+        self.volume_db_bits.store(db.to_bits(), Ordering::Relaxed);
+        let Some(lease) = lease else {
+            return;
+        };
+        self.arbiter.run_if_current(lease, || {
+            self.events.emit(CoreEvent::Volume {
+                source: "airplay",
+                epoch: lease.epoch(),
+                db,
+                percent,
+            });
+        });
+    }
+
     pub fn send_remote_command(&self, command: RemoteCommand) -> Result<()> {
         let active_lease = self
             .arbiter
@@ -1104,6 +1156,27 @@ impl ReceiverAudioHandler {
         } else {
             command
         };
+        // AirPlay volume is receiver-side: apply it locally first and report
+        // success. AP2 MediaRemote does not advertise SetVolume, and the old
+        // failure path surfaced "当前投放设备不支持此远程控制命令" while the
+        // local volume never changed.
+        if let &RemoteCommand::SetVolume(percent) = &transport_command {
+            self.apply_local_volume_percent(percent, event_lease);
+            // AP1 DACP senders do advertise SetVolume; mirror the change
+            // best-effort so their slider stays in sync. Failures are ignored
+            // because the local gain already took effect.
+            if let Ok(remotes) = self.remote_controls.lock() {
+                for remote in remotes.candidates() {
+                    if remote_supports_command(
+                        &remote.available_commands(),
+                        &RemoteCommand::SetVolume(percent),
+                    ) {
+                        let _ = remote.send_command(RemoteCommand::SetVolume(percent));
+                    }
+                }
+            }
+            return Ok(());
+        }
         let candidates = self
             .remote_controls
             .lock()
@@ -1514,6 +1587,13 @@ impl AudioHandler for ReceiverAudioHandler {
             "The sender has not provided an AirPlay media-control channel",
             lease,
         );
+        let pcm_samples = Arc::new(AtomicU64::new(0));
+        let stream_label = describe_stream_format(&format);
+        watch_audio_session_start(
+            Arc::clone(&self.events),
+            Arc::clone(&pcm_samples),
+            stream_label.clone(),
+        );
         Box::new(ReceiverAudioSession {
             buffer: Arc::clone(&self.buffer),
             events: Arc::clone(&self.events),
@@ -1521,7 +1601,17 @@ impl AudioHandler for ReceiverAudioHandler {
             state: session_state,
             source_channels: format.channels as usize,
             output_channels: self.output_channels,
+            pcm_samples,
+            stream_label,
         })
+    }
+
+    fn volume(&self) -> f32 {
+        f32::from_bits(self.volume_db_bits.load(Ordering::Relaxed))
+    }
+
+    fn on_diagnostic(&self, level: &str, message: &str) {
+        self.events.emit(CoreEvent::Log { level, message });
     }
 
     fn on_volume(&self, volume: f32) {
@@ -1535,6 +1625,8 @@ impl AudioHandler for ReceiverAudioHandler {
         };
         self.arbiter.run_if_current(lease, || {
             self.gain_bits.store(gain.to_bits(), Ordering::Relaxed);
+            self.volume_db_bits
+                .store(volume.clamp(-144.0, 0.0).to_bits(), Ordering::Relaxed);
             self.events.emit(CoreEvent::Volume {
                 source: "airplay",
                 epoch: lease.epoch(),
@@ -1754,6 +1846,82 @@ struct ReceiverAudioSession {
     state: Arc<AudioSessionState>,
     source_channels: usize,
     output_channels: usize,
+    /// Total decoded PCM samples pushed to the output queue for this stream.
+    /// Used to prove (in exported logs) that audio actually reaches the local
+    /// output instead of silently failing in decrypt/decode/SETUP.
+    pcm_samples: Arc<AtomicU64>,
+    /// Human-readable stream format for diagnostics.
+    stream_label: String,
+}
+
+impl ReceiverAudioSession {
+    fn note_audio_delivered(&self, samples: usize) {
+        if samples == 0 {
+            return;
+        }
+        let previous = self
+            .pcm_samples
+            .fetch_add(samples as u64, Ordering::AcqRel);
+        if previous == 0 {
+            let message = format!(
+                "AirPlay 音频数据已开始输出：{}（首块 {} 个采样）",
+                self.stream_label, samples
+            );
+            self.events.emit(CoreEvent::Log {
+                level: "info",
+                message: &message,
+            });
+        }
+    }
+}
+
+/// Format a short description of the negotiated AirPlay stream for logs.
+fn describe_stream_format(format: &AudioFormat) -> String {
+    match format.source {
+        Some(source) => {
+            let codec = match source.codec {
+                SourceAudioCodec::Aac => "aac",
+                SourceAudioCodec::Alac => "alac",
+            };
+            format!(
+                "codec={codec} 源 {} Hz / {} 声道 → 输出 {} Hz / {} 声道",
+                source.sample_rate.unwrap_or(0),
+                source.channels.unwrap_or(0),
+                format.sample_rate,
+                format.channels
+            )
+        }
+        None => format!(
+            "PCM 源 {} Hz / {} 声道",
+            format.sample_rate, format.channels
+        ),
+    }
+}
+
+/// Warn (once) when an AirPlay audio session starts but no decoded PCM arrives.
+///
+/// This is the decisive diagnostic for "sender reports playing but the receiver
+/// is silent": it distinguishes a decode/decrypt/SETUP failure from a local
+/// output failure.
+fn watch_audio_session_start(
+    events: Arc<EventSink>,
+    pcm_samples: Arc<AtomicU64>,
+    stream_label: String,
+) {
+    let _ = std::thread::Builder::new()
+        .name("airplay-audio-watchdog".to_owned())
+        .spawn(move || {
+            std::thread::sleep(std::time::Duration::from_secs(6));
+            if pcm_samples.load(Ordering::Acquire) == 0 {
+                let message = format!(
+                    "AirPlay 已建立音频会话（{stream_label}）但 6 秒内未收到任何解码 PCM；请检查流 SETUP、会话密钥解密或解码格式"
+                );
+                events.emit(CoreEvent::Log {
+                    level: "warning",
+                    message: &message,
+                });
+            }
+        });
 }
 
 impl AudioSession for ReceiverAudioSession {
@@ -1774,6 +1942,7 @@ impl AudioSession for ReceiverAudioSession {
             {
                 buffer.push(samples);
             }
+            self.note_audio_delivered(samples.len());
             return;
         }
 
@@ -1799,6 +1968,7 @@ impl AudioSession for ReceiverAudioSession {
         {
             buffer.push(&converted);
         }
+        self.note_audio_delivered(converted.len());
     }
 
     fn audio_flush(&mut self) {
@@ -1935,6 +2105,7 @@ mod tests {
             ReceiverAudioHandler {
                 buffer: Arc::clone(&buffer),
                 gain_bits: Arc::new(AtomicU32::new(1.0_f32.to_bits())),
+                volume_db_bits: Arc::new(AtomicU32::new(0.0_f32.to_bits())),
                 events,
                 arbiter: Arc::clone(&arbiter),
                 artwork_dir: PathBuf::new(),
@@ -2218,6 +2389,108 @@ mod tests {
             .update(fake_remote("dacp", vec![RemoteCommand::Play]), true);
 
         assert!(handler.send_remote_command(RemoteCommand::Play).is_ok());
+    }
+
+    #[test]
+    fn local_volume_from_ui_succeeds_without_a_remote_command() {
+        let (handler, _, _) = test_handler();
+        // A live AirPlay session provides the epoch for the UI volume event.
+        let _session = handler.audio_init(audio_format());
+        let event_index = handler.events.captured_events().len();
+        // AirPlay 2 senders only expose next/prev/play-pause/seek on their
+        // MediaRemote channel. Receiver volume must still work locally instead
+        // of failing with "当前投放设备不支持此远程控制命令".
+        handler
+            .send_remote_command(RemoteCommand::SetVolume(30))
+            .expect("UI volume must apply locally without a remote");
+
+        let gain = f32::from_bits(handler.gain_bits.load(Ordering::Relaxed));
+        assert!((gain - 0.30).abs() < 0.001, "local gain must be 30%: {gain}");
+        let db = f32::from_bits(handler.volume_db_bits.load(Ordering::Relaxed));
+        assert!(
+            (db - 20.0 * 0.30_f32.log10()).abs() < 0.002,
+            "reported dB must match the 30% gain: {db}"
+        );
+
+        let events = handler.events.captured_events();
+        let volume_events = &events[event_index..];
+        assert!(
+            volume_events
+                .iter()
+                .any(|event| event["type"] == "volume" && event["percent"] == 30),
+            "the UI must receive a volume event for its own change"
+        );
+        assert!(
+            !volume_events.iter().any(|event| {
+                event["type"] == "remote_control_unavailable"
+                    || (event["type"] == "command_result"
+                        && event["succeeded"].as_bool() == Some(false))
+            }),
+            "a local volume change must not enter the unsupported-remote error path"
+        );
+    }
+
+    #[test]
+    fn local_volume_mute_uses_full_attenuation() {
+        let (handler, _, _) = test_handler();
+        handler
+            .send_remote_command(RemoteCommand::SetVolume(0))
+            .expect("mute must succeed locally");
+        let gain = f32::from_bits(handler.gain_bits.load(Ordering::Relaxed));
+        assert_eq!(gain, 0.0);
+        let db = f32::from_bits(handler.volume_db_bits.load(Ordering::Relaxed));
+        assert_eq!(db, -144.0);
+    }
+
+    #[test]
+    fn local_volume_still_mirrors_to_a_remote_that_supports_it() {
+        let (handler, _, _) = test_handler();
+        let sent = Arc::new(Mutex::new(Vec::new()));
+        let remote: Arc<dyn RemoteControl> = Arc::new(RecordingRemote {
+            commands: vec![RemoteCommand::SetVolume(0)],
+            sent: Arc::clone(&sent),
+        });
+        handler.remote_controls.lock().unwrap().update(remote, true);
+
+        handler
+            .send_remote_command(RemoteCommand::SetVolume(55))
+            .expect("volume must succeed");
+
+        assert!(
+            sent.lock()
+                .unwrap()
+                .iter()
+                .any(|command| matches!(command, RemoteCommand::SetVolume(55))),
+            "AP1 DACP senders that support SetVolume must still be mirrored"
+        );
+        let gain = f32::from_bits(handler.gain_bits.load(Ordering::Relaxed));
+        assert!((gain - 0.55).abs() < 0.001);
+    }
+
+    #[test]
+    fn sender_volume_updates_the_volume_reported_to_the_sender() {
+        let (handler, _, _) = test_handler();
+        let _session = handler.audio_init(audio_format());
+
+        handler.on_volume(-6.0);
+
+        let db = f32::from_bits(handler.volume_db_bits.load(Ordering::Relaxed));
+        assert!((db + 6.0).abs() < 0.001, "sender volume must be remembered: {db}");
+        assert!((handler.volume() + 6.0).abs() < 0.001, "GET_PARAMETER volume must report it");
+    }
+
+    #[test]
+    fn audio_pipeline_diagnostics_are_exported_as_log_events() {
+        let (handler, _, _) = test_handler();
+        handler.on_diagnostic("warning", "AAC decode failed");
+        let messages: Vec<String> = handler
+            .events
+            .captured_events()
+            .iter()
+            .filter(|event| event["type"] == "log")
+            .filter_map(|event| event["message"].as_str().map(ToOwned::to_owned))
+            .collect();
+        assert!(messages.iter().any(|message| message.contains("AAC decode failed")));
     }
 
     #[test]

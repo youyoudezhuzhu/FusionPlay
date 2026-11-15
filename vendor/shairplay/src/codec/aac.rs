@@ -1,7 +1,11 @@
-//! AAC decoder with ADTS framing for AirPlay 2 buffered audio.
+//! AAC decoder for AirPlay 2 buffered audio.
 //!
-//! Raw AAC packets from the buffered audio stream need ADTS headers
-//! prepended before they can be decoded. Ported from ap2_buffered_audio_processor.c.
+//! AirPlay 2 buffered AAC packets carry a raw AAC-LC data block (the same data
+//! shairport-sync has to wrap in a synthetic ADTS header before handing it to
+//! FFmpeg). Symphonia's AAC decoder consumes the raw data block directly, so
+//! the production path feeds raw payloads; ADTS-framed input from other senders
+//! is detected and the header stripped. Ported from
+//! ap2_buffered_audio_processor.c (which documents the ADTS workaround).
 
 /// SSRC values identifying the audio format (from shairport-sync player.h).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -111,9 +115,7 @@ impl AudioSsrc {
 /// `packet_len` is the total length including the 7-byte header itself.
 /// `rate` is the sample rate (44100 or 48000).
 /// `channels` is the channel configuration (2 = stereo).
-// ADTS framing helpers retained for the AAC path and verified by the unit
-// tests; not currently invoked by the buffered-audio production code.
-#[allow(dead_code)]
+/// ADTS framing helpers kept for ADTS-compatibility decoding and tests.
 pub(crate) fn adts_header(packet_len: usize, rate: u32, channels: u8) -> [u8; 7] {
     let profile = 2u8; // AAC-LC
     let freq_idx: u8 = match rate {
@@ -135,8 +137,9 @@ pub(crate) fn adts_header(packet_len: usize, rate: u32, channels: u8) -> [u8; 7]
     ]
 }
 
-/// Wrap a raw AAC frame with an ADTS header.
-#[allow(dead_code)]
+/// Wrap a raw AAC frame with an ADTS header (compatibility fallback only;
+/// symphonia decodes the raw data block directly, and wrapping a payload that
+/// is already ADTS would corrupt it).
 pub(crate) fn wrap_adts(raw_aac: &[u8], rate: u32, channels: u8) -> Vec<u8> {
     let total_len = raw_aac.len() + 7;
     let header = adts_header(total_len, rate, channels);
@@ -146,9 +149,55 @@ pub(crate) fn wrap_adts(raw_aac: &[u8], rate: u32, channels: u8) -> Vec<u8> {
     out
 }
 
-/// Persistent AAC decoder using symphonia. Decodes ADTS-wrapped AAC to F32LE PCM.
+/// Persistent AAC decoder built on symphonia.
+///
+/// AirPlay 2 buffered-audio plaintext is a **raw AAC-LC data block** (no ADTS
+/// header); shairport-sync has to synthesise an ADTS header before handing the
+/// same payload to FFmpeg. Symphonia's AAC decoder is the opposite: it decodes
+/// the raw data block directly and treats a prepended ADTS header as garbage
+/// (symphonia decodes it into digital silence). This decoder therefore strips
+/// an ADTS header when a sender does include one, and only falls back to
+/// synthesising ADTS if a raw decode fails outright.
 pub(crate) struct AacDecoder {
     decoder: Box<dyn symphonia::core::codecs::audio::AudioDecoder>,
+    sample_rate: u32,
+    /// ADTS channel configuration index (6/7 for surround, otherwise 2/1).
+    adts_channels: u8,
+}
+
+/// Return the length of the ADTS header in `data` (7 bytes, or 9 with a CRC).
+///
+/// The frame length in the header is validated so a random 0xFF-prefixed AAC
+/// data block is not mistaken for ADTS framing.
+pub(crate) fn adts_header_len(data: &[u8]) -> Option<usize> {
+    if data.len() < 7 {
+        return None;
+    }
+    // 12-bit sync word, MPEG-4 ID and layer 0.
+    if data[0] != 0xFF || (data[1] & 0xF6) != 0xF0 {
+        return None;
+    }
+    let protection_absent = data[1] & 0x01 == 1;
+    let header_len = if protection_absent { 7 } else { 9 };
+    if data.len() < header_len {
+        return None;
+    }
+    let frame_len = (((data[3] & 0x03) as usize) << 11)
+        | ((data[4] as usize) << 3)
+        | ((data[5] as usize) >> 5);
+    if frame_len < header_len || frame_len > data.len() {
+        return None;
+    }
+    Some(header_len)
+}
+
+fn adts_channel_config_for(channels: u8) -> u8 {
+    match channels {
+        6 => 6,
+        8 => 7,
+        1 => 1,
+        _ => 2,
+    }
 }
 
 impl AacDecoder {
@@ -157,6 +206,7 @@ impl AacDecoder {
         use symphonia::core::audio::{Channels, Position};
         use symphonia::core::codecs::audio::{AudioCodecParameters, AudioDecoderOptions, well_known::CODEC_ID_AAC};
 
+        let channels = channels.clamp(1, 8);
         let mut params = AudioCodecParameters::new();
         params.for_codec(CODEC_ID_AAC).with_sample_rate(sample_rate);
 
@@ -189,11 +239,34 @@ impl AacDecoder {
             .make_audio_decoder(&params, &AudioDecoderOptions::default())
             .map_err(|e| format!("AAC decoder init failed: {e}"))?;
 
-        Ok(Self { decoder })
+        Ok(Self {
+            decoder,
+            sample_rate,
+            adts_channels: adts_channel_config_for(channels),
+        })
     }
 
-    /// Decode a raw AAC frame (without ADTS header) to interleaved F32 PCM.
-    pub(crate) fn decode(&mut self, raw_aac: &[u8]) -> Option<Vec<u8>> {
+    /// Decode one AirPlay AAC packet to interleaved F32LE PCM.
+    ///
+    /// Accepts either a raw AAC data block (the AirPlay 2 wire format) or an
+    /// ADTS-framed frame (some third-party senders); the ADTS header is
+    /// stripped before decoding because symphonia does not consume it.
+    pub(crate) fn decode(&mut self, payload: &[u8]) -> Option<Vec<u8>> {
+        if payload.is_empty() {
+            return None;
+        }
+        if let Some(header_len) = adts_header_len(payload) {
+            return self.decode_raw(&payload[header_len..]);
+        }
+        if let Some(pcm) = self.decode_raw(payload) {
+            return Some(pcm);
+        }
+        // Compatibility fallback for decoders that expect ADTS framing.
+        let wrapped = wrap_adts(payload, self.sample_rate, self.adts_channels);
+        self.decode_raw(&wrapped)
+    }
+
+    fn decode_raw(&mut self, raw_aac: &[u8]) -> Option<Vec<u8>> {
         use symphonia::core::packet::PacketRef;
         use symphonia::core::units::{Duration, Timestamp};
 
@@ -204,6 +277,7 @@ impl AacDecoder {
         Some(pcm)
     }
 }
+
 
 #[cfg(test)]
 mod tests {
@@ -251,8 +325,115 @@ mod tests {
         assert_eq!(&adts[7..], &raw_aac[..]); // payload preserved
         assert_eq!(adts.len(), 7 + 4); // header + payload
     }
-}
 
+    /// Split the bundled AAC-LC 44.1 kHz stereo ADTS asset into (header_len,
+    /// payload) pairs. The adts framing is only test scaffolding: the decoder
+    /// is fed the raw payload, exactly like the AirPlay 2 wire format.
+    fn test_asset_frames() -> Vec<(usize, Vec<u8>)> {
+        let data: &[u8] = include_bytes!("../../tests/data/aac/tone_44100_stereo.aac");
+        let mut frames = Vec::new();
+        let mut offset = 0;
+        while offset + 7 <= data.len() {
+            let Some(header_len) = adts_header_len(&data[offset..]) else {
+                offset += 1;
+                continue;
+            };
+            let frame_len = (((data[offset + 3] & 0x03) as usize) << 11)
+                | ((data[offset + 4] as usize) << 3)
+                | ((data[offset + 5] as usize) >> 5);
+            if frame_len < header_len || offset + frame_len > data.len() {
+                break;
+            }
+            frames.push((
+                header_len,
+                data[offset + header_len..offset + frame_len].to_vec(),
+            ));
+            offset += frame_len;
+        }
+        // Drop ffmpeg's leading metadata frame; keep real audio frames.
+        frames.into_iter().skip(1).collect()
+    }
+
+    fn peak_rms(pcm: &[u8]) -> (f32, f32) {
+        assert_eq!(pcm.len() % 8, 0, "interleaved stereo f32 frames");
+        let samples: Vec<f32> = pcm
+            .chunks_exact(4)
+            .map(|c| f32::from_le_bytes([c[0], c[1], c[2], c[3]]))
+            .collect();
+        let energy: f64 = samples.iter().map(|s| (*s as f64) * (*s as f64)).sum();
+        (
+            samples.iter().map(|s| s.abs()).fold(0.0, f32::max),
+            (energy / samples.len().max(1) as f64).sqrt() as f32,
+        )
+    }
+
+    /// The production path: a real AAC-LC data block carried raw, as AirPlay 2
+    /// sends it. This is a decode test with real encoded audio (a 440 Hz tone),
+    /// not an ADTS-header hex test.
+    #[test]
+    fn decodes_real_raw_aac_lc_frames() {
+        let frames = test_asset_frames();
+        assert!(frames.len() > 4, "test asset must contain audio frames");
+        let mut decoder = AacDecoder::new(44_100, 2).unwrap();
+        for (index, (_, payload)) in frames.iter().enumerate().take(20) {
+            let pcm = decoder
+                .decode(payload)
+                .unwrap_or_else(|| panic!("raw AAC frame {index} must decode"));
+            assert_eq!(pcm.len(), 1024 * 2 * 4, "one AAC-LC frame is 1024 stereo f32");
+            let (peak, rms) = peak_rms(&pcm);
+            assert!(peak > 0.01, "frame {index} decodes to silence: peak={peak}");
+            assert!(rms > 0.005, "frame {index} RMS too low: {rms}");
+        }
+    }
+
+    /// ADTS-framed input must be stripped before decoding. Blindly wrapping the
+    /// header *on top of* an ADTS frame is what used to make AirPlay AAC appear
+    /// silent in 1.4.0/1.4.1.
+    #[test]
+    fn strips_adts_before_decoding_and_matches_raw_decode() {
+        let frames = test_asset_frames();
+        let (_, raw_payload) = &frames[0];
+        let adts_frame = wrap_adts(raw_payload, 44_100, 2);
+
+        let mut raw_decoder = AacDecoder::new(44_100, 2).unwrap();
+        let raw_pcm = raw_decoder.decode(raw_payload).expect("raw frame");
+
+        let mut adts_decoder = AacDecoder::new(44_100, 2).unwrap();
+        let adts_pcm = adts_decoder
+            .decode(&adts_frame)
+            .expect("ADTS-framed frame must decode after header stripping");
+        assert_eq!(raw_pcm.len(), adts_pcm.len());
+        assert_eq!(raw_pcm, adts_pcm);
+        assert!(peak_rms(&adts_pcm).0 > 0.01);
+    }
+
+    #[test]
+    fn adts_header_detection_accepts_only_valid_frames() {
+        let raw = vec![0x21u8, 0x00, 0x00, 0x00];
+        assert_eq!(adts_header_len(&raw), None);
+        let framed = wrap_adts(&raw, 44_100, 2);
+        assert!(adts_header_len(&framed).is_some());
+        assert_eq!(adts_header_len(&framed), Some(7));
+        // Frame length smaller than the header is rejected.
+        let mut invalid = framed.clone();
+        invalid[3] = 0x00;
+        invalid[4] = 0x00;
+        invalid[5] = 0x00;
+        assert_eq!(adts_header_len(&invalid), None);
+    }
+
+    #[test]
+    fn decodes_sequential_frames_without_failures() {
+        let frames = test_asset_frames();
+        let mut decoder = AacDecoder::new(44_100, 2).unwrap();
+        for (index, (_, payload)) in frames.iter().enumerate() {
+            let pcm = decoder
+                .decode(payload)
+                .unwrap_or_else(|| panic!("sequentially decoded frame {index} failed"));
+            assert!(!pcm.is_empty());
+        }
+    }
+}
 // --- AudioSsrc mapping tests ---
 
 #[cfg(test)]

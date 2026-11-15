@@ -292,22 +292,60 @@ void main() {
     expect(volumes.last, 40);
   });
 
-  testWidgets('拖动中立即跟手：onChanged 只更新本地滑杆值', (tester) async {
+  testWidgets('拖动中只更新本地滑杆，松手只发一次 volume 命令', (tester) async {
     final volumes = <int>[];
     await _pumpPlayer(tester, _state(volumePercent: 65), onVolume: volumes.add);
 
     final slider = find.byKey(const ValueKey('volume-slider'));
     final widget = tester.widget<RoundedProgressBar>(slider);
     widget.onChanged(.2);
+    widget.onChanged(.3);
+    widget.onChanged(.4);
     await tester.pump();
     final value = tester
         .widget<RoundedProgressBar>(find.byKey(const ValueKey('volume-slider')))
         .value;
-    expect(value, closeTo(.2, .001));
-    // 130ms 防抖后才回写。
+    expect(value, closeTo(.4, .001));
+    // 拖动过程中不发命令（展示端只在松手提交），不会反复触发错误。
     expect(volumes, isEmpty);
-    await tester.pump(const Duration(milliseconds: 150));
-    expect(volumes.last, 20);
+    await tester.pump(const Duration(milliseconds: 500));
+    expect(volumes, isEmpty);
+
+    widget.onChangeEnd!.call(.4);
+    await tester.pump();
+    expect(volumes, [40]);
+
+    // 重复的 onChangeEnd / 相同值不会再次发送命令。
+    widget.onChangeEnd!.call(.4);
+    await tester.pump();
+    expect(volumes, [40]);
+  });
+
+  testWidgets('音量回读与乐观值不打架：拖动跟手、回读同值不抖动', (tester) async {
+    final volumes = <int>[];
+    await _pumpPlayer(tester, _state(volumePercent: 65), onVolume: volumes.add);
+
+    final slider = find.byKey(const ValueKey('volume-slider'));
+    tester.widget<RoundedProgressBar>(slider).onChanged(.5);
+    await tester.pump();
+    tester.widget<RoundedProgressBar>(slider).onChangeEnd!.call(.5);
+    await tester.pump();
+    expect(volumes, [50]);
+
+    // CoreEvent::Volume 回读同样的值：立即吸收 optimistic，不产生跳变/重复命令。
+    await _pumpPlayer(tester, _state(volumePercent: 50), onVolume: volumes.add);
+    await tester.pump();
+    expect(
+      tester
+          .widget<RoundedProgressBar>(
+            find.byKey(const ValueKey('volume-slider')),
+          )
+          .value,
+      closeTo(.5, .001),
+    );
+    expect(volumes, [50]);
+    await tester.pump(const Duration(milliseconds: 1000));
+    expect(volumes, [50]);
   });
 
   testWidgets('D-pad 焦点链：菜单→进度→播放→下一曲→音量', (tester) async {

@@ -126,3 +126,41 @@ MediaRemote 不是公开的 AirPlay 2 API。本实现参考了 2026 年 2 月公
   `CoreEvent::Log` 每标签限频记录一次，供用户下次导出日志确认是否有厂商扩展
   （如 `asly`）。日志中 now_playing 的 title_length 变化通常是发送端 App 自身的
   now-playing 标题更新，不能据此认定存在歌词字段。
+
+## 2026-11 Android 1.4.1 无声/音量修正
+
+1.4.1 实机日志（AirPlay 2、AAC 44100→48000、`playback_state playing:true`）显示：
+- `stream_started` 正常、进度/元数据/远程控制正常，但本地输出始终
+  `Android 音频输出欠载 ... 当前缓冲 0 ms / 容量 480 ms`；
+- FusionPlay 调音量返回 `当前投放设备不支持此远程控制命令`，iPhone 端音量固定 100%。
+
+修复：
+
+- **AAC 帧格式**：AirPlay 2 buffered AAC 明文是 **raw AAC-LC data block**（无 ADTS
+  头）。symphonia 的 AAC 解码器直接吃 raw data block；给它喂拼接了 ADTS 头的
+  数据会被当成原始比特流解成数字静音。`AacDecoder` 现在：
+  - 检测 ADTS（sync + 帧长校验）时先**剥离** 7/9 字节头再解码；
+  - 原始 payload 直接解码（生产路径）；
+  - 只在 raw 解码失败时用合成的 ADTS 头做兼容回退（`wrap_adts`）。
+  - 新增真实音频测试：`tests/data/aac/tone_44100_stereo.aac`（ffmpeg 编码的
+    440 Hz AAC-LC 44.1k 立体声）——raw 帧解码、ADTS 剥离一致性、连续多帧、
+    以及 `receive_loop` 端到端（解密→解码→重采样→入 playout buffer，断言非静音）。
+- **Android 输出配置回退到 1.4.0 可出声配置**：Oboe `PerformanceMode::LowLatency`，
+  本地缓冲 240 ms / 预填充 120 ms。1.4.1 的 `None` + 480/240 在 ColorOS 上没有
+  产生任何可听输出，因此以恢复声音优先；`AudioBuffer` 的 underrun/预填充计数与
+  启动日志保留，并新增「音频数据已开始输出」「输出已开始播放」以及
+  「会话建立 6 秒内未收到解码 PCM」告警，用于下一份日志定位。
+- **接收端音量**：AirPlay 音量属于接收端能力，不再要求 sender 的 MediaRemote
+  暴露 `SetVolume`：
+  - core `set_volume` 直接设置本地输出 gain（0–100% → 0–1，0% 记为 -144 dB），
+    返回成功；sender 若确实支持 `SetVolume`（AP1 DACP）则 best-effort 镜像失败
+    不影响本地；
+  - `GET_PARAMETER volume` 返回接收端当前 dB（原来是固定 0 dB，导致发送端永远
+    显示 100%）；
+  - sender 的 `SET_PARAMETER volume` 与本机 UI 音量共享同一状态；`CoreEvent::Volume`
+    同时上报 dB 与百分比，Android 诊断日志现在会记录 `db`/`volume_percent`；
+  - Android 端 AirPlay 路由不再同时改系统媒体音量（core gain 为唯一音量），
+    避免双重衰减；DLNA/妙播路径保持原行为。
+- **缓冲诊断**：buffered/realtime 音频管线新增限频诊断（收包、解密失败、解码失败、
+  解码静音、诊断行每 10 秒），经新增 `AudioHandler::on_diagnostic` 写入 core
+  `CoreEvent::Log`（持久化日志 `persistent/fusionplay.jsonl`）。

@@ -179,6 +179,76 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
+  testWidgets('错误 toast 7 秒自动消失，同一错误不重置计时', (tester) async {
+    final hostKey = GlobalKey<_ErrorToastHostState>();
+    Widget host() => MaterialApp(
+      theme: fusionTheme(),
+      home: _ErrorToastHost(
+        key: hostKey,
+        controller: controller,
+        initialError: '同步妙播音量失败',
+      ),
+    );
+
+    await tester.pumpWidget(host());
+    await tester.pump();
+    expect(find.byKey(const ValueKey('error-toast')), findsOneWidget);
+
+    await tester.pump(const Duration(seconds: 5));
+    // 同一错误持续存在时重建（AirPlay 状态频繁更新）不应重启计时。
+    await tester.pumpWidget(host());
+    await tester.pump();
+    expect(find.byKey(const ValueKey('error-toast')), findsOneWidget);
+
+    await tester.pump(const Duration(milliseconds: 2200));
+    await tester.pump();
+    expect(find.byKey(const ValueKey('error-toast')), findsNothing);
+  });
+
+  testWidgets('error 持续存在时 toast 也会在超时后从 UI 消失', (tester) async {
+    final hostKey = GlobalKey<_ErrorToastHostState>();
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: fusionTheme(),
+        home: _ErrorToastHost(
+          key: hostKey,
+          controller: controller,
+          initialError: '同步妙播音量失败',
+          clearOnClearError: false, // runtime keeps reporting the same error
+        ),
+      ),
+    );
+    await tester.pump();
+    expect(find.byKey(const ValueKey('error-toast')), findsOneWidget);
+
+    await tester.pump(const Duration(seconds: 7));
+    await tester.pump();
+    expect(find.byKey(const ValueKey('error-toast')), findsNothing);
+  });
+
+  testWidgets('错误 toast 可手动关闭', (tester) async {
+    final hostKey = GlobalKey<_ErrorToastHostState>();
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: fusionTheme(),
+        home: _ErrorToastHost(
+          key: hostKey,
+          controller: controller,
+          initialError: '同步妙播音量失败',
+        ),
+      ),
+    );
+    await tester.pump();
+    final toast = find.byKey(const ValueKey('error-toast'));
+    expect(toast, findsOneWidget);
+
+    await tester.tap(
+      find.descendant(of: toast, matching: find.byType(IconButton)),
+    );
+    await tester.pump();
+    expect(find.byKey(const ValueKey('error-toast')), findsNothing);
+  });
+
   testWidgets('菜单项「设置」morph 成右侧玻璃面板，焦点进入设置内容', (tester) async {
     await _pumpHome(tester, controller: controller);
     await _openMenu(tester);
@@ -496,4 +566,46 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.byKey(const ValueKey('settings-sheet')), findsNothing);
   });
+}
+
+/// Test host that clears its error when the home controller sends clearError
+/// (the real runtime emits a new state after that command).
+class _ErrorToastHost extends StatefulWidget {
+  const _ErrorToastHost({
+    super.key,
+    required this.controller,
+    required this.initialError,
+    this.clearOnClearError = true,
+  });
+
+  final NativeAppController controller;
+  final String initialError;
+  final bool clearOnClearError;
+
+  @override
+  State<_ErrorToastHost> createState() => _ErrorToastHostState();
+}
+
+class _ErrorToastHostState extends State<_ErrorToastHost> {
+  late String? _error = widget.initialError;
+
+  @override
+  void initState() {
+    super.initState();
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(_runtimeChannel, (call) async {
+          if (call.method == 'clearError' && widget.clearOnClearError) {
+            if (mounted) setState(() => _error = null);
+          }
+          return null;
+        });
+  }
+
+  @override
+  Widget build(BuildContext context) => FusionPlayHome(
+    controller: widget.controller,
+    state: AppState(initialized: true, lastError: _error),
+    isAndroid: false,
+    forceGlassFallback: true,
+  );
 }

@@ -72,6 +72,11 @@ pub(crate) async fn run(socket: UdpSocket, shk: [u8; 32], handler: Arc<dyn Audio
     let mut out_ch: u8 = 2;
 
     info!("Realtime ALAC receiver started");
+    let mut packets: u64 = 0;
+    let mut decrypt_failures: u64 = 0;
+    let mut decode_failures: u64 = 0;
+    let mut last_diagnostic = std::time::Instant::now();
+    let mut first_failure_warned = false;
 
     loop {
         let n = match socket.recv(&mut buf).await {
@@ -117,15 +122,45 @@ pub(crate) async fn run(socket: UdpSocket, shk: [u8; 32], handler: Arc<dyn Audio
         }
 
         // Decrypt the ChaCha20-Poly1305 RTP frame.
+        packets = packets.saturating_add(1);
         let Some(alac_data) = decrypt_rtp_chacha(&cipher, packet) else {
             debug!("Realtime audio decrypt failed");
+            decrypt_failures = decrypt_failures.saturating_add(1);
+            if !first_failure_warned {
+                first_failure_warned = true;
+                handler.on_diagnostic(
+                    "warning",
+                    &format!("AirPlay 实时音频解密失败（累计 {decrypt_failures} 包）；请检查会话密钥/分包"),
+                );
+            }
             continue;
         };
 
         // Decode ALAC → f32 PCM
         let Some(mut samples) = decoder.as_mut().and_then(|d| d.decode_frame_f32(&alac_data)) else {
+            decode_failures = decode_failures.saturating_add(1);
+            if !first_failure_warned {
+                first_failure_warned = true;
+                handler.on_diagnostic(
+                    "warning",
+                    &format!(
+                        "AirPlay 实时音频解码失败（累计 {decode_failures} 包，明文 {} 字节）",
+                        alac_data.len()
+                    ),
+                );
+            }
             continue;
         };
+
+        if last_diagnostic.elapsed() >= std::time::Duration::from_secs(10) {
+            last_diagnostic = std::time::Instant::now();
+            handler.on_diagnostic(
+                "info",
+                &format!(
+                    "AirPlay 实时音频诊断：收包 {packets}、解密失败 {decrypt_failures}、解码失败 {decode_failures}"
+                ),
+            );
+        }
 
         // Mix down + resample to the output format.
         #[cfg(feature = "resample")]

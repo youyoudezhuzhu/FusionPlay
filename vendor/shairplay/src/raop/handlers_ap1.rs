@@ -444,7 +444,7 @@ pub(crate) fn handle_pause(
 
 /// RTSP GET_PARAMETER: return volume or other parameters.
 pub(crate) fn handle_get_parameter(
-    _conn: &mut RaopConnection,
+    conn: &mut RaopConnection,
     request: &HttpRequest,
     response: &mut HttpResponse,
 ) -> Option<Vec<u8>> {
@@ -457,7 +457,10 @@ pub(crate) fn handle_get_parameter(
     let text = std::str::from_utf8(data).ok()?;
     if text.contains("volume") {
         response.add_header("Content-Type", "text/parameters");
-        return Some(b"volume: 0.000000\r\n".to_vec());
+        // Report the receiver's actual output attenuation instead of a fixed
+        // 0 dB. 0 dB is full scale; -144 dB is mute.
+        let volume = conn.shared.handler.volume();
+        return Some(format!("volume: {volume:.6}\r\n").into_bytes());
     }
     None
 }
@@ -768,5 +771,45 @@ pub(crate) mod tests {
             Ok(crate::raop::buffered_audio::PlayoutCommand::Resume)
         ));
         assert_eq!(*handler.playback_states.lock().unwrap(), vec![false, true]);
+    }
+
+    /// `GET_PARAMETER volume` must report the receiver's actual attenuation
+    /// (previously hard-coded to 0 dB, so senders always showed 100%).
+    #[test]
+    fn get_parameter_volume_reports_the_receiver_volume() {
+        #[derive(Default)]
+        struct VolumeHandler {
+            volume_db: f32,
+        }
+        impl AudioHandler for VolumeHandler {
+            fn audio_init(&self, _format: AudioFormat) -> Box<dyn AudioSession> {
+                unreachable!("GET_PARAMETER does not create an audio session")
+            }
+            fn volume(&self) -> f32 {
+                self.volume_db
+            }
+        }
+
+        let handler = Arc::new(VolumeHandler { volume_db: -6.0 });
+        let mut conn = test_connection(handler);
+
+        let body = b"volume\r\n";
+        let mut msg = format!(
+            "GET / RTSP/1.0\r\nCSeq: 1\r\nContent-Type: text/parameters\r\nContent-Length: {}\r\n\r\n",
+            body.len()
+        )
+        .into_bytes();
+        msg.extend_from_slice(body);
+        let mut req = HttpRequest::new();
+        req.add_data(&msg).unwrap();
+
+        let mut resp = HttpResponse::new("RTSP/1.0", 200, "OK");
+        let out = handle_get_parameter(&mut conn, &req, &mut resp)
+            .expect("GET_PARAMETER volume must be answered");
+        assert_eq!(
+            std::str::from_utf8(&out).unwrap(),
+            "volume: -6.000000\r\n",
+            "the receiver's current volume must be reported, not a fixed 0 dB"
+        );
     }
 }

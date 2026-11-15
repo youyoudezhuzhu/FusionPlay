@@ -293,6 +293,13 @@ class FusionPlayDiagnosticLogger(
                 details["position_ms"] = event.positionMs
             is AppEvent.DlnaRate ->
                 details["rate"] = event.rate
+            is AppEvent.Volume -> {
+                // AirPlay receiver volume: log both the attenuation and the
+                // rendered percentage so a silent stream can be traced back to
+                // the sender muting the receiver (-144 dB / 0%).
+                details["db"] = event.decibels?.let { Math.round(it * 100.0) / 100.0 }
+                details["volume_percent"] = event.percent
+            }
             is AppEvent.DlnaVolume -> {
                 details["volume_percent"] = event.percent
                 details["muted"] = event.muted

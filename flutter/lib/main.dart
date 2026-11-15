@@ -142,6 +142,14 @@ class _FusionPlayHomeState extends State<FusionPlayHome> {
   String? _requestedArtworkIdentity;
   bool _artworkPreparationStarted = false;
   Timer? _artworkClearTimer;
+  Timer? _errorToastTimer;
+  String? _errorToastMessage;
+  String? _visibleError;
+
+  /// Top error toasts auto-dismiss after this long. The timer must not be
+  /// restarted while the same error keeps being reported (AirPlay volume sync
+  /// failures used to repeat on every state update, leaving the toast forever).
+  static const errorToastDuration = Duration(seconds: 7);
 
   bool get _isAndroid => widget.isAndroid ?? Platform.isAndroid;
 
@@ -155,6 +163,34 @@ class _FusionPlayHomeState extends State<FusionPlayHome> {
     _navigationKeyChannel.setMethodCallHandler((call) async {
       if (call.method == 'menu' && mounted) _handleMenuShortcut();
     });
+    _syncErrorToast(widget.state.lastError);
+  }
+
+  void _syncErrorToast(String? raw) {
+    final message = raw?.trim();
+    final normalized = message == null || message.isEmpty ? null : message;
+    if (normalized == _errorToastMessage) return; // do not restart the timer
+    _errorToastTimer?.cancel();
+    _errorToastTimer = null;
+    _errorToastMessage = normalized;
+    _visibleError = normalized;
+    if (normalized == null) return;
+    _errorToastTimer = Timer(errorToastDuration, () {
+      if (!mounted || _errorToastMessage != normalized) return;
+      _errorToastTimer = null;
+      // Hide locally first: the toast must disappear even if the runtime keeps
+      // reporting the same error (AirPlay volume sync), otherwise it would sit
+      // on screen forever. clearError is still sent so the native state clears.
+      setState(() => _visibleError = null);
+      unawaited(widget.controller.clearError());
+    });
+  }
+
+  void _dismissErrorToast() {
+    _errorToastTimer?.cancel();
+    _errorToastTimer = null;
+    if (mounted) setState(() => _visibleError = null);
+    unawaited(widget.controller.clearError());
   }
 
   @override
@@ -170,6 +206,7 @@ class _FusionPlayHomeState extends State<FusionPlayHome> {
   @override
   void didUpdateWidget(covariant FusionPlayHome oldWidget) {
     super.didUpdateWidget(oldWidget);
+    _syncErrorToast(widget.state.lastError);
     final nextArtwork = _normalizedArtworkSource(
       widget.state.playback.coverArt,
     );
@@ -190,6 +227,7 @@ class _FusionPlayHomeState extends State<FusionPlayHome> {
   void dispose() {
     _navigationKeyChannel.setMethodCallHandler(null);
     _artworkClearTimer?.cancel();
+    _errorToastTimer?.cancel();
     _menuButtonFocus.dispose();
     _playerProgressFocus.dispose();
     _settingsInitialFocus.dispose();
@@ -612,7 +650,7 @@ class _FusionPlayHomeState extends State<FusionPlayHome> {
                       forceFallback: widget.forceGlassFallback,
                     ),
                   ),
-                if (state.lastError != null)
+                if (_visibleError != null)
                   SafeArea(
                     child: Align(
                       alignment: Alignment.topCenter,
@@ -638,17 +676,17 @@ class _FusionPlayHomeState extends State<FusionPlayHome> {
                                 children: [
                                   Flexible(
                                     child: Text(
-                                      state.lastError!,
+                                      _visibleError!,
                                       maxLines: 2,
                                       overflow: TextOverflow.ellipsis,
                                     ),
                                   ),
                                   RemoteFocusFrame(
-                                    onActivate: widget.controller.clearError,
+                                    onActivate: _dismissErrorToast,
                                     borderColor: Colors.white,
                                     shape: const CircleBorder(),
                                     child: IconButton(
-                                      onPressed: widget.controller.clearError,
+                                      onPressed: _dismissErrorToast,
                                       icon: const FusionVectorIcon(
                                         FusionIcons.close,
                                       ),

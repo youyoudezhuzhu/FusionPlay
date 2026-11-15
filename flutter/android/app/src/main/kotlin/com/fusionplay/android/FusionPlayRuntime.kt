@@ -472,22 +472,30 @@ class FusionPlayRuntime(
 
     private suspend fun dispatchVolume(percent: Int, applyLocal: Boolean) {
         val normalized = percent.coerceIn(0, 100)
+        val state = viewModel.state.value
+        val airplayActive = state.activeMediaSource == MediaSource.AIRPLAY ||
+            (state.activeMediaSource == null &&
+                state.playback.streamActive &&
+                state.playback.protocol.equals("AirPlay", ignoreCase = true))
+        if (airplayActive) {
+            // AirPlay volume belongs to the receiver: the core applies it to the
+            // local output gain and answers success even though the sender's
+            // MediaRemote channel exposes no SetVolume. Do not also change the
+            // Android media stream volume here, otherwise both attenuations
+            // multiply and the local slider becomes non-linear.
+            runCatching { viewModel.sendVolume(normalized) }
+                .onFailure { reportError("AirPlay 接收端音量调整失败", it) }
+            return
+        }
         if (applyLocal && !FusionPlayMediaChannel.setSystemMediaVolumePercent(normalized)) {
             viewModel.reportExternalLog("无法将被控端媒体音量调整到 $normalized%。", isError = true)
         }
-        val state = viewModel.state.value
         when {
             routesControlsToXiaomi(state) -> {
                 if (!bridge.setXiaomiVolume(normalized)) {
                     viewModel.reportExternalLog("小米妙播发送端音量同步失败。", isError = true)
                 }
             }
-            state.activeMediaSource == MediaSource.AIRPLAY ||
-                (state.activeMediaSource == null &&
-                    state.playback.streamActive &&
-                    state.playback.protocol.equals("AirPlay", ignoreCase = true)) ->
-                runCatching { viewModel.sendVolume(normalized) }
-                    .onFailure { reportError("AirPlay 发送端音量同步失败", it) }
             state.activeMediaSource == MediaSource.DLNA ||
                 (state.activeMediaSource == null &&
                     state.playback.streamActive &&
