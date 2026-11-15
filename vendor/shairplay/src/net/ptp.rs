@@ -14,6 +14,12 @@ use crate::util::now_ns;
 
 const PTP_SAMPLE_MAX_AGE_NS: u64 = 300_000_000_000;
 const PENDING_SYNC_MAX_AGE_NS: u64 = 2_000_000_000;
+/// Ignore implausible path-delay estimates (>100 ms one way).
+const PATH_DELAY_MAX_NS: u64 = 100_000_000;
+/// Minimum interval between Delay_Req probes.
+const DELAY_REQ_MIN_INTERVAL_NS: u64 = 1_000_000_000;
+/// Outstanding Delay_Req probes older than this are dropped unmeasured.
+const PENDING_DELAY_REQ_MAX_AGE_NS: u64 = 2_000_000_000;
 
 /// PTP message types (IEEE 1588).
 #[repr(u8)]
@@ -23,6 +29,10 @@ pub enum PtpMessageType {
     Sync = 0,
     /// Follow-up message (carries precise timestamp).
     FollowUp = 8,
+    /// Delay request (slave → master path-delay probe).
+    DelayReq = 1,
+    /// Delay response (master → slave path-delay reply).
+    DelayResp = 9,
     /// Announce message (master clock election).
     Announce = 11,
     /// Unrecognized message type.
@@ -33,7 +43,9 @@ impl From<u8> for PtpMessageType {
     fn from(v: u8) -> Self {
         match v & 0x0F {
             0 => Self::Sync,
+            1 => Self::DelayReq,
             8 => Self::FollowUp,
+            9 => Self::DelayResp,
             11 => Self::Announce,
             _ => Self::Other,
         }
@@ -153,17 +165,77 @@ pub fn parse_follow_up(buf: &[u8]) -> Option<(u64, u64, i64)> {
     Some((clock_id, timestamp_ns.wrapping_add(correction_ns as u64), correction_ns))
 }
 
-/// Parse a PTP Announce message and extract the clock identity.
+/// Parsed PTP Announce fields used for grandmaster selection.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct AnnounceDetails {
+    /// Clock identity of the source we receive from (sourcePortIdentity).
+    pub source_clock_id: u64,
+    /// Elected grandmaster identity.
+    pub grandmaster_id: u64,
+    /// Grandmaster priority 1.
+    pub priority1: u8,
+    /// Grandmaster priority 2.
+    pub priority2: u8,
+    /// Number of boundary clocks between us and the grandmaster.
+    pub steps_removed: u16,
+}
+
+impl AnnounceDetails {
+    /// IEEE-1588 best-master ordering (lower is better).
+    fn better_than(&self, other: &Self) -> bool {
+        (self.priority1, self.priority2, self.steps_removed, self.grandmaster_id)
+            < (other.priority1, other.priority2, other.steps_removed, other.grandmaster_id)
+    }
+}
+
+/// Parse a PTP Announce message and extract the source clock identity.
 pub fn parse_announce(buf: &[u8]) -> Option<u64> {
-    if buf.len() < 64 {
+    parse_announce_details(buf).map(|details| details.source_clock_id)
+}
+
+/// Parse the Announce fields needed for master-clock selection.
+pub(crate) fn parse_announce_details(buf: &[u8]) -> Option<AnnounceDetails> {
+    // Announce is 64 bytes: header(34) + originTimestamp(10) + utcOffset(2) +
+    // reserved(1) + priority1(1) + quality(4) + priority2(1) + gmIdentity(8) +
+    // stepsRemoved(2) + timeSource(1).
+    if buf.len() < 64 || PtpMessageType::from(buf[0]) != PtpMessageType::Announce {
         return None;
     }
-    let msg_type = PtpMessageType::from(buf[0]);
-    if msg_type != PtpMessageType::Announce {
+    Some(AnnounceDetails {
+        source_clock_id: u64::from_be_bytes(buf[20..28].try_into().ok()?),
+        priority1: buf[47],
+        priority2: buf[52],
+        grandmaster_id: u64::from_be_bytes(buf[53..61].try_into().ok()?),
+        steps_removed: u16::from_be_bytes(buf[61..63].try_into().ok()?),
+    })
+}
+
+/// Parse a PTP Delay_Resp: returns `(sequence_id, receiveTimestamp_ns)`.
+pub(crate) fn parse_delay_resp(buf: &[u8]) -> Option<(u16, u64)> {
+    if buf.len() < 44 || PtpMessageType::from(buf[0]) != PtpMessageType::DelayResp {
         return None;
     }
-    let clock_id = u64::from_be_bytes(buf[20..28].try_into().ok()?);
-    Some(clock_id)
+    let sequence_id = u16::from_be_bytes(buf[30..32].try_into().ok()?);
+    let seconds_hi = u16::from_be_bytes(buf[34..36].try_into().ok()?) as u64;
+    let seconds_lo = u32::from_be_bytes(buf[36..40].try_into().ok()?) as u64;
+    let nanoseconds = u32::from_be_bytes(buf[40..44].try_into().ok()?) as u64;
+    if nanoseconds >= 1_000_000_000 {
+        return None;
+    }
+    let seconds = (seconds_hi << 32) | seconds_lo;
+    Some((sequence_id, seconds * 1_000_000_000 + nanoseconds))
+}
+
+/// Build a 44-byte IEEE-1588 Delay_Req for `sequence_id`.
+pub(crate) fn build_delay_req(sequence_id: u16) -> [u8; 44] {
+    let mut buf = [0u8; 44];
+    buf[0] = PtpMessageType::DelayReq as u8; // messageType
+    buf[1] = 0x02; // PTP version 2
+    buf[2..4].copy_from_slice(&44u16.to_be_bytes()); // messageLength
+    buf[30..32].copy_from_slice(&sequence_id.to_be_bytes());
+    buf[32] = 0x01; // controlField: delay_req
+    buf[33] = 0x7f; // logMessageInterval
+    buf
 }
 
 fn parse_source_and_sequence(buf: &[u8], expected_type: PtpMessageType) -> Option<(u64, u16)> {
@@ -187,6 +259,16 @@ struct ClockDiscipline {
     smoother: OffsetSmoother,
     active_clock_id: u64,
     mastership_start_time: u64,
+    /// Best Announce seen so far (master-clock selection).
+    announced: Option<AnnounceDetails>,
+    /// Measured one-way path delay in ns, added to the master origin timestamp.
+    path_delay_ns: i64,
+    /// Outstanding Delay_Req probes: sequence id → local send time (ns).
+    pending_delay_reqs: HashMap<u16, u64>,
+    next_delay_req_sequence: u16,
+    last_delay_req_ns: Option<u64>,
+    /// Address the last Sync came from (Delay_Req target).
+    master_addr: Option<std::net::SocketAddr>,
 }
 
 impl ClockDiscipline {
@@ -196,7 +278,71 @@ impl ClockDiscipline {
             smoother: OffsetSmoother::new(),
             active_clock_id: 0,
             mastership_start_time: 0,
+            announced: None,
+            path_delay_ns: 0,
+            pending_delay_reqs: HashMap::new(),
+            next_delay_req_sequence: 0,
+            last_delay_req_ns: None,
+            master_addr: None,
         }
+    }
+
+    /// Apply a grandmaster Announce. A strictly better master resets the
+    /// discipline (pending Syncs, offset smoothing) so stale samples from the
+    /// previous master cannot leak into the new clock.
+    fn observe_announce(&mut self, details: AnnounceDetails) -> bool {
+        if let Some(current) = self.announced
+            && !details.better_than(&current)
+        {
+            return false;
+        }
+        let changed = self.announced != Some(details);
+        if changed {
+            self.pending_syncs.clear();
+            self.smoother.reset();
+            self.active_clock_id = 0;
+        }
+        self.announced = Some(details);
+        changed
+    }
+
+    /// Whether Follow_Up messages from `clock_id` belong to the selected master.
+    fn accepts_clock(&self, clock_id: u64) -> bool {
+        self.announced
+            .is_none_or(|details| details.source_clock_id == clock_id || details.grandmaster_id == clock_id)
+    }
+
+    /// Register a Delay_Req probe (rate-limited). Returns the sequence id to send.
+    fn register_delay_req(&mut self, local_now_ns: u64) -> Option<u16> {
+        if let Some(last) = self.last_delay_req_ns
+            && local_now_ns.saturating_sub(last) < DELAY_REQ_MIN_INTERVAL_NS
+        {
+            return None;
+        }
+        self.last_delay_req_ns = Some(local_now_ns);
+        self.pending_delay_reqs.retain(|_, sent| {
+            local_now_ns.saturating_sub(*sent) <= PENDING_DELAY_REQ_MAX_AGE_NS
+        });
+        let sequence = self.next_delay_req_sequence;
+        self.next_delay_req_sequence = self.next_delay_req_sequence.wrapping_add(1);
+        self.pending_delay_reqs.insert(sequence, local_now_ns);
+        Some(sequence)
+    }
+
+    /// Process a Delay_Resp and update the smoothed one-way path delay.
+    fn observe_delay_resp(&mut self, sequence_id: u16, local_recv_ns: u64) -> Option<u64> {
+        let sent_ns = self.pending_delay_reqs.remove(&sequence_id)?;
+        let round_trip = local_recv_ns.saturating_sub(sent_ns);
+        if round_trip == 0 || round_trip > PATH_DELAY_MAX_NS.saturating_mul(2) {
+            return None;
+        }
+        let one_way = round_trip / 2;
+        self.path_delay_ns = if self.path_delay_ns == 0 {
+            one_way as i64
+        } else {
+            (self.path_delay_ns + one_way as i64) / 2
+        };
+        Some(one_way)
     }
 
     fn observe_sync(&mut self, clock_id: u64, sequence_id: u16, local_time_ns: u64, correction_ns: i64) {
@@ -222,7 +368,11 @@ impl ClockDiscipline {
             self.smoother.reset();
         }
 
-        let corrected_master_origin = master_origin_ns.wrapping_add(sync.correction_ns as u64);
+        // The path-delay measurement removes the asymmetric/queuing error that
+        // would otherwise look like a constant offset between the clocks.
+        let corrected_master_origin = master_origin_ns
+            .wrapping_add(sync.correction_ns as u64)
+            .wrapping_add(self.path_delay_ns as u64);
         let raw_offset = corrected_master_origin.wrapping_sub(sync.local_time_ns);
         let offset = self.smoother.update(raw_offset, sync.local_time_ns);
         clock.update(clock_id, sync.local_time_ns, offset, self.mastership_start_time);
@@ -263,7 +413,30 @@ pub(crate) async fn spawn_ptp_sink(clock: PtpClock) {
                     loop {
                         match sock.recv_from(&mut buf).await {
                             Ok((n, from)) => {
-                                handle_ptp_packet(port, from, &buf[..n], now_ns(), &seen, &clock, &discipline)
+                                let received_at_ns = now_ns();
+                                if let Some(sequence_id) = handle_ptp_packet(
+                                    port,
+                                    from,
+                                    &buf[..n],
+                                    received_at_ns,
+                                    &seen,
+                                    &clock,
+                                    &discipline,
+                                ) {
+                                    // Best-effort path-delay probe: send a Delay_Req
+                                    // back to the PTP master's source address. No
+                                    // response is required for playback to work.
+                                    let target = discipline
+                                        .lock()
+                                        .ok()
+                                        .and_then(|discipline| discipline.master_addr);
+                                    if let Some(target) = target {
+                                        let request = build_delay_req(sequence_id);
+                                        if let Err(error) = sock.send_to(&request, target).await {
+                                            tracing::debug!(%error, %target, "PTP Delay_Req send failed");
+                                        }
+                                    }
+                                }
                             }
                             Err(e) => {
                                 tracing::warn!(port, "PTP sink recv error: {e}");
@@ -291,6 +464,8 @@ pub(crate) async fn spawn_ptp_sink(clock: PtpClock) {
 /// Decode one inbound PTP datagram at `debug` (message type from the low nibble
 /// of byte 0, domain, source, length, plus Follow_Up/Announce detail). The first
 /// packet seen is noted once at `info` to confirm the sender engaged PTP.
+/// Decode one inbound PTP datagram. Returns a Delay_Req sequence id when the
+/// caller should send a path-delay probe to the master's address.
 fn handle_ptp_packet(
     port: u16,
     from: std::net::SocketAddr,
@@ -299,7 +474,7 @@ fn handle_ptp_packet(
     seen: &std::sync::atomic::AtomicBool,
     clock: &PtpClock,
     discipline: &Mutex<ClockDiscipline>,
-) {
+) -> Option<u16> {
     if !seen.swap(true, std::sync::atomic::Ordering::Relaxed) {
         tracing::info!(%from, "PTP: receiving sender clock — AP2 timing path healthy");
     }
@@ -316,18 +491,28 @@ fn handle_ptp_packet(
         _ => "?",
     };
     tracing::debug!(port, %from, len = buf.len(), msg = name, raw_type, domain, "PTP in");
+
     if let Some((clock_id, sequence_id)) = parse_source_and_sequence(buf, PtpMessageType::Sync) {
         let correction_raw = i64::from_be_bytes(buf[8..16].try_into().unwrap_or([0; 8]));
         let correction_ns = correction_raw / 65_536;
         if let Ok(mut discipline) = discipline.lock() {
+            discipline.master_addr = Some(from);
             discipline.observe_sync(clock_id, sequence_id, received_at_ns, correction_ns);
+            return discipline.register_delay_req(received_at_ns);
         }
     } else if let Some((clock_id, origin_ns, corr_ns)) = parse_follow_up(buf) {
         let sequence_id = parse_source_and_sequence(buf, PtpMessageType::FollowUp).map(|(_, sequence_id)| sequence_id);
         let synchronized = sequence_id.is_some_and(|sequence_id| {
-            discipline
-                .lock()
-                .is_ok_and(|mut discipline| discipline.observe_follow_up(clock, clock_id, sequence_id, origin_ns))
+            discipline.lock().is_ok_and(|mut discipline| {
+                if !discipline.accepts_clock(clock_id) {
+                    tracing::debug!(
+                        clock_id = format!("{clock_id:016x}"),
+                        "Ignoring Follow_Up from a non-selected PTP master"
+                    );
+                    return false;
+                }
+                discipline.observe_follow_up(clock, clock_id, sequence_id, origin_ns)
+            })
         });
         tracing::debug!(
             clock_id = format!("{clock_id:016x}"),
@@ -336,9 +521,30 @@ fn handle_ptp_packet(
             synchronized,
             "  ↳ Follow_Up"
         );
-    } else if let Some(clock_id) = parse_announce(buf) {
-        tracing::debug!(clock_id = format!("{clock_id:016x}"), "  ↳ Announce (grandmaster)");
+    } else if let Some(details) = parse_announce_details(buf) {
+        let changed = discipline.lock().is_ok_and(|mut discipline| discipline.observe_announce(details));
+        tracing::debug!(
+            source_clock_id = format!("{:016x}", details.source_clock_id),
+            grandmaster_id = format!("{:016x}", details.grandmaster_id),
+            priority1 = details.priority1,
+            priority2 = details.priority2,
+            steps_removed = details.steps_removed,
+            changed,
+            "  ↳ Announce (grandmaster)"
+        );
+    } else if let Some((sequence_id, receive_ts_ns)) = parse_delay_resp(buf) {
+        let path_delay = discipline
+            .lock()
+            .ok()
+            .and_then(|mut discipline| discipline.observe_delay_resp(sequence_id, received_at_ns));
+        tracing::debug!(
+            sequence_id,
+            receive_ts_ns,
+            ?path_delay,
+            "  ↳ Delay_Resp"
+        );
     }
+    None
 }
 
 /// Offset smoother matching NQPTP behavior.
@@ -510,6 +716,137 @@ mod tests {
 
         assert!(!discipline.observe_follow_up(&clock, 0xAABB, 7, 100_000_000_000));
         assert_eq!(clock.get_info().master_clock_id, 0);
+    }
+}
+
+#[cfg(test)]
+mod announce_and_delay_tests {
+    use super::*;
+
+    fn announce_packet(source: u64, grandmaster: u64, priority1: u8, priority2: u8, steps: u16) -> Vec<u8> {
+        let mut buf = vec![0u8; 64];
+        buf[0] = 0x0B; // Announce
+        buf[20..28].copy_from_slice(&source.to_be_bytes());
+        buf[47] = priority1;
+        buf[52] = priority2;
+        buf[53..61].copy_from_slice(&grandmaster.to_be_bytes());
+        buf[61..63].copy_from_slice(&steps.to_be_bytes());
+        buf
+    }
+
+    #[test]
+    fn parses_announce_details() {
+        let details = parse_announce_details(&announce_packet(0xAABB, 0xCCDD, 10, 20, 3)).unwrap();
+        assert_eq!(details.source_clock_id, 0xAABB);
+        assert_eq!(details.grandmaster_id, 0xCCDD);
+        assert_eq!(details.priority1, 10);
+        assert_eq!(details.priority2, 20);
+        assert_eq!(details.steps_removed, 3);
+
+        assert!(parse_announce_details(&[]).is_none());
+        assert!(parse_announce_details(&[0u8; 63]).is_none());
+        let mut wrong_type = announce_packet(1, 1, 1, 1, 1);
+        wrong_type[0] = 0x00;
+        assert!(parse_announce_details(&wrong_type).is_none());
+    }
+
+    #[test]
+    fn better_announce_resets_discipline_and_filters_foreign_masters() {
+        let mut discipline = ClockDiscipline::new();
+        let first = parse_announce_details(&announce_packet(0xA, 0xA, 128, 128, 1)).unwrap();
+        assert!(discipline.observe_announce(first));
+        discipline.observe_sync(0xA, 1, 100, 0);
+        assert_eq!(discipline.pending_syncs.len(), 1);
+
+        // A worse grandmaster is ignored and does not disturb pending Syncs.
+        let worse = parse_announce_details(&announce_packet(0xB, 0xB, 200, 128, 1)).unwrap();
+        assert!(!discipline.observe_announce(worse));
+        assert_eq!(discipline.pending_syncs.len(), 1);
+        assert!(discipline.accepts_clock(0xA));
+        assert!(!discipline.accepts_clock(0xB));
+
+        // A better grandmaster becomes the selected clock and resets state.
+        let better = parse_announce_details(&announce_packet(0xC, 0xC, 10, 10, 0)).unwrap();
+        assert!(discipline.observe_announce(better));
+        assert!(discipline.pending_syncs.is_empty());
+        assert!(discipline.accepts_clock(0xC));
+        assert!(!discipline.accepts_clock(0xA));
+    }
+
+    #[test]
+    fn delay_req_response_measures_path_delay() {
+        let mut discipline = ClockDiscipline::new();
+        let sent_at = 1_000_000_000u64;
+        let sequence = discipline.register_delay_req(sent_at).unwrap();
+        // Rate limited.
+        assert!(discipline.register_delay_req(sent_at + 1).is_none());
+
+        let one_way = discipline
+            .observe_delay_resp(sequence, sent_at + 10_000_000)
+            .expect("path delay");
+        assert_eq!(one_way, 5_000_000);
+        assert_eq!(discipline.path_delay_ns, 5_000_000);
+    }
+
+    #[test]
+    fn unknown_or_implausible_delay_responses_are_ignored() {
+        let mut discipline = ClockDiscipline::new();
+        assert!(discipline.observe_delay_resp(42, 100).is_none());
+
+        let sent_at = 0u64;
+        let sequence = discipline.register_delay_req(sent_at).unwrap();
+        // A round trip above the sanity limit must be dropped.
+        assert!(discipline.observe_delay_resp(sequence, 10_000_000_000).is_none());
+        assert_eq!(discipline.path_delay_ns, 0);
+    }
+
+    #[test]
+    fn parse_delay_resp_validates_fields_and_timestamp() {
+        let mut resp = vec![0u8; 44];
+        resp[0] = 0x09; // Delay_Resp
+        resp[30..32].copy_from_slice(&7u16.to_be_bytes());
+        resp[36..40].copy_from_slice(&1000u32.to_be_bytes());
+        resp[40..44].copy_from_slice(&500_000_000u32.to_be_bytes());
+        assert_eq!(
+            parse_delay_resp(&resp),
+            Some((7, 1_000_500_000_000))
+        );
+
+        // Nanoseconds field must be below 1e9.
+        resp[40..44].copy_from_slice(&1_000_000_000u32.to_be_bytes());
+        assert!(parse_delay_resp(&resp).is_none());
+
+        assert!(parse_delay_resp(&resp[..32]).is_none());
+        resp[0] = 0x08;
+        assert!(parse_delay_resp(&resp).is_none());
+    }
+
+    #[test]
+    fn path_delay_compensates_the_follow_up_offset() {
+        let clock = PtpClock::new();
+        let mut discipline = ClockDiscipline::new();
+        let sequence = discipline.register_delay_req(0).unwrap();
+        discipline.observe_delay_resp(sequence, 10_000_000); // 5 ms one-way
+
+        let local_sync_time = 10_000_000_000u64;
+        discipline.observe_sync(0xAA, 7, local_sync_time, 0);
+        assert!(discipline.observe_follow_up(&clock, 0xAA, 7, 100_000_000_000));
+
+        // offset = master origin + one-way path delay − local receive time.
+        assert_eq!(clock.get_info().offset, 90_005_000_000);
+        assert_eq!(
+            clock.local_time_for_master_time_at(100_500_000_000, 0xAA, local_sync_time),
+            Some(10_495_000_000)
+        );
+    }
+
+    #[test]
+    fn delay_req_packet_has_a_valid_header() {
+        let request = build_delay_req(0x1234);
+        assert_eq!(request[0], 0x01, "Delay_Req message type");
+        assert_eq!(request[1], 0x02, "PTP version 2");
+        assert_eq!(u16::from_be_bytes([request[2], request[3]]), 44);
+        assert_eq!(u16::from_be_bytes([request[30], request[31]]), 0x1234);
     }
 }
 

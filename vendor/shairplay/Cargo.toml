@@ -51,6 +51,10 @@ hls = ["ap2"]
 resample = ["dep:rubato"]
 video = ["ap2"]
 
+# The example player needs cpal/serde/tracing-subscriber, which this vendored copy
+# intentionally does not pull in. Keep it out of `cargo test` unless requested.
+dev-player = []
+
 [lib]
 name = "shairplay"
 path = "src/lib.rs"
@@ -58,7 +62,7 @@ path = "src/lib.rs"
 [[example]]
 name = "player"
 path = "examples/player/main.rs"
-required-features = []
+required-features = ["dev-player"]
 
 [[test]]
 name = "integration"
@@ -174,3 +178,6 @@ version = "0.20"
 
 [target.'cfg(target_os = "macos")'.dependencies.astro-dnssd]
 version = "0.3"
+
+[dev-dependencies.serial_test]
+version = "3"

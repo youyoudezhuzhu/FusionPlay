@@ -42,6 +42,10 @@ pub(crate) struct RaopConnection {
     pub(crate) is_ap2: bool,
     #[cfg(feature = "ap2")]
     pub(crate) playout_cmd: Option<tokio::sync::mpsc::UnboundedSender<crate::raop::buffered_audio::PlayoutCommand>>,
+    /// Per-connection RTCP control-channel listener. Dropped (and its task
+    /// aborted) when the RTSP connection closes, so sockets/tasks cannot leak.
+    #[cfg(feature = "ap2")]
+    pub(crate) rtcp_listener: Option<crate::raop::rtcp::RtcpListener>,
     #[cfg(feature = "ap2")]
     pub(crate) event_sender: Option<crate::raop::event_channel::EventSender>,
     #[cfg(feature = "ap2")]
@@ -221,7 +225,7 @@ pub(crate) fn handle_options(
     #[cfg(feature = "ap2")]
     response.add_header(
         "Public",
-        "ANNOUNCE, SETUP, RECORD, PAUSE, FLUSH, FLUSHBUFFERED, TEARDOWN, OPTIONS, POST, GET, PUT",
+        "ANNOUNCE, SETUP, RECORD, PAUSE, FLUSH, FLUSHBUFFERED, TEARDOWN, OPTIONS, POST, GET, PUT, SETMAGICCOOKIE, SETPEERSX",
     );
     #[cfg(not(feature = "ap2"))]
     response.add_header(
@@ -557,6 +561,10 @@ pub(crate) mod tests {
             audio_latency_frames,
             #[cfg(feature = "ap2")]
             pin: None,
+            #[cfg(feature = "ap2")]
+            rtcp_announce: Arc::new(std::sync::Mutex::new(None)),
+            #[cfg(feature = "ap2")]
+            peers: Arc::new(std::sync::Mutex::new(Vec::new())),
             #[cfg(feature = "video")]
             video_handler: None,
             #[cfg(feature = "video")]
@@ -602,6 +610,8 @@ pub(crate) mod tests {
             is_ap2: false,
             #[cfg(feature = "ap2")]
             playout_cmd: None,
+            #[cfg(feature = "ap2")]
+            rtcp_listener: None,
             #[cfg(feature = "ap2")]
             event_sender: None,
             #[cfg(feature = "ap2")]

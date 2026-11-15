@@ -283,6 +283,10 @@ impl RaopServerBuilder {
             audio_latency_frames: self.audio_latency_frames,
             #[cfg(feature = "ap2")]
             pin: self.pin,
+            #[cfg(feature = "ap2")]
+            rtcp_announce: Arc::new(std::sync::Mutex::new(None)),
+            #[cfg(feature = "ap2")]
+            peers: Arc::new(std::sync::Mutex::new(Vec::new())),
             #[cfg(feature = "video")]
             video_handler: self.video_handler,
             #[cfg(feature = "video")]

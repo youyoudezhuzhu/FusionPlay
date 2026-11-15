@@ -149,6 +149,10 @@ async fn tcp_connect_and_options() {
     assert!(resp.contains("Public:"));
     assert!(resp.contains("ANNOUNCE"));
     assert!(resp.contains("SETUP"));
+    assert!(
+        resp.contains("SETMAGICCOOKIE"),
+        "OPTIONS must advertise SETMAGICCOOKIE for iOS/macOS 27: {resp}"
+    );
 
     server.stop().await;
 }
@@ -177,8 +181,42 @@ async fn ap1_record_returns_200() {
 
     assert!(resp.contains("RTSP/1.0 200 OK"), "got: {resp}");
     assert!(resp.contains("CSeq: 8"));
-    // Parity with the AP2 RECORD response (clients expect this header).
-    assert!(resp.contains("Audio-Latency: 0"), "got: {resp}");
+    // Classic AirPlay keeps its fixed 250 ms minimum (11025 frames at 44.1 kHz).
+    assert!(resp.contains("Audio-Latency: 11025"), "got: {resp}");
+
+    server.stop().await;
+}
+
+#[tokio::test]
+#[serial]
+async fn setmagiccookie_post_is_acknowledged() {
+    let (mut server, port, _) = start_server().await;
+
+    let mut stream = TcpStream::connect(format!("127.0.0.1:{port}")).await.unwrap();
+    // An empty binary-plist body is enough: the receiver must acknowledge
+    // without interpreting the cookie.
+    let resp = send_rtsp(
+        &mut stream,
+        "POST /SETMAGICCOOKIE RTSP/1.0\r\nCSeq: 9\r\nContent-Type: application/x-apple-binary-plist\r\nContent-Length: 0\r\n\r\n",
+    )
+    .await;
+
+    assert!(resp.contains("RTSP/1.0 200 OK"), "got: {resp}");
+    assert!(resp.contains("CSeq: 9"), "got: {resp}");
+
+    server.stop().await;
+}
+
+#[tokio::test]
+#[serial]
+async fn setmagiccookie_rtsp_method_is_acknowledged() {
+    let (mut server, port, _) = start_server().await;
+
+    let mut stream = TcpStream::connect(format!("127.0.0.1:{port}")).await.unwrap();
+    let resp = send_rtsp(&mut stream, "SETMAGICCOOKIE * RTSP/1.0\r\nCSeq: 10\r\n\r\n").await;
+
+    assert!(resp.contains("RTSP/1.0 200 OK"), "got: {resp}");
+    assert!(resp.contains("CSeq: 10"), "got: {resp}");
 
     server.stop().await;
 }
@@ -379,6 +417,10 @@ mod ap2_tests {
 
         let expected_features = if cfg!(feature = "video") {
             "0x527FFEE6,0x0"
+        } else if cfg!(feature = "hls") {
+            // The HLS build adds AirPlay video v1 (bit 0) and HTTP Live
+            // Streaming (bit 4) on top of the known-good AP2 audio profile.
+            "0x405D4A11,0x14340"
         } else {
             "0x405D4A00,0x14340"
         };

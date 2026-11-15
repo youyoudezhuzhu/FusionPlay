@@ -44,6 +44,15 @@ pub(crate) struct RaopShared {
     pub(crate) audio_latency_frames: u32,
     #[cfg(feature = "ap2")]
     pub(crate) pin: Option<String>,
+    /// Latest RTCP time announce from the sender's control channel. Written by
+    /// the per-connection [`crate::raop::rtcp::RtcpListener`], read by the
+    /// buffered-audio playout as a fallback anchor.
+    #[cfg(feature = "ap2")]
+    pub(crate) rtcp_announce: Arc<std::sync::Mutex<Option<crate::raop::rtcp::TimeAnnounce>>>,
+    /// Peer addresses last reported through SETPEERS/SETPEERSX (diagnostics and
+    /// a hook for future multi-room group state).
+    #[cfg(feature = "ap2")]
+    pub(crate) peers: Arc<std::sync::Mutex<Vec<String>>>,
     #[cfg(feature = "video")]
     pub(crate) video_handler: Option<Arc<dyn crate::raop::video::VideoHandler>>,
     /// Shared video encryption keys — set by audio SETUP, read by video SETUP.
@@ -241,6 +250,8 @@ impl HttpdCallbacks for RaopShared {
             is_ap2: false,
             #[cfg(feature = "ap2")]
             playout_cmd: None,
+            #[cfg(feature = "ap2")]
+            rtcp_listener: None,
             #[cfg(feature = "ap2")]
             event_sender: None,
             #[cfg(feature = "ap2")]

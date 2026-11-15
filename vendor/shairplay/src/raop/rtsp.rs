@@ -91,6 +91,20 @@ const ROUTES: &[Route] = &[
         path: "/audioMode",
         handler: handlers_ap2::handle_audio_mode,
     },
+    // SETMAGICCOOKIE arrives either as a POST with the path in the URL (what
+    // iOS/macOS 27 send) or as a bare RTSP method; both must be acknowledged.
+    #[cfg(feature = "ap2")]
+    Route {
+        method: "POST",
+        path: "/SETMAGICCOOKIE",
+        handler: handlers_ap2::handle_magic_cookie,
+    },
+    #[cfg(feature = "ap2")]
+    Route {
+        method: "SETMAGICCOOKIE",
+        path: "*",
+        handler: handlers_ap2::handle_magic_cookie,
+    },
     // --- Standard RTSP methods ---
     Route {
         method: "OPTIONS",

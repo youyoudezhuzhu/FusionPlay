@@ -27,6 +27,44 @@ pub(crate) struct AlacConfig {
     pub(crate) sample_rate: u32,
 }
 
+/// Highest ALAC frame length accepted from a stream. Apple streams use 352 to
+/// 4096 samples per frame; 16384 leaves headroom while bounding the decoder's
+/// internal allocations (a malformed `has_size` header could otherwise claim
+/// up to 2^32 samples and either OOM or index out of bounds).
+pub(crate) const MAX_ALAC_SAMPLES_PER_FRAME: u32 = 16_384;
+
+/// Highest channel count the decoder accepts. AirPlay only carries mono/stereo
+/// ALAC, but the constructor is part of the crate-internal API.
+const MAX_ALAC_CHANNELS: i32 = 8;
+
+/// Build the 48-byte `ALACSpecificConfig` block expected by
+/// [`AlacDecoder::set_info`] for AirPlay's *streaming* ALAC.
+///
+/// AirPlay never sends an ALAC magic cookie: SETUP only advertises the format
+/// bits (and sometimes `spf`). These are the conventional Apple streaming
+/// parameters (`pb=40`, `mb=10`, `kb=14`, `maxRun=255`); `frame_length` is
+/// `spf` when the sender provides it.
+#[cfg_attr(not(feature = "ap2"), allow(dead_code))]
+pub(crate) fn alac_specific_config(
+    sample_rate: u32,
+    bit_depth: u8,
+    channels: u8,
+    frame_length: u32,
+) -> [u8; 48] {
+    let mut config = [0u8; 48];
+    config[24..28].copy_from_slice(&frame_length.to_be_bytes()); // frameLength
+    config[29] = bit_depth; // bitDepth
+    config[30] = 40; // pb (rice_history_mult)
+    config[31] = 10; // mb (rice_initial_history)
+    config[32] = 14; // kb (rice_k_modifier)
+    config[33] = channels; // numChannels (not parsed by set_info)
+    config[34..36].copy_from_slice(&255u16.to_be_bytes()); // maxRun
+    config[36..40].copy_from_slice(&0u32.to_be_bytes()); // maxFrameBytes
+    config[40..44].copy_from_slice(&0u32.to_be_bytes()); // avgBitRate
+    config[44..48].copy_from_slice(&sample_rate.to_be_bytes()); // sampleRate
+    config
+}
+
 /// ALAC format selected in an AirPlay 2 `audioFormat` SETUP field.
 // Consumed by the AP2 RTSP SETUP handler (and the unit tests). Dead in the
 // default `--lib` build where neither is compiled.
@@ -135,7 +173,11 @@ fn count_leading_zeros(input: u32) -> u32 {
 }
 
 fn sign_extend_32(val: i32, bits: u32) -> i32 {
-    (val << (32 - bits)) >> (32 - bits)
+    match bits {
+        0 => 0,
+        b if b >= 32 => val,
+        b => (val << (32 - b)) >> (32 - b),
+    }
 }
 
 fn sign_extend_24(val: i32) -> i32 {
@@ -157,16 +199,17 @@ const RICE_THRESHOLD: u32 = 8;
 fn entropy_decode_value(reader: &mut BitReader, read_sample_size: u32, k: u32, rice_kmodifier_mask: u32) -> i32 {
     let mut x: u32 = 0;
     while x <= RICE_THRESHOLD && reader.readbit() != 0 {
-        x += 1;
+        x = x.saturating_add(1);
     }
     if x > RICE_THRESHOLD {
-        let value = reader.readbits(read_sample_size) & (0xffffffffu32 >> (32 - read_sample_size));
-        x = value;
+        let bits = read_sample_size.min(32);
+        let mask = if bits >= 32 { u32::MAX } else { (1u32 << bits) - 1 };
+        x = reader.readbits(bits) & mask;
     } else if k != 1 {
-        let extra_bits = reader.readbits(k);
-        x *= ((1 << k) - 1) & rice_kmodifier_mask;
+        let extra_bits = reader.readbits(k.min(31));
+        x = x.wrapping_mul(((1u32 << k.min(31)) - 1) & rice_kmodifier_mask);
         if extra_bits > 1 {
-            x += extra_bits - 1;
+            x = x.wrapping_add(extra_bits - 1);
         } else {
             reader.unreadbits(1);
         }
@@ -198,6 +241,7 @@ fn parse_subframe_header(
     output_samples: &mut usize,
     output_size: &mut usize,
     bytes_per_sample: usize,
+    max_samples: usize,
 ) -> (u32, u32) {
     reader.readbits(4);
     reader.readbits(12);
@@ -206,8 +250,17 @@ fn parse_subframe_header(
     let is_not_compressed = reader.readbits(1);
 
     if has_size != 0 {
-        *output_samples = reader.readbits(32) as usize;
-        *output_size = *output_samples * bytes_per_sample;
+        let declared = reader.readbits(32) as usize;
+        if declared > max_samples {
+            // A frame cannot legitimately exceed the configured maximum. Reject
+            // it rather than letting a hostile 32-bit length index the decoder
+            // buffers out of bounds.
+            *output_samples = 0;
+            *output_size = 0;
+        } else {
+            *output_samples = declared;
+            *output_size = declared * bytes_per_sample;
+        }
     }
 
     (uncompressed_bytes, is_not_compressed)
@@ -216,7 +269,9 @@ fn parse_subframe_header(
 /// Read one channel's predictor header (type/quant/rice-modifier/coefficients).
 fn read_predictor_header(reader: &mut BitReader) -> PredictorHeader {
     let _pred_type = reader.readbits(4);
-    let pred_quant = reader.readbits(4);
+    // A quantization of 0 would make the FIR loop shift by -1; valid Apple
+    // streams use 4..=15, so clamp malformed values instead of panicking.
+    let pred_quant = reader.readbits(4).max(1);
     let ricemod = reader.readbits(3);
     let pred_num = reader.readbits(5) as usize;
     let mut pred_table = [0i16; 32];
@@ -260,7 +315,12 @@ fn entropy_rice_decode(
         output[i] = final_value;
         sign_modifier = 0;
 
-        history += decoded_value * rice.history_mult as i32 - ((history * rice.history_mult as i32) >> 9);
+        // Wrapping arithmetic mirrors the reference C implementation's 32-bit
+        // `int` behaviour without panicking on overflow in debug builds.
+        let history_mult = rice.history_mult as i32;
+        history = history
+            .wrapping_add(decoded_value.wrapping_mul(history_mult))
+            .wrapping_sub(history.wrapping_mul(history_mult) >> 9);
         if decoded_value > 0xFFFF {
             history = 0xFFFF;
         }
@@ -328,35 +388,34 @@ fn predictor_decompress_fir_adapt(
             let mut sum = 0i64;
 
             for j in 0..predictor_coef_num {
-                sum += (buffer_out[off + predictor_coef_num - j] - buffer_out[off]) as i64
+                sum += (buffer_out[off + predictor_coef_num - j] as i64 - buffer_out[off] as i64)
                     * predictor_coef_table[j] as i64;
             }
 
-            let mut outval = ((1i64 << (predictor_quantitization - 1)) + sum) >> predictor_quantitization;
+            let quant = predictor_quantitization.max(1);
+            let mut outval = ((1i64 << (quant - 1)) + sum) >> quant;
             outval += buffer_out[off] as i64 + error_val as i64;
             let outval = sign_extend_32(outval as i32, readsamplesize);
             buffer_out[off + predictor_coef_num + 1] = outval;
 
             if error_val > 0 {
                 let mut pn = predictor_coef_num as i32 - 1;
-                let mut ev = error_val;
+                let mut ev = error_val as i64;
                 while pn >= 0 && ev > 0 {
-                    let val = buffer_out[off] - buffer_out[off + predictor_coef_num - pn as usize];
-                    let sign = sign_only(val);
-                    predictor_coef_table[pn as usize] -= sign as i16;
-                    let val = val * sign;
-                    ev -= (val >> predictor_quantitization) * (predictor_coef_num as i32 - pn);
+                    let val = buffer_out[off] as i64 - buffer_out[off + predictor_coef_num - pn as usize] as i64;
+                    let sign = sign_only(val as i32);
+                    predictor_coef_table[pn as usize] = predictor_coef_table[pn as usize].wrapping_sub(sign as i16);
+                    ev -= ((val * sign as i64) >> quant) * (predictor_coef_num as i32 - pn) as i64;
                     pn -= 1;
                 }
             } else if error_val < 0 {
                 let mut pn = predictor_coef_num as i32 - 1;
-                let mut ev = error_val;
+                let mut ev = error_val as i64;
                 while pn >= 0 && ev < 0 {
-                    let val = buffer_out[off] - buffer_out[off + predictor_coef_num - pn as usize];
-                    let sign = -sign_only(val);
-                    predictor_coef_table[pn as usize] -= sign as i16;
-                    let val = val * sign;
-                    ev -= (val >> predictor_quantitization) * (predictor_coef_num as i32 - pn);
+                    let val = buffer_out[off] as i64 - buffer_out[off + predictor_coef_num - pn as usize] as i64;
+                    let sign = -sign_only(val as i32);
+                    predictor_coef_table[pn as usize] = predictor_coef_table[pn as usize].wrapping_sub(sign as i16);
+                    ev -= ((val * sign as i64) >> quant) * (predictor_coef_num as i32 - pn) as i64;
                     pn -= 1;
                 }
             }
@@ -382,11 +441,14 @@ fn deinterlace_16(
     };
 
     for i in 0..num_samples {
+        let shift = shift.min(31);
         let (left, right) = if leftweight != 0 {
             let mid = buf_a[i];
             let diff = buf_b[i];
-            let r = mid - ((diff * leftweight as i32) >> shift);
-            (r + diff, r)
+            // i64 math: both the leftweight product and the mid-diff subtraction
+            // can overflow a 32-bit int on malformed input.
+            let r = (mid as i64 - ((diff as i64 * leftweight as i64) >> shift)) as i32;
+            (r.wrapping_add(diff), r)
         } else {
             (buf_a[i], buf_b[i])
         };
@@ -412,19 +474,21 @@ struct Deinterlace24Params<'a> {
 
 fn deinterlace_24(p: &Deinterlace24Params, out: &mut [u8]) {
     for i in 0..p.num_samples {
+        let shift = p.shift.min(31);
         let (mut left, mut right) = if p.leftweight != 0 {
             let mid = p.buf_a[i];
             let diff = p.buf_b[i];
-            let r = mid - ((diff * p.leftweight as i32) >> p.shift);
-            (r + diff, r)
+            let r = (mid as i64 - ((diff as i64 * p.leftweight as i64) >> shift)) as i32;
+            (r.wrapping_add(diff), r)
         } else {
             (p.buf_a[i], p.buf_b[i])
         };
 
         if p.uncompressed_bytes > 0 {
-            let mask = !(0xFFFFFFFFu32 << (p.uncompressed_bytes * 8)) as i32;
-            left = (left << (p.uncompressed_bytes * 8)) | (p.uncomp_a[i] & mask);
-            right = (right << (p.uncompressed_bytes * 8)) | (p.uncomp_b[i] & mask);
+            let shift = (p.uncompressed_bytes * 8).min(31);
+            let mask = !(0xFFFFFFFFu32 << shift) as i32;
+            left = (left << shift) | (p.uncomp_a[i] & mask);
+            right = (right << shift) | (p.uncomp_b[i] & mask);
         }
 
         let base = i * p.num_channels * 3;
@@ -462,7 +526,18 @@ pub(crate) struct AlacDecoder {
 
 impl AlacDecoder {
     /// Create a new ALAC decoder for the given sample size (bits) and channel count.
+    ///
+    /// Values outside the formats AirPlay actually carries are clamped so a
+    /// malformed SETUP cannot make the decoder index out of bounds.
     pub(crate) fn new(sample_size: i32, num_channels: i32) -> Self {
+        let num_channels = num_channels.clamp(1, MAX_ALAC_CHANNELS);
+        let sample_size = match sample_size {
+            16 | 24 => sample_size,
+            other => {
+                tracing::warn!(sample_size = other, "Unsupported ALAC sample size; using 16-bit");
+                16
+            }
+        };
         Self {
             num_channels,
             bytes_per_sample: (sample_size / 8) * num_channels,
@@ -485,6 +560,10 @@ impl AlacDecoder {
     }
 
     /// Initialize the decoder with a 48-byte ALACSpecificConfig block.
+    ///
+    /// Malformed configurations are rejected (leaving the decoder unconfigured
+    /// so `decode_frame` returns 0) instead of trusting lengths/bit depths that
+    /// would later index out of bounds.
     pub(crate) fn set_info(&mut self, config: &[u8]) {
         // The ALACSpecificConfig fields live in config[24..48]; ignore anything
         // shorter rather than panic on out-of-bounds indexing (the RTSP caller
@@ -493,25 +572,62 @@ impl AlacDecoder {
             return;
         }
         let mut p = 24; // skip: size(4) + frma(4) + alac(4) + size(4) + alac(4) + 0(4)
-        self.max_samples_per_frame = u32::from_be_bytes([config[p], config[p + 1], config[p + 2], config[p + 3]]);
+        let max_samples_per_frame =
+            u32::from_be_bytes([config[p], config[p + 1], config[p + 2], config[p + 3]]);
         p += 4;
-        p += 1; // 7a
-        self.sample_size_config = config[p];
+        p += 1; // 7a (compatibleVersion)
+        let sample_size_config = config[p];
         p += 1;
-        self.rice_history_mult = config[p];
+        let rice_history_mult = config[p];
         p += 1;
-        self.rice_initial_history = config[p];
+        let rice_initial_history = config[p];
         p += 1;
-        self.rice_k_modifier = config[p];
+        let rice_k_modifier = config[p];
         p += 1;
-        p += 1; // 7f
-        self.max_run = u16::from_be_bytes([config[p], config[p + 1]]);
+        p += 1; // 7f (numChannels; the constructor already carries the channel count)
+        let max_run = u16::from_be_bytes([config[p], config[p + 1]]);
         p += 2;
-        self.max_frame_bytes = u32::from_be_bytes([config[p], config[p + 1], config[p + 2], config[p + 3]]);
+        let max_frame_bytes = u32::from_be_bytes([config[p], config[p + 1], config[p + 2], config[p + 3]]);
         p += 4;
-        self.avg_bit_rate = u32::from_be_bytes([config[p], config[p + 1], config[p + 2], config[p + 3]]);
+        let avg_bit_rate = u32::from_be_bytes([config[p], config[p + 1], config[p + 2], config[p + 3]]);
         p += 4;
-        self.sample_rate = u32::from_be_bytes([config[p], config[p + 1], config[p + 2], config[p + 3]]);
+        let sample_rate = u32::from_be_bytes([config[p], config[p + 1], config[p + 2], config[p + 3]]);
+
+        if max_samples_per_frame == 0 || max_samples_per_frame > MAX_ALAC_SAMPLES_PER_FRAME {
+            tracing::warn!(
+                max_samples_per_frame,
+                max = MAX_ALAC_SAMPLES_PER_FRAME,
+                "Rejecting ALAC config with an out-of-range frame length"
+            );
+            self.max_samples_per_frame = 0;
+            return;
+        }
+        if !matches!(sample_size_config, 16 | 24) {
+            tracing::warn!(
+                sample_size_config,
+                "Rejecting ALAC config with an unsupported bit depth"
+            );
+            self.max_samples_per_frame = 0;
+            return;
+        }
+        if rice_k_modifier > 24 {
+            tracing::warn!(
+                rice_k_modifier,
+                "Rejecting ALAC config with an out-of-range rice k modifier"
+            );
+            self.max_samples_per_frame = 0;
+            return;
+        }
+
+        self.max_samples_per_frame = max_samples_per_frame;
+        self.sample_size_config = sample_size_config;
+        self.rice_history_mult = rice_history_mult;
+        self.rice_initial_history = rice_initial_history;
+        self.rice_k_modifier = rice_k_modifier;
+        self.max_run = max_run;
+        self.max_frame_bytes = max_frame_bytes;
+        self.avg_bit_rate = avg_bit_rate;
+        self.sample_rate = sample_rate;
         self.allocate_buffers();
     }
 
@@ -526,9 +642,42 @@ impl AlacDecoder {
         self.uncompressed_bytes_buffer_b = vec![0i32; n];
     }
 
+    /// Configured sample rate in Hz (0 when unconfigured).
+    #[cfg(test)]
+    pub(crate) fn sample_rate(&self) -> u32 {
+        self.sample_rate
+    }
+
+    /// Configured bit depth (16 or 24; 0 when unconfigured).
+    #[cfg(test)]
+    pub(crate) fn sample_size_config(&self) -> u8 {
+        self.sample_size_config
+    }
+
+    /// Configured maximum samples per frame (0 when unconfigured).
+    #[cfg(test)]
+    pub(crate) fn max_samples_per_frame(&self) -> u32 {
+        self.max_samples_per_frame
+    }
+
+    /// Whether the decoder has a usable (validated) configuration.
+    #[cfg_attr(not(feature = "ap2"), allow(dead_code))]
+    pub(crate) fn is_configured(&self) -> bool {
+        self.max_samples_per_frame > 0
+            && self.sample_size_config != 0
+            && self.outputsamples_buffer_a.len() >= self.max_samples_per_frame as usize
+    }
+
     /// Decode one ALAC frame. Returns the number of bytes written to output (little-endian PCM).
+    ///
+    /// All frame lengths and channel counts are validated against the configured
+    /// limits before any buffer is indexed; malformed input returns 0.
     pub(crate) fn decode_frame(&mut self, input: &[u8], output: &mut [u8]) -> usize {
-        if self.max_samples_per_frame == 0 || self.bytes_per_sample <= 0 {
+        if self.max_samples_per_frame == 0 || self.bytes_per_sample <= 0 || input.is_empty() {
+            return 0;
+        }
+        let max_output_size = self.max_samples_per_frame as usize * self.bytes_per_sample as usize;
+        if output.len() < max_output_size {
             return 0;
         }
 
@@ -539,8 +688,12 @@ impl AlacDecoder {
 
         match channels {
             0 => self.decode_mono(&mut reader, output, &mut output_samples, &mut output_size),
-            1 => self.decode_stereo(&mut reader, output, &mut output_samples, &mut output_size),
-            _ => {}
+            1 if self.num_channels >= 2 => {
+                self.decode_stereo(&mut reader, output, &mut output_samples, &mut output_size)
+            }
+            // A stereo subframe cannot be written by a mono decoder (and vice
+            // versa); any other channel count is not valid for ALAC.
+            _ => output_size = 0,
         }
         output_size
     }
@@ -597,7 +750,7 @@ impl AlacDecoder {
             initial_history: self.rice_initial_history as u32,
             k_modifier: self.rice_k_modifier as u32,
             history_mult: hdr.ricemod * self.rice_history_mult as u32 / 4,
-            k_modifier_mask: (1 << self.rice_k_modifier) - 1,
+            k_modifier_mask: (1u32 << self.rice_k_modifier.min(24)) - 1,
         };
         let (prederr, out) = if channel_b {
             (&mut self.predicterror_buffer_b, &mut self.outputsamples_buffer_b)
@@ -606,13 +759,21 @@ impl AlacDecoder {
         };
         entropy_rice_decode(reader, prederr, output_samples, readsamplesize, &rice);
         let mut pred_table = hdr.pred_table;
+        // A malicious frame may declare fewer samples than the predictor warm-up
+        // needs; clamp so the warm-up/FIR loops stay inside the decoded sample
+        // range (`0x1f` is the "no predictor" sentinel and is handled there).
+        let predictor_coef_num = if hdr.pred_num == 0x1f {
+            0x1f
+        } else {
+            hdr.pred_num.min(output_samples.saturating_sub(1)).min(30)
+        };
         predictor_decompress_fir_adapt(
             &prederr.clone(),
             out,
             output_samples,
             readsamplesize,
             &mut pred_table,
-            hdr.pred_num,
+            predictor_coef_num,
             hdr.pred_quant as i32,
         );
     }
@@ -624,9 +785,19 @@ impl AlacDecoder {
         output_samples: &mut usize,
         output_size: &mut usize,
     ) {
-        let (uncompressed_bytes, is_not_compressed) =
-            parse_subframe_header(reader, output_samples, output_size, self.bytes_per_sample as usize);
+        let (uncompressed_bytes, is_not_compressed) = parse_subframe_header(
+            reader,
+            output_samples,
+            output_size,
+            self.bytes_per_sample as usize,
+            self.max_samples_per_frame as usize,
+        );
         if *output_samples == 0 {
+            *output_size = 0;
+            return;
+        }
+        if uncompressed_bytes * 8 >= self.sample_size_config as u32 {
+            *output_samples = 0;
             *output_size = 0;
             return;
         }
@@ -695,9 +866,19 @@ impl AlacDecoder {
         output_samples: &mut usize,
         output_size: &mut usize,
     ) {
-        let (uncompressed_bytes, is_not_compressed) =
-            parse_subframe_header(reader, output_samples, output_size, self.bytes_per_sample as usize);
+        let (uncompressed_bytes, is_not_compressed) = parse_subframe_header(
+            reader,
+            output_samples,
+            output_size,
+            self.bytes_per_sample as usize,
+            self.max_samples_per_frame as usize,
+        );
         if *output_samples == 0 {
+            *output_size = 0;
+            return;
+        }
+        if uncompressed_bytes * 8 > self.sample_size_config as u32 {
+            *output_samples = 0;
             *output_size = 0;
             return;
         }
@@ -707,7 +888,10 @@ impl AlacDecoder {
         let mut interlacing_leftweight = 0u8;
 
         if is_not_compressed == 0 {
-            interlacing_shift = reader.readbits(8) as u8;
+            // The interlacing shift is a 8-bit field on the wire but a shift
+            // amount for a 32-bit integer; clamp it so malformed frames cannot
+            // trigger a panicking shift.
+            interlacing_shift = (reader.readbits(8) as u8).min(31);
             interlacing_leftweight = reader.readbits(8) as u8;
 
             // Both predictor headers are read before either channel is decoded.
@@ -1048,5 +1232,152 @@ mod decode_tests {
     #[test]
     fn golden_mono_compressed_matches_apple_encoder() {
         check_golden(include_bytes!("../../tests/data/alac/mono.alac"));
+    }
+
+    // --- Hardening: malformed streams must be rejected, never panic. ---
+
+    #[test]
+    fn streaming_config_builder_matches_apple_defaults() {
+        let config = alac_specific_config(48_000, 24, 2, 352);
+        let mut dec = AlacDecoder::new(24, 2);
+        dec.set_info(&config);
+
+        assert_eq!(dec.sample_rate, 48_000);
+        assert_eq!(dec.sample_size_config, 24);
+        assert_eq!(dec.max_samples_per_frame, 352);
+        assert_eq!(dec.rice_history_mult, 40);
+        assert_eq!(dec.rice_initial_history, 10);
+        assert_eq!(dec.rice_k_modifier, 14);
+        assert_eq!(dec.max_run, 255);
+    }
+
+    #[test]
+    fn rejects_oversized_frame_length_config() {
+        let mut config = alac_specific_config(44_100, 16, 2, MAX_ALAC_SAMPLES_PER_FRAME + 1);
+        config[24..28].copy_from_slice(&(MAX_ALAC_SAMPLES_PER_FRAME + 1).to_be_bytes());
+        let mut dec = AlacDecoder::new(16, 2);
+        dec.set_info(&config);
+        assert_eq!(dec.max_samples_per_frame, 0, "oversized frame length must be rejected");
+        assert!(dec.decode_frame_f32(&[0u8; 16]).is_none());
+    }
+
+    #[test]
+    fn rejects_unsupported_bit_depth_and_rice_parameter() {
+        let mut config = alac_specific_config(44_100, 16, 2, 352);
+        config[29] = 20; // sample_size_config
+        let mut dec = AlacDecoder::new(16, 2);
+        dec.set_info(&config);
+        assert_eq!(dec.max_samples_per_frame, 0);
+
+        let mut config = alac_specific_config(44_100, 16, 2, 352);
+        config[32] = 31; // rice k modifier: would shift by >= 32
+        let mut dec = AlacDecoder::new(16, 2);
+        dec.set_info(&config);
+        assert_eq!(dec.max_samples_per_frame, 0);
+
+        // set_info must tolerate a short/absent cookie without panicking.
+        let mut dec = AlacDecoder::new(16, 2);
+        dec.set_info(&[]);
+        dec.set_info(&[0u8; 8]);
+        assert_eq!(dec.max_samples_per_frame, 0);
+    }
+
+    #[test]
+    fn oversized_declared_frame_size_is_rejected() {
+        let mut dec = AlacDecoder::new(16, 2);
+        dec.set_info(&config_16(4));
+
+        let mut w = BitWriter::new();
+        w.put(1, 3); // stereo
+        w.put(0, 4);
+        w.put(0, 12);
+        w.put(1, 1); // has_size = 1
+        w.put(0, 2); // uncompressed_bytes
+        w.put(1, 1); // is_not_compressed
+        w.put(100_000, 32); // declared sample count far beyond max_frames
+
+        let mut out = [0u8; 64];
+        assert_eq!(dec.decode_frame(&w.bytes, &mut out), 0);
+        assert!(dec.decode_frame_f32(&w.bytes).is_none());
+    }
+
+    #[test]
+    fn mismatched_channel_layout_is_rejected() {
+        let mut dec = AlacDecoder::new(16, 1); // mono decoder
+        dec.set_info(&config_16(4));
+
+        let mut w = BitWriter::new();
+        w.put(1, 3); // stereo subframe on a mono decoder
+        w.put(0, 4);
+        w.put(0, 12);
+        w.put(0, 1);
+        w.put(0, 2);
+        w.put(1, 1);
+        w.put(0, 32);
+
+        let mut out = [0u8; 64];
+        assert_eq!(dec.decode_frame(&w.bytes, &mut out), 0);
+    }
+
+    #[test]
+    fn too_small_output_buffer_returns_zero() {
+        let mut dec = AlacDecoder::new(16, 2);
+        dec.set_info(&config_16(4));
+
+        let mut w = BitWriter::new();
+        w.put(1, 3);
+        w.put(0, 4);
+        w.put(0, 12);
+        w.put(0, 1);
+        w.put(0, 2);
+        w.put(1, 1);
+        for i in 0..4 {
+            w.put(i as u32, 16);
+            w.put(i as u32, 16);
+        }
+
+        let mut tiny = [0u8; 4];
+        assert_eq!(dec.decode_frame(&w.bytes, &mut tiny), 0);
+    }
+
+    /// Deterministic xorshift so fuzz-style tests are reproducible.
+    fn xorshift(state: &mut u64) -> u64 {
+        let mut x = *state;
+        x ^= x << 13;
+        x ^= x >> 7;
+        x ^= x << 17;
+        *state = x;
+        x
+    }
+
+    #[test]
+    fn random_frames_and_configs_never_panic() {
+        let mut seed = 0x1234_5678_9abc_def0u64;
+        for _ in 0..2_000 {
+            let len = (xorshift(&mut seed) % 257) as usize;
+            let mut frame = vec![0u8; len];
+            for byte in &mut frame {
+                *byte = xorshift(&mut seed) as u8;
+            }
+
+            let mut config = [0u8; 48];
+            for byte in &mut config {
+                *byte = xorshift(&mut seed) as u8;
+            }
+            // Keep the frame length/bit depth inside the supported range half of
+            // the time so the decode paths (not only set_info) are exercised.
+            if seed & 1 == 0 {
+                config[24..28].copy_from_slice(&((xorshift(&mut seed) % 512 + 1) as u32).to_be_bytes());
+                config[29] = if seed & 2 == 0 { 16 } else { 24 };
+                config[32] = (xorshift(&mut seed) % 25) as u8;
+            }
+
+            let mut dec = AlacDecoder::new(if seed & 4 == 0 { 16 } else { 24 }, 2);
+            dec.set_info(&config);
+            let _ = dec.decode_frame_f32(&frame);
+
+            let mut out = [0u8; 8192];
+            let _ = dec.decode_frame(&frame, &mut out);
+        }
     }
 }

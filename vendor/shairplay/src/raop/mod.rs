@@ -19,6 +19,8 @@ pub mod hls;
 pub(crate) mod ntp;
 #[cfg(feature = "ap2")]
 pub(crate) mod realtime_audio;
+#[cfg(feature = "ap2")]
+pub(crate) mod rtcp;
 pub(crate) mod rtp;
 mod rtsp;
 #[cfg(feature = "video")]

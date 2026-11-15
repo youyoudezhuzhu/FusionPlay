@@ -425,10 +425,25 @@ fn setup_streams(conn: &mut RaopConnection, streams: &[plist::Value]) -> Option<
         }
     }
 
-    // Control port (shared across streams)
+    // Control port (shared across streams). Keep the UDP socket alive and listen
+    // on it for the lifetime of the RTSP connection: AP2 senders send RTCP time
+    // announces here, which map their RTP timeline onto the PTP master clock.
     let ctrl_sock = std::net::UdpSocket::bind(bind_addr_for(conn)).ok()?;
+    ctrl_sock.set_nonblocking(true).ok()?;
     let ctrl_port = ctrl_sock.local_addr().ok()?.port();
-    drop(ctrl_sock);
+    match tokio::net::UdpSocket::from_std(ctrl_sock) {
+        Ok(ctrl_socket) => {
+            // Replacing any previous listener drops (and aborts) the old task.
+            conn.rtcp_listener = Some(crate::raop::rtcp::RtcpListener::spawn(
+                ctrl_socket,
+                std::sync::Arc::clone(&conn.shared.rtcp_announce),
+            ));
+            tracing::debug!(ctrl_port, "AP2 RTCP control channel listening");
+        }
+        Err(error) => {
+            tracing::warn!(%error, ctrl_port, "AP2 RTCP control channel could not start");
+        }
+    }
     stream_resp.insert("controlPort".into(), plist::Value::Integer(ctrl_port.into()));
 
     let mut resp_dict = plist::Dictionary::new();
@@ -774,9 +789,38 @@ fn setup_stream_buffered(
         max_channels: conn.shared.output_max_channels,
     };
 
+    // The SSRC carried on each RTP packet is the authoritative format, but the
+    // SETUP's format bits and `spf` (samples per frame) describe the exact ALAC
+    // decoder configuration the sender negotiated.
+    let alac_format = u32::try_from(audio_format)
+        .ok()
+        .and_then(AlacFormat::from_audio_format);
+    if alac_format.is_none() && audio_format != 0 {
+        tracing::debug!(
+            audio_format = format!("{audio_format:#x}"),
+            "Buffered audio SETUP advertises a non-ALAC format; decoding follows each packet's SSRC"
+        );
+    }
+    let samples_per_frame = stream0
+        .get("spf")
+        .and_then(|value| value.as_unsigned_integer())
+        .map(|value| value.min(u64::from(u32::MAX)) as u32);
+    tracing::info!(
+        audio_format = format!("{audio_format:#x}"),
+        alac = ?alac_format,
+        ?samples_per_frame,
+        "AP2 buffered audio format"
+    );
+    let source_config = crate::raop::buffered_audio::BufferedSourceConfig {
+        alac_format,
+        samples_per_frame,
+        time_announce: std::sync::Arc::clone(&conn.shared.rtcp_announce),
+    };
+
     let proc = crate::raop::buffered_audio::BufferedAudioProcessor {
         listener,
         ptp_clock: conn.shared.ptp_clock.clone(),
+        source_config,
     };
     let cmd_tx = proc.start(shk_arr, output_config, handler);
     conn.playout_cmd = Some(cmd_tx.clone());
@@ -1035,7 +1079,7 @@ fn apply_rate_anchor_update(
 #[cfg(feature = "ap2")]
 /// AP2 SETPEERS: receive PTP peer addresses (informational).
 pub(crate) fn handle_set_peers(
-    _conn: &mut RaopConnection,
+    conn: &mut RaopConnection,
     request: &HttpRequest,
     _response: &mut HttpResponse,
 ) -> Option<Vec<u8>> {
@@ -1043,8 +1087,40 @@ pub(crate) fn handle_set_peers(
         && let Ok(plist_val) = plist::from_bytes::<plist::Value>(data)
         && let Some(arr) = plist_val.as_array()
     {
-        let peers: Vec<&str> = arr.iter().filter_map(|v| v.as_string()).collect();
-        tracing::debug!(?peers, "SETPEERS");
+        let peers: Vec<String> = arr
+            .iter()
+            .filter_map(|value| value.as_string().map(str::to_owned))
+            .collect();
+        if !peers.is_empty() {
+            // Keep the last group membership for diagnostics / future multi-room
+            // routing. Single-device playback deliberately does not depend on it.
+            if let Ok(mut slot) = conn.shared.peers.lock() {
+                *slot = peers.clone();
+            }
+            tracing::debug!(?peers, "SETPEERS");
+        }
+    }
+    None
+}
+
+#[cfg(feature = "ap2")]
+/// SETMAGICCOOKIE (and POST /SETMAGICCOOKIE): acknowledge the sender's opaque
+/// cookie. First observed in iOS 17 betas; iOS/macOS 27 send it during AP2
+/// setup. The payload is a binary plist the receiver does not need to act on.
+pub(crate) fn handle_magic_cookie(
+    _conn: &mut RaopConnection,
+    request: &HttpRequest,
+    _response: &mut HttpResponse,
+) -> Option<Vec<u8>> {
+    let len = request.data().map_or(0, <[u8]>::len);
+    tracing::debug!(len, url = request.url().unwrap_or(""), "SETMAGICCOOKIE");
+    if let Some(data) = request.data()
+        && let Ok(plist::Value::Dictionary(dict)) = plist::from_bytes::<plist::Value>(data)
+    {
+        tracing::debug!(
+            keys = ?dict.keys().collect::<Vec<_>>(),
+            "SETMAGICCOOKIE plist"
+        );
     }
     None
 }
@@ -1398,6 +1474,63 @@ pub(crate) fn handle_audio_mode(
 }
 
 /// Verifies the AP2 RECORD `Audio-Latency` header follows the configured value.
+#[cfg(all(test, feature = "ap2"))]
+mod peers_tests {
+    use super::handle_set_peers;
+    use crate::proto::http::HttpRequest;
+    use crate::proto::http::HttpResponse;
+    use crate::raop::handlers_ap1::tests::test_connection;
+    use crate::raop::{AudioFormat, AudioHandler, AudioSession};
+    use std::sync::Arc;
+
+    struct NoopSession;
+
+    impl AudioSession for NoopSession {
+        fn audio_process(&mut self, _samples: &[f32]) {}
+    }
+
+    struct NoopHandler;
+
+    impl AudioHandler for NoopHandler {
+        fn audio_init(&self, _format: AudioFormat) -> Box<dyn AudioSession> {
+            Box::new(NoopSession)
+        }
+    }
+
+    #[test]
+    fn setpeers_records_group_membership() {
+        let mut conn = test_connection(Arc::new(NoopHandler));
+        let peers = vec!["AAAA-BBBB".to_string(), "CCCC-DDDD".to_string()];
+        let mut request = HttpRequest::new();
+        let mut body = Vec::new();
+        plist::to_writer_binary(&mut body, &plist::Value::Array(
+            peers.iter().map(|peer| plist::Value::String(peer.clone())).collect(),
+        ))
+        .unwrap();
+        request
+            .add_data(b"SETPEERSX * RTSP/1.0\r\nCSeq: 1\r\nContent-Length: 0\r\n\r\n")
+            .unwrap();
+        // Override the body with the binary plist (add_data parses the RTSP framing).
+        let mut request_with_body = HttpRequest::new();
+        let header = format!(
+            "SETPEERSX * RTSP/1.0\r\nCSeq: 1\r\nContent-Length: {}\r\n\r\n",
+            body.len()
+        );
+        let mut raw = header.into_bytes();
+        raw.extend_from_slice(&body);
+        request_with_body.add_data(&raw).unwrap();
+
+        let mut response = HttpResponse::new("RTSP/1.0", 200, "OK");
+        assert!(handle_set_peers(&mut conn, &request_with_body, &mut response).is_none());
+        assert_eq!(*conn.shared.peers.lock().unwrap(), peers);
+
+        // A request without a peer array must not panic or clear the state.
+        let mut response = HttpResponse::new("RTSP/1.0", 200, "OK");
+        assert!(handle_set_peers(&mut conn, &request, &mut response).is_none());
+        assert_eq!(*conn.shared.peers.lock().unwrap(), peers);
+    }
+}
+
 #[cfg(all(test, feature = "ap2"))]
 mod record_latency_tests {
     use super::handle_record;

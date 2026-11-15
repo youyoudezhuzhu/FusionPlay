@@ -9,16 +9,122 @@
 | Normal HomeKit pairing | — | Configurable PIN, PairingStore key persistence |
 | Encrypted RTSP transport | — | ChaCha20-Poly1305, HKDF-SHA512 key derivation |
 | FairPlay handshake | — | Full fp-setup M1/M2 |
-| PTP timing | — | ⚠ Client implemented but **not wired** to playout — see [Open / Unwired](#open--unwired--scaffolding-present-not-connected) |
-| Buffered audio | 103 | AAC decode (symphonia), per-packet ChaCha20 decrypt |
+| PTP timing | — | Sync/Follow_Up/Announce selection + Delay_Req/Resp path delay; RTCP time announces feed playout anchors (no NQPTP) |
+| Buffered audio | 103 | AAC (symphonia) **and ALAC** (crate decoder) decode, format negotiated per RTP SSRC, per-packet ChaCha20 decrypt |
 | Multichannel | 103 | 5.1/7.1 AAC → stereo mixdown (ITU-R BS.775) |
 | Resampling | 103 | rubato StreamResampler, any rate → output rate |
-| Timed playout buffer | 103 | Pause/resume/flush, stale frame discard |
+| Timed playout buffer | 103 | Pause/resume/flush, stale frame discard, 64-bit wrap-aware RTP timeline |
 | Metadata forwarding | — | Volume, artwork, progress, DMAP track info |
+| SETMAGICCOOKIE | — | `POST /SETMAGICCOOKIE` and bare RTSP method acknowledged (iOS/macOS 27) |
+| RTCP control channel | 103/130 | Per-connection UDP control port listened to; time announce parsed |
+| Group peers | — | SETPEERS/SETPEERSX values recorded (diagnostics; no routing/logic) |
 | Event channel | — | Bidirectional encrypted TCP; `updateInfo` sent on connect. Ongoing outbound event reporting **unwired** (see Open) |
 | Realtime audio | 96 | ALAC decode, ChaCha20 decrypt, immediate delivery |
 | **Video (screen mirroring)** | **110** | **AES-128-CTR decrypt, H.264 decode, working on iOS 18** |
 | Unified output | — | Always F32LE interleaved PCM to app |
+
+
+## AP2 Protocol Completeness Update (2026-11)
+
+This vendored copy additionally implements the following, targeting iOS/macOS
+27 senders. Items marked *best effort* may need real-device verification.
+
+### Buffered ALAC (type 103)
+
+* The SETUP's `audioFormat` bits are parsed with `AlacFormat::from_audio_format`
+  and `spf` is read when present; both are handed to the buffered processor.
+* Each buffered TCP connection selects its decoder from the packet SSRC:
+  `0x0000FACE` (ALAC 44.1/16) and `0x15000000` (ALAC 48/24) use the crate's
+  ALAC decoder; the AAC SSRCs keep the symphonia path. Apple may switch formats
+  mid-stream; the decoder and resampler are rebuilt on format change.
+* ALAC streaming parameters: standard `ALACSpecificConfig` (frameLength =
+  SETUP `spf` or 4096, `pb=40`, `mb=10`, `kb=14`, `maxRun=255`; sample
+  rate/bit depth/channels from the SSRC, refined by `audioFormat`).
+* Decoder construction failures call `AudioHandler::on_error` with
+  `CodecError::UnsupportedFormat`; no silent fallback to the previous decoder.
+* `SourceAudioFormat` reports ALAC/AAC, bit depth, sample rate, and channels to
+  the host so now-playing quality data is accurate.
+
+### Unknown SSRC / SSRC_NONE (AirPlay 2, OS 27)
+
+Buffered-audio packets with an unrecognized SSRC (including `SSRC_NONE = 0`,
+used by ACK/flush control packets) are skipped before decryption/decoding. They
+do not update the current format, are never fed to the previous decoder, and do
+not establish the playout anchor. Only the first *valid* audio packet anchors
+playback. This mirrors shairport-sync's OS-27 fix (unknown SSRC packets must
+not stall a stream whose first block has an unrecognized format).
+
+### SETMAGICCOOKIE
+
+Acknowledged for both shapes seen in the wild: `POST /SETMAGICCOOKIE` (iOS/macOS
+27) and a bare `SETMAGICCOOKIE *` RTSP method. The binary-plist body is parsed
+for debug logging only; the cookie is opaque and playback does not depend on
+it. `OPTIONS` advertises `SETMAGICCOOKIE` and `SETPEERSX`.
+
+### RTCP control channel
+
+The `controlPort` returned in the type 103 SETUP response is now kept open for
+the connection's lifetime and read by a tokio task (`src/raop/rtcp.rs`):
+
+* Type 215 (`TIME_ANNOUNCE_PTP`, 28 bytes) and type 212
+  (`TIME_ANNOUNCE_NTP`, 20/32 bytes) are parsed, including compound packets and
+  padding; Sender/Receiver Reports and retransmit packets are drained.
+* The latest PTP announce is stored in `RaopShared::rtcp_announce`. When the
+  playout has no authoritative `SETRATEANCHORTIME` anchor yet, the announce is
+  converted to a local deadline through `PtpClock` and used as a fallback
+  anchor. NTP announces and matches without a synchronised PTP master are
+  ignored, so the existing local fallback is preserved.
+* The listener is owned by a `Drop` guard: RTSP teardown, stream replacement,
+  or a failed connection closes the socket and aborts the task (no leaks).
+* When `SETRATEANCHORTIME`'s `networkTimeTimelineID` does not match the PTP
+  sink's master id, the clock identity advertised by the RTCP announce is used
+  as a fallback timeline id.
+
+### Long-running playback (64-bit RTP timeline)
+
+RTP timestamps were previously stored as `u32` and compared with signed
+differences, so playback misbehaved past 2^31 frames (~13.5 h at 44.1 kHz) and
+on timestamp wraparound. The buffered playout now extends timestamps onto a
+monotonic 64-bit timeline (wrap-aware, reorder-safe, with a bounded rebase when
+the sender restarts its timeline for a seek/new track). Buffer keys, anchors,
+playout targets and flush ranges all use the extended timeline.
+
+Decoded PCM is capped at ~20 s per stream to bound memory if playout stops
+consuming it.
+
+### PTP (best effort, no NQPTP)
+
+`src/net/ptp.rs` now also:
+
+* selects a master from Announce packets (priority1/priority2/stepsRemoved/
+  grandmaster id), resetting pending Syncs and offset smoothing when the master
+  changes, and ignores Follow_Up messages from non-selected masters;
+* measures path delay with rate-limited Delay_Req probes and Delay_Resp
+  round-trip estimates (one-way = RTT/2, implausible >100 ms dropped), and adds
+  the smoothed delay to Follow_Up offsets;
+* keeps Sync/Follow_Up offset smoothing and fallback behaviour unchanged when no
+  announce/delay information is available.
+
+**Limitations:** this is not NQPTP. Without a shared PTP daemon there is no
+cross-process clock discipline, so multi-room playback with other receivers is
+best effort, not guaranteed sample-accurate. The Delay_Req target is the source
+address of the last Sync; a master that does not answer keeps the pre-existing
+offset-only behaviour. No iOS/macOS 27 hardware was available to validate the
+27-specific paths (SETMAGICCOOKIE, buffered ALAC from Apple Music, RTCP timing)
+end to end.
+
+### Security hardening
+
+* ALAC decoder: frame length bounded (≤16384 samples), bit depth restricted to
+  16/24, rice parameters validated, declared per-frame sample counts checked
+  against the configured maximum, channel layouts validated, output buffers
+  sized-checked, and all decoder arithmetic uses wrapping/i64 math so malformed
+  input cannot panic or index out of bounds. A deterministic fuzz-style test
+  decodes 2000 random frames/configs.
+* RTCP parsing tolerates truncated/malformed/padded datagrams (fuzz-tested).
+* Buffered packet lengths are bounded by the on-wire `u16` length prefix; RTSP
+  header/body sizes keep the existing `MAX_HEADER_BYTES`/`MAX_BODY_BYTES`
+  limits.
 
 ## Open / Unwired — scaffolding present, not connected
 
@@ -26,13 +132,14 @@ Implemented building blocks that are **not** wired into the runtime path. Kept
 deliberately (behind `#[allow(dead_code)]`) as the foundation for these features —
 do **not** delete them as "dead code"; they are unfinished AP2 capabilities.
 
-- **PTP timing → multi-room precision** — the PTP UDP listener now matches
-  two-step Sync/Follow_Up packets, feeds their local-to-master offset into
-  `PtpClock`, and maps `SETRATEANCHORTIME` onto buffered-audio local playout time.
-  A sender anchor in the future is held until its mapped local deadline; if PTP
-  is unavailable, buffered audio retains its best-effort local fallback.
-  Delay-request/path-delay compensation and realtime-stream PTP scheduling are
-  still open, so this is not yet a claim of sample-accurate multi-room sync.
+- **PTP timing → multi-room precision** — Improve further only with a real
+  NQPTP-style shared clock. This copy now selects a master from Announce,
+  compensates measured Delay_Req/Resp path delay, feeds Sync/Follow_Up offsets
+  into `PtpClock`, maps `SETRATEANCHORTIME` onto buffered-audio local playout
+  time, and uses RTCP time announces as a fallback anchor. If PTP is
+  unavailable, buffered audio retains its best-effort local fallback. Realtime
+  stream (type 96) PTP scheduling is still open, and without a shared clock
+  there is no claim of sample-accurate multi-room sync.
 
 - **Outbound event reporting** — the encrypted event channel is established and the
   initial `updateInfo` is pushed at SETUP, but the receiver never sends events
@@ -172,7 +279,7 @@ See previous sections for full remote control research (unchanged).
 
 ## Test Coverage
 
-130 tests, 17 C-verified vectors from pair_ap reference implementation:
+`cargo test --features ap2` currently runs 278 tests (207 library, 23 integration, 46 unit-test-vectors, 2 doctests), including fuzz-style ALAC/RTCP robustness tests and buffered ALAC end-to-end decode tests. 17 C-verified vectors from the pair_ap reference implementation:
 - TLV codec, HKDF-SHA512, ChaCha20 transport framing
 - ADTS framing, audio packet decryption, server keypair
 - Anchor time calculation, channel mixdown, SSRC mapping
