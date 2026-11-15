@@ -27,6 +27,7 @@ class LiquidGlass extends StatefulWidget {
     this.borderRadius = 24,
     this.blurSigma = 16,
     this.tint = const Color(0x1FFFFFFF),
+    this.tintGradient,
     this.refraction = 1.0,
     this.specular = 1.0,
     this.thickness = 16.0,
@@ -47,6 +48,11 @@ class LiquidGlass extends StatefulWidget {
 
   /// Glass tint painted over the refracted backdrop.
   final Color tint;
+
+  /// Optional gradient painted over [tint]. Defaults to the light diagonal
+  /// sheen used by the player/menu. Settings passes a dark gradient so a large
+  /// panel does not wash its translucent rows with a bright diagonal band.
+  final Gradient? tintGradient;
 
   /// 0 disables lens bending, 1 is the tuned default, >1 exaggerates.
   final double refraction;
@@ -232,11 +238,13 @@ class _LiquidGlassState extends State<LiquidGlass>
                 decoration: BoxDecoration(
                   borderRadius: radius,
                   color: widget.tint,
-                  gradient: const LinearGradient(
-                    begin: Alignment.topLeft,
-                    end: Alignment.bottomRight,
-                    colors: [Color(0x26FFFFFF), Color(0x08FFFFFF)],
-                  ),
+                  gradient:
+                      widget.tintGradient ??
+                      const LinearGradient(
+                        begin: Alignment.topLeft,
+                        end: Alignment.bottomRight,
+                        colors: [Color(0x26FFFFFF), Color(0x08FFFFFF)],
+                      ),
                 ),
               ),
             ),

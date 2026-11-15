@@ -146,7 +146,7 @@ class FusionSettingsSheet extends StatelessWidget {
             const FusionVectorIcon(
               FusionIcons.settings,
               size: 20,
-              color: Color(0xFF262626),
+              color: Color(0xB8FFFFFF),
             ),
             const SizedBox(width: 10),
             Expanded(
@@ -156,7 +156,7 @@ class FusionSettingsSheet extends StatelessWidget {
                 overflow: TextOverflow.ellipsis,
                 style: const TextStyle(
                   fontSize: 20,
-                  color: Color(0xFF1C1C1E),
+                  color: Color(0xEBFFFFFF),
                   fontWeight: FusionTypography.semiBoldFontWeight,
                   fontVariations: FusionTypography.semiBold,
                 ),
@@ -166,7 +166,7 @@ class FusionSettingsSheet extends StatelessWidget {
           ],
         ),
       ),
-      const Divider(height: 1, thickness: 1, color: Color(0x1F000000)),
+      const Divider(height: 1, thickness: 1, color: Color(0x1FFFFFFF)),
       Expanded(child: child),
     ],
   );
@@ -180,7 +180,7 @@ class _CloseSettingsButton extends StatelessWidget {
   @override
   Widget build(BuildContext context) => RemoteFocusFrame(
     onActivate: onClose,
-    borderColor: Colors.black,
+    borderColor: Colors.white,
     shape: const CircleBorder(),
     child: InkWell(
       customBorder: const CircleBorder(),
@@ -194,7 +194,7 @@ class _CloseSettingsButton extends StatelessWidget {
             child: Icon(
               Icons.close_rounded,
               size: 20,
-              color: Colors.black.withValues(alpha: .72),
+              color: Colors.white.withValues(alpha: .86),
             ),
           ),
         ),
@@ -251,7 +251,7 @@ class _FusionMorphOverlayState extends State<FusionMorphOverlay>
     with SingleTickerProviderStateMixin {
   static const settingsRadius = 28.0;
   static const menuTint = Color(0xE014171C);
-  static const settingsTint = Color(0xECF2F4F7);
+  static const settingsTint = Color(0xF214191F);
 
   late final AnimationController _controller = AnimationController(vsync: this)
     ..addListener(() => setState(() {}));
@@ -440,6 +440,15 @@ class _FusionMorphOverlayState extends State<FusionMorphOverlay>
         borderRadius: radius,
         blurSigma: settingsAmount > .5 ? 24 : 20,
         tint: tint,
+        // A large settings panel is nearly opaque; a light diagonal sheen over
+        // the translucent rows looked like a glare band. Deepen it instead.
+        tintGradient: settingsAmount > .35
+            ? const LinearGradient(
+                begin: Alignment.topLeft,
+                end: Alignment.bottomRight,
+                colors: [Color(0x1A000000), Color(0x04000000)],
+              )
+            : null,
         animate: false,
         forceFallback: widget.forceFallback,
         child: ClipRect(

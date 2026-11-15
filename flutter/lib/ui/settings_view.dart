@@ -18,6 +18,33 @@ const fusionPlayVersion = String.fromEnvironment(
   defaultValue: '1.3.6',
 );
 
+/// Dark liquid-glass palette used by the settings panel. The outer
+/// [LiquidGlass] surface provides the actual glass; everything here is a
+/// translucent surface/fill painted on top of it.
+abstract final class _GlassStyle {
+  static const cardRadius = 22.0;
+  static const rowRadius = 16.0;
+  static const surface = Color(0xB315181D);
+  static const surfaceBorder = Color(0x1FFFFFFF);
+  static const rowHighlight = Color(0x1AFFFFFF);
+  static const divider = Color(0x0DFFFFFF);
+  static const textPrimary = Color(0xEBFFFFFF);
+  static const textSecondary = Color(0x8CFFFFFF);
+  static const textDisabled = Color(0x59FFFFFF);
+  static const icon = Color(0xB8FFFFFF);
+  static const iconMuted = Color(0x94FFFFFF);
+  static const accent = Color(0xFF68CE67);
+  static const inputFill = Color(0x14FFFFFF);
+  static const inputBorder = Color(0x1FFFFFFF);
+  static const inputFocusBorder = Color(0x73FFFFFF);
+  static const hint = Color(0x73FFFFFF);
+  static const actionFill = Color(0x1AFFFFFF);
+  static const actionFillDisabled = Color(0x0DFFFFFF);
+  static const actionPrimaryFill = Color(0xE6FFFFFF);
+  static const actionPrimaryText = Color(0xFF16181B);
+  static const switchOffTrack = Color(0x2EFFFFFF);
+}
+
 class SettingsView extends StatefulWidget {
   const SettingsView({
     super.key,
@@ -124,117 +151,128 @@ class _SettingsViewState extends State<SettingsView> {
   Widget build(BuildContext context) {
     final settings = widget.state.settings;
     final padding = MediaQuery.paddingOf(context);
+    final reduceMotion =
+        MediaQuery.maybeOf(context)?.disableAnimations ?? false;
     return LayoutBuilder(
       builder: (context, constraints) {
         final narrow = constraints.maxWidth < 460;
-        final horizontalPadding = narrow ? 16.0 : 28.0;
-        final cardSpacing = narrow ? 12.0 : SettingsStyle.cardSpacing;
+        final horizontalPadding = narrow ? 16.0 : 22.0;
+        final cardSpacing = narrow ? 12.0 : 16.0;
         return ColoredBox(
           color: Colors.transparent,
-          child: FocusTraversalGroup(
-            policy: ReadingOrderTraversalPolicy(),
-            child: SingleChildScrollView(
-              padding: EdgeInsets.fromLTRB(
-                horizontalPadding,
-                padding.top + (narrow ? 12 : 24),
-                horizontalPadding,
-                0,
-              ),
-              child: Column(
-                children: [
-                  if (widget.showHeader) ...[
-                    const SizedBox(
-                      height: 56,
-                      child: Padding(
-                        padding: EdgeInsets.only(bottom: 4),
-                        child: Center(
-                          child: Text(
-                            '设置',
-                            maxLines: 1,
-                            style: TextStyle(
-                              fontSize: 28,
-                              fontWeight: FusionTypography.boldFontWeight,
-                              fontVariations: FusionTypography.bold,
+          child: DefaultTextStyle.merge(
+            style: const TextStyle(color: _GlassStyle.textPrimary),
+            child: IconTheme.merge(
+              data: const IconThemeData(color: _GlassStyle.icon, size: 22),
+              child: FocusTraversalGroup(
+                policy: ReadingOrderTraversalPolicy(),
+                child: SingleChildScrollView(
+                  padding: EdgeInsets.fromLTRB(
+                    horizontalPadding,
+                    padding.top + (narrow ? 8 : 16),
+                    horizontalPadding,
+                    24,
+                  ),
+                  child: Column(
+                    children: [
+                      if (widget.showHeader) ...[
+                        const SizedBox(
+                          height: 48,
+                          child: Center(
+                            child: Text(
+                              '设置',
+                              maxLines: 1,
+                              style: TextStyle(
+                                fontSize: 24,
+                                color: _GlassStyle.textPrimary,
+                                fontWeight: FusionTypography.boldFontWeight,
+                                fontVariations: FusionTypography.bold,
+                              ),
                             ),
                           ),
                         ),
-                      ),
-                    ),
-                    SizedBox(height: cardSpacing),
-                  ],
-                  _card([_nameEditor()]),
-                  SizedBox(height: cardSpacing),
-                  _card([
-                    _switchRow(
-                      asset: 'assets/miplay-logo.svg',
-                      preserveAssetColors: true,
-                      title: 'MiPlay',
-                      value: settings.miPlayEnabled,
-                      focusNode: _miPlayFocus,
-                      focusNameOnUp: true,
-                      onChanged: widget.onMiPlay,
-                    ),
-                    _switchRow(
-                      asset: 'assets/airplay-broadcast.svg',
-                      title: 'AirPlay',
-                      value: settings.airPlayEnabled,
-                      onChanged: widget.onAirPlay,
-                    ),
-                    _switchRow(
-                      asset: FusionIcons.dlna,
-                      title: 'DLNA',
-                      value: settings.dlnaEnabled,
-                      onChanged: widget.onDlna,
-                    ),
-                  ]),
-                  SizedBox(height: cardSpacing),
-                  _card([
-                    for (final identity in MiPlayDeviceIdentity.values)
-                      _identityRow(identity, settings.miPlayDeviceIdentity),
-                    // Xiaomi's device picker is version dependent: some HyperOS
-                    // builds hide "speaker" receivers from the MiPlay list while
-                    // "television" works. Surface that instead of letting users
-                    // think the receiver vanished.
-                    const Padding(
-                      padding: EdgeInsets.fromLTRB(20, 4, 20, 14),
-                      child: Text(
-                        '设备类型影响小米手机妙播列表中的图标与可见性；'
-                        '若选「音响」后手机里找不到设备，请改用「电视」。',
-                        style: TextStyle(
-                          fontSize: 12,
-                          color: SettingsStyle.secondaryText,
+                        SizedBox(height: cardSpacing),
+                      ],
+                      _card([_nameEditor()]),
+                      SizedBox(height: cardSpacing),
+                      _card([
+                        _switchRow(
+                          asset: 'assets/miplay-logo.svg',
+                          preserveAssetColors: true,
+                          title: 'MiPlay',
+                          value: settings.miPlayEnabled,
+                          focusNode: _miPlayFocus,
+                          focusNameOnUp: true,
+                          onChanged: widget.onMiPlay,
                         ),
-                      ),
-                    ),
-                  ]),
-                  SizedBox(height: cardSpacing),
-                  _card([
-                    _switchRow(
-                      asset: 'assets/icon-power-settings-new.svg',
-                      title: '开机自启',
-                      value: settings.startupEnabled,
-                      onChanged: widget.onStartup,
-                    ),
-                    _switchRow(
-                      asset: 'assets/auto-wake.svg',
-                      title: '自动唤起',
-                      value: settings.autoWakeEnabled,
-                      onChanged: widget.onAutoWake,
-                    ),
-                    _switchRow(
-                      icon: Icons.auto_awesome_rounded,
-                      title: '高级效果',
-                      value: settings.advancedEffectsEnabled,
-                      onChanged: widget.onAdvancedEffects,
-                    ),
-                  ]),
-                  SizedBox(height: cardSpacing),
-                  _card([
-                    _aboutRow(),
-                    if (_showUpdateRow) _checkUpdateRow(),
-                    _exportLogsRow(),
-                  ]),
-                ],
+                        _switchRow(
+                          asset: 'assets/airplay-broadcast.svg',
+                          title: 'AirPlay',
+                          value: settings.airPlayEnabled,
+                          onChanged: widget.onAirPlay,
+                        ),
+                        _switchRow(
+                          asset: FusionIcons.dlna,
+                          title: 'DLNA',
+                          value: settings.dlnaEnabled,
+                          onChanged: widget.onDlna,
+                        ),
+                      ]),
+                      SizedBox(height: cardSpacing),
+                      _card(dividers: false, [
+                        for (final identity in MiPlayDeviceIdentity.values)
+                          _identityRow(
+                            identity,
+                            settings.miPlayDeviceIdentity,
+                            reduceMotion: reduceMotion,
+                          ),
+                        // Xiaomi's device picker is version dependent: some
+                        // HyperOS builds hide "speaker" receivers from the
+                        // MiPlay list while "television" works. Surface that
+                        // instead of letting users think the receiver vanished.
+                        const Padding(
+                          padding: EdgeInsets.fromLTRB(20, 2, 20, 14),
+                          child: Text(
+                            '设备类型影响小米手机妙播列表中的图标与可见性；'
+                            '若选「音响」后手机里找不到设备，请改用「电视」。',
+                            style: TextStyle(
+                              fontSize: 12,
+                              height: 1.4,
+                              color: _GlassStyle.textSecondary,
+                            ),
+                          ),
+                        ),
+                      ]),
+                      SizedBox(height: cardSpacing),
+                      _card([
+                        _switchRow(
+                          asset: 'assets/icon-power-settings-new.svg',
+                          title: '开机自启',
+                          value: settings.startupEnabled,
+                          onChanged: widget.onStartup,
+                        ),
+                        _switchRow(
+                          asset: 'assets/auto-wake.svg',
+                          title: '自动唤起',
+                          value: settings.autoWakeEnabled,
+                          onChanged: widget.onAutoWake,
+                        ),
+                        _switchRow(
+                          icon: Icons.auto_awesome_rounded,
+                          title: '高级效果',
+                          value: settings.advancedEffectsEnabled,
+                          onChanged: widget.onAdvancedEffects,
+                        ),
+                      ]),
+                      SizedBox(height: cardSpacing),
+                      _card([
+                        _aboutRow(),
+                        if (_showUpdateRow) _checkUpdateRow(),
+                        _exportLogsRow(),
+                      ]),
+                    ],
+                  ),
+                ),
               ),
             ),
           ),
@@ -243,37 +281,99 @@ class _SettingsViewState extends State<SettingsView> {
     );
   }
 
-  Widget _aboutRow() => const Padding(
-    padding: EdgeInsets.fromLTRB(20, 16, 28.5, 16),
+  // ------------------------------------------------------------------
+  // Rows
+  // ------------------------------------------------------------------
+
+  Widget _rowContent({
+    required Widget leading,
+    required String title,
+    String? subtitle,
+    Widget? trailing,
+    bool enabled = true,
+  }) => Padding(
+    padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 9),
     child: Row(
       children: [
-        SizedBox(
-          width: 42,
-          height: 42,
-          child: Center(
-            child: FusionVectorIcon(
-              FusionIcons.about,
-              size: 25,
-              color: SettingsStyle.iconColor,
-            ),
-          ),
-        ),
-        SizedBox(width: 14),
+        SizedBox(width: 42, height: 42, child: Center(child: leading)),
+        const SizedBox(width: 14),
         Expanded(
-          child: Text(
-            '关于应用',
-            style: TextStyle(
-              fontSize: 16,
-              fontWeight: FusionTypography.semiBoldFontWeight,
-              fontVariations: FusionTypography.semiBold,
-            ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(
+                title,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  fontSize: 16,
+                  color: enabled
+                      ? _GlassStyle.textPrimary
+                      : _GlassStyle.textDisabled,
+                  fontWeight: FusionTypography.semiBoldFontWeight,
+                  fontVariations: FusionTypography.semiBold,
+                ),
+              ),
+              if (subtitle != null) ...[
+                const SizedBox(height: 2),
+                Text(
+                  subtitle,
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    fontSize: 12,
+                    height: 1.35,
+                    color: _GlassStyle.textSecondary,
+                  ),
+                ),
+              ],
+            ],
           ),
         ),
-        Text(
-          fusionPlayVersion,
-          style: TextStyle(color: SettingsStyle.secondaryText),
-        ),
+        if (trailing != null) ...[const SizedBox(width: 12), trailing],
       ],
+    ),
+  );
+
+  Widget _row({
+    required Widget leading,
+    required String title,
+    String? subtitle,
+    Widget? trailing,
+    VoidCallback? onTap,
+    Key? key,
+    bool enabled = true,
+  }) => RemoteFocusFrame(
+    enabled: enabled && onTap != null,
+    onActivate: onTap,
+    shape: const G2ContinuousBorder(radius: _GlassStyle.rowRadius),
+    child: InkWell(
+      key: key,
+      onTap: enabled ? onTap : null,
+      child: _rowContent(
+        leading: leading,
+        title: title,
+        subtitle: subtitle,
+        trailing: trailing,
+        enabled: enabled,
+      ),
+    ),
+  );
+
+  Widget _glassIcon(String asset, {bool preserveColors = false}) =>
+      FusionVectorIcon(
+        asset,
+        size: 22,
+        color: preserveColors ? null : _GlassStyle.icon,
+      );
+
+  Widget _aboutRow() => _row(
+    leading: _glassIcon(FusionIcons.about),
+    title: '关于应用',
+    trailing: const Text(
+      fusionPlayVersion,
+      style: TextStyle(fontSize: 13, color: _GlassStyle.textSecondary),
     ),
   );
 
@@ -283,57 +383,25 @@ class _SettingsViewState extends State<SettingsView> {
       if (enabled) _exportLogs();
     }
 
-    return RemoteFocusFrame(
+    return _row(
+      key: const ValueKey('export-logs'),
       enabled: enabled,
-      onActivate: export,
-      shape: const G2ContinuousBorder(radius: 20),
-      child: InkWell(
-        key: const ValueKey('export-logs'),
-        onTap: enabled ? export : null,
-        child: Padding(
-          padding: const EdgeInsets.fromLTRB(20, 16, 28.5, 16),
-          child: Row(
-            children: [
-              const SizedBox(
-                width: 42,
-                height: 42,
-                child: Center(
-                  child: FusionVectorIcon(
-                    FusionIcons.exportLogs,
-                    size: 25,
-                    color: SettingsStyle.iconColor,
-                  ),
-                ),
+      onTap: export,
+      leading: _glassIcon(FusionIcons.exportLogs),
+      title: '导出日志',
+      trailing: _exportingLogs
+          ? const SizedBox.square(
+              dimension: 20,
+              child: CircularProgressIndicator(
+                strokeWidth: 2.5,
+                color: _GlassStyle.icon,
               ),
-              const SizedBox(width: 14),
-              const Expanded(
-                child: Text(
-                  '导出日志',
-                  style: TextStyle(
-                    fontSize: 16,
-                    fontWeight: FusionTypography.semiBoldFontWeight,
-                    fontVariations: FusionTypography.semiBold,
-                  ),
-                ),
-              ),
-              if (_exportingLogs)
-                const SizedBox.square(
-                  dimension: 20,
-                  child: CircularProgressIndicator(
-                    strokeWidth: 2.5,
-                    color: SettingsStyle.iconColor,
-                  ),
-                )
-              else
-                const Icon(
-                  Icons.ios_share_rounded,
-                  size: 22,
-                  color: SettingsStyle.iconColor,
-                ),
-            ],
-          ),
-        ),
-      ),
+            )
+          : const Icon(
+              Icons.ios_share_rounded,
+              size: 20,
+              color: _GlassStyle.iconMuted,
+            ),
     );
   }
 
@@ -359,57 +427,29 @@ class _SettingsViewState extends State<SettingsView> {
       if (enabled) unawaited(_checkForUpdate());
     }
 
-    return RemoteFocusFrame(
+    return _row(
+      key: const ValueKey('check-update'),
       enabled: enabled,
-      onActivate: check,
-      shape: const G2ContinuousBorder(radius: 20),
-      child: InkWell(
-        key: const ValueKey('check-update'),
-        onTap: enabled ? check : null,
-        child: Padding(
-          padding: const EdgeInsets.fromLTRB(20, 16, 28.5, 16),
-          child: Row(
-            children: [
-              const SizedBox(
-                width: 42,
-                height: 42,
-                child: Center(
-                  child: Icon(
-                    Icons.system_update_rounded,
-                    size: 25,
-                    color: SettingsStyle.iconColor,
-                  ),
-                ),
-              ),
-              const SizedBox(width: 14),
-              const Expanded(
-                child: Text(
-                  '检查更新',
-                  style: TextStyle(
-                    fontSize: 16,
-                    fontWeight: FusionTypography.semiBoldFontWeight,
-                    fontVariations: FusionTypography.semiBold,
-                  ),
-                ),
-              ),
-              if (busy)
-                const SizedBox.square(
-                  dimension: 20,
-                  child: CircularProgressIndicator(
-                    strokeWidth: 2.5,
-                    color: SettingsStyle.iconColor,
-                  ),
-                )
-              else
-                const Icon(
-                  Icons.chevron_right_rounded,
-                  size: 22,
-                  color: SettingsStyle.iconColor,
-                ),
-            ],
-          ),
-        ),
+      onTap: check,
+      leading: const Icon(
+        Icons.system_update_rounded,
+        size: 22,
+        color: _GlassStyle.icon,
       ),
+      title: '检查更新',
+      trailing: busy
+          ? const SizedBox.square(
+              dimension: 20,
+              child: CircularProgressIndicator(
+                strokeWidth: 2.5,
+                color: _GlassStyle.icon,
+              ),
+            )
+          : const Icon(
+              Icons.chevron_right_rounded,
+              size: 20,
+              color: _GlassStyle.iconMuted,
+            ),
     );
   }
 
@@ -432,12 +472,16 @@ class _SettingsViewState extends State<SettingsView> {
     );
   }
 
+  // ------------------------------------------------------------------
+  // Receiver name editor
+  // ------------------------------------------------------------------
+
   Widget _nameEditor() {
     final dirty = _name.text.trim() != _savedName.trim();
     final restoreEnabled =
         !widget.state.busy && (_savedName.isNotEmpty || dirty);
     return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
+      padding: const EdgeInsets.fromLTRB(20, 16, 20, 16),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -455,66 +499,72 @@ class _SettingsViewState extends State<SettingsView> {
               return KeyEventResult.ignored;
             },
             child: TextField(
+              key: const ValueKey('receiver-name'),
               focusNode: _nameFocus,
               controller: _name,
               maxLength: 63,
               textInputAction: TextInputAction.done,
+              cursorColor: Colors.white,
+              style: const TextStyle(
+                fontSize: 16,
+                color: _GlassStyle.textPrimary,
+              ),
               decoration: InputDecoration(
                 counterText: '',
                 hintText: widget.state.receiverName,
-                hintStyle: const TextStyle(color: SettingsStyle.secondaryText),
+                hintStyle: const TextStyle(color: _GlassStyle.hint),
                 filled: true,
-                fillColor: const Color(0xB3FFFFFF),
+                fillColor: _GlassStyle.inputFill,
                 border: const OutlineInputBorder(
-                  borderRadius: BorderRadius.all(Radius.circular(28)),
-                  borderSide: BorderSide.none,
+                  borderRadius: BorderRadius.all(Radius.circular(16)),
+                  borderSide: BorderSide(color: _GlassStyle.inputBorder),
                 ),
                 enabledBorder: const OutlineInputBorder(
-                  borderRadius: BorderRadius.all(Radius.circular(28)),
-                  borderSide: BorderSide.none,
+                  borderRadius: BorderRadius.all(Radius.circular(16)),
+                  borderSide: BorderSide(color: _GlassStyle.inputBorder),
                 ),
                 focusedBorder: const OutlineInputBorder(
-                  borderRadius: BorderRadius.all(Radius.circular(28)),
-                  borderSide: BorderSide(color: Colors.black, width: 3),
+                  borderRadius: BorderRadius.all(Radius.circular(16)),
+                  borderSide: BorderSide(
+                    color: _GlassStyle.inputFocusBorder,
+                    width: 1.5,
+                  ),
                 ),
                 contentPadding: const EdgeInsets.symmetric(
-                  horizontal: 20,
-                  vertical: 16,
+                  horizontal: 16,
+                  vertical: 14,
                 ),
               ),
             ),
           ),
           const SizedBox(height: 12),
           Row(
+            mainAxisAlignment: MainAxisAlignment.end,
             children: [
-              Expanded(
-                child: _actionButton(
-                  label: '恢复默认',
-                  active: restoreEnabled,
-                  dark: false,
-                  onPressed: restoreEnabled
-                      ? () {
-                          _name.clear();
-                          widget.onReceiverName('');
-                          setState(() => _savedName = '');
-                        }
-                      : null,
-                ),
+              _actionButton(
+                label: '恢复默认',
+                primary: false,
+                active: restoreEnabled,
+                onPressed: restoreEnabled
+                    ? () {
+                        _name.clear();
+                        widget.onReceiverName('');
+                        setState(() => _savedName = '');
+                      }
+                    : null,
               ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: _actionButton(
-                  label: '应用',
-                  active: !widget.state.busy && dirty,
-                  dark: true,
-                  onPressed: !widget.state.busy && dirty
-                      ? () {
-                          final value = _name.text.trim();
-                          widget.onReceiverName(value);
-                          setState(() => _savedName = value);
-                        }
-                      : null,
-                ),
+              const SizedBox(width: 10),
+              _actionButton(
+                label: '应用',
+                primary: true,
+                active: !widget.state.busy && dirty,
+                onPressed: !widget.state.busy && dirty
+                    ? () {
+                        final value = _name.text.trim();
+                        widget.onReceiverName(value);
+                        setState(() => _savedName = value);
+                      }
+                    : null,
               ),
             ],
           ),
@@ -526,36 +576,41 @@ class _SettingsViewState extends State<SettingsView> {
   Widget _actionButton({
     required String label,
     required bool active,
-    required bool dark,
+    required bool primary,
     required VoidCallback? onPressed,
   }) => RemoteFocusFrame(
     enabled: active,
     onActivate: onPressed,
-    shape: const G2ContinuousBorder(radius: 25),
+    shape: const G2ContinuousBorder(radius: 999),
     child: AnimatedContainer(
-      height: 50,
       duration: MediaQuery.maybeOf(context)?.disableAnimations ?? false
           ? Duration.zero
           : SettingsStyle.actionColorDuration,
       decoration: ShapeDecoration(
-        color: active
-            ? (dark ? Colors.black : Colors.white)
-            : SettingsStyle.inactiveAction,
-        shape: const G2ContinuousBorder(radius: 25),
+        color: !active
+            ? _GlassStyle.actionFillDisabled
+            : primary
+            ? _GlassStyle.actionPrimaryFill
+            : _GlassStyle.actionFill,
+        shape: const G2ContinuousBorder(radius: 999),
       ),
       child: Material(
         color: Colors.transparent,
-        shape: const G2ContinuousBorder(radius: 25),
+        shape: const G2ContinuousBorder(radius: 999),
         clipBehavior: Clip.antiAlias,
         child: InkWell(
           onTap: onPressed,
-          child: Center(
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
             child: Text(
               label,
               style: TextStyle(
-                color: active
-                    ? (dark ? Colors.white : Colors.black)
-                    : SettingsStyle.secondaryText,
+                fontSize: 14,
+                color: !active
+                    ? _GlassStyle.textDisabled
+                    : primary
+                    ? _GlassStyle.actionPrimaryText
+                    : _GlassStyle.textPrimary,
                 fontWeight: FusionTypography.mediumFontWeight,
                 fontVariations: FusionTypography.medium,
               ),
@@ -566,95 +621,98 @@ class _SettingsViewState extends State<SettingsView> {
     ),
   );
 
+  // ------------------------------------------------------------------
+  // Device identity
+  // ------------------------------------------------------------------
+
   Widget _identityRow(
     MiPlayDeviceIdentity identity,
-    MiPlayDeviceIdentity selected,
-  ) => RemoteFocusFrame(
-    enabled: !widget.state.busy,
-    onActivate: () => widget.onMiPlayIdentity(identity),
-    shape: const G2ContinuousBorder(radius: 20),
-    child: InkWell(
-      onTap: widget.state.busy ? null : () => widget.onMiPlayIdentity(identity),
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
-        child: Row(
-          children: [
-            SizedBox(
-              width: 42,
-              height: 42,
-              child: Center(child: _identityIcon(identity)),
+    MiPlayDeviceIdentity selected, {
+    required bool reduceMotion,
+  }) {
+    final isSelected = identity == selected;
+    final enabled = !widget.state.busy;
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+      child: RemoteFocusFrame(
+        enabled: enabled,
+        onActivate: () => widget.onMiPlayIdentity(identity),
+        shape: const G2ContinuousBorder(radius: 14),
+        child: InkWell(
+          onTap: enabled ? () => widget.onMiPlayIdentity(identity) : null,
+          child: AnimatedContainer(
+            duration: reduceMotion
+                ? Duration.zero
+                : const Duration(milliseconds: 160),
+            decoration: ShapeDecoration(
+              color: isSelected ? _GlassStyle.rowHighlight : Colors.transparent,
+              shape: const G2ContinuousBorder(radius: 14),
             ),
-            const SizedBox(width: 14),
-            Expanded(
-              child: Text(
-                identity.label,
-                style: const TextStyle(
-                  fontSize: 16,
-                  fontWeight: FusionTypography.semiBoldFontWeight,
-                  fontVariations: FusionTypography.semiBold,
-                ),
-              ),
-            ),
-            ExcludeFocus(
-              child: SizedBox(
-                width: 48,
-                height: 48,
-                child: Radio<MiPlayDeviceIdentity>(
-                  key: MediaQuery.maybeOf(context)?.disableAnimations ?? false
-                      ? ValueKey('identity-${identity.name}-${selected.name}')
-                      : ValueKey('identity-${identity.name}'),
-                  value: identity,
-                  groupValue: selected,
-                  activeColor: SettingsStyle.switchOnTrack,
-                  fillColor: WidgetStateProperty.resolveWith(
-                    (states) => states.contains(WidgetState.selected)
-                        ? SettingsStyle.switchOnTrack
-                        : Colors.black,
+            child: _rowContent(
+              leading: _identityIcon(identity),
+              title: identity.label,
+              enabled: enabled,
+              trailing: ExcludeFocus(
+                child: SizedBox.square(
+                  dimension: 36,
+                  child: Center(
+                    child: Icon(
+                      key: reduceMotion
+                          ? ValueKey(
+                              'identity-${identity.name}-${selected.name}',
+                            )
+                          : ValueKey('identity-${identity.name}'),
+                      isSelected
+                          ? Icons.check_circle_rounded
+                          : Icons.circle_outlined,
+                      size: isSelected ? 22 : 20,
+                      color: isSelected
+                          ? _GlassStyle.accent
+                          : _GlassStyle.iconMuted.withValues(alpha: .45),
+                    ),
                   ),
-                  onChanged: widget.state.busy
-                      ? null
-                      : (value) {
-                          if (value != null) widget.onMiPlayIdentity(value);
-                        },
                 ),
               ),
             ),
-          ],
+          ),
         ),
       ),
-    ),
-  );
+    );
+  }
 
-  Widget _identityIcon(MiPlayDeviceIdentity identity) => switch (identity) {
-    MiPlayDeviceIdentity.television => SvgPicture.asset(
-      'assets/device-television.svg',
-      width: 24,
-      height: 24,
-    ),
-    MiPlayDeviceIdentity.speaker => SvgPicture.asset(
-      'assets/device-speaker.svg',
-      width: 24,
-      height: 24,
-    ),
-    MiPlayDeviceIdentity.vehicle => SvgPicture.asset(
-      'assets/device-vehicle.svg',
-      width: 24,
-      height: 24,
-      colorFilter: const ColorFilter.mode(
-        SettingsStyle.iconColor,
-        BlendMode.srcIn,
+  Widget _identityIcon(MiPlayDeviceIdentity identity) {
+    const white = ColorFilter.mode(_GlassStyle.icon, BlendMode.srcIn);
+    return switch (identity) {
+      MiPlayDeviceIdentity.television => SvgPicture.asset(
+        'assets/device-television.svg',
+        width: 24,
+        height: 24,
+        colorFilter: white,
       ),
-    ),
-    MiPlayDeviceIdentity.tablet => SvgPicture.asset(
-      'assets/device-tablet.svg',
-      width: 24,
-      height: 24,
-      colorFilter: const ColorFilter.mode(
-        SettingsStyle.iconColor,
-        BlendMode.srcIn,
+      MiPlayDeviceIdentity.speaker => SvgPicture.asset(
+        'assets/device-speaker.svg',
+        width: 24,
+        height: 24,
+        colorFilter: white,
       ),
-    ),
-  };
+      MiPlayDeviceIdentity.vehicle => SvgPicture.asset(
+        'assets/device-vehicle.svg',
+        width: 24,
+        height: 24,
+        colorFilter: white,
+      ),
+      MiPlayDeviceIdentity.tablet => SvgPicture.asset(
+        'assets/device-tablet.svg',
+        width: 24,
+        height: 24,
+        colorFilter: white,
+      ),
+    };
+  }
+
+  // ------------------------------------------------------------------
+  // Toggles
+  // ------------------------------------------------------------------
 
   Widget _switchRow({
     String? asset,
@@ -665,89 +723,92 @@ class _SettingsViewState extends State<SettingsView> {
     required String title,
     required bool value,
     required ValueChanged<bool> onChanged,
-  }) => RemoteFocusFrame(
-    enabled: !widget.state.busy,
-    focusNode: focusNode,
-    onActivate: () => onChanged(!value),
-    shortcuts: focusNameOnUp
-        ? const <ShortcutActivator, Intent>{
-            SingleActivator(LogicalKeyboardKey.arrowUp):
-                _FocusReceiverNameIntent(),
-          }
-        : const <ShortcutActivator, Intent>{},
-    actions: focusNameOnUp
-        ? <Type, Action<Intent>>{
-            _FocusReceiverNameIntent: CallbackAction<_FocusReceiverNameIntent>(
-              onInvoke: (_) {
-                _nameFocus.requestFocus();
-                return null;
-              },
-            ),
-          }
-        : const <Type, Action<Intent>>{},
-    shape: const G2ContinuousBorder(radius: 20),
-    child: InkWell(
-      onTap: widget.state.busy ? null : () => onChanged(!value),
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
-        child: Row(
-          children: [
-            SizedBox(
-              width: 42,
-              height: 42,
-              child: Center(
-                child: asset != null
-                    ? SvgPicture.asset(
-                        asset,
-                        width: 25,
-                        height: 25,
-                        colorFilter: preserveAssetColors
-                            ? null
-                            : const ColorFilter.mode(
-                                SettingsStyle.iconColor,
-                                BlendMode.srcIn,
-                              ),
-                      )
-                    : Icon(icon, size: 25, color: SettingsStyle.iconColor),
+  }) {
+    final enabled = !widget.state.busy;
+    final leading = asset != null
+        ? SvgPicture.asset(
+            asset,
+            width: 22,
+            height: 22,
+            colorFilter: preserveAssetColors
+                ? null
+                : const ColorFilter.mode(_GlassStyle.icon, BlendMode.srcIn),
+          )
+        : Icon(icon, size: 22, color: _GlassStyle.icon);
+    return RemoteFocusFrame(
+      enabled: enabled,
+      focusNode: focusNode,
+      onActivate: () => onChanged(!value),
+      shortcuts: focusNameOnUp
+          ? const <ShortcutActivator, Intent>{
+              SingleActivator(LogicalKeyboardKey.arrowUp):
+                  _FocusReceiverNameIntent(),
+            }
+          : const <ShortcutActivator, Intent>{},
+      actions: focusNameOnUp
+          ? <Type, Action<Intent>>{
+              _FocusReceiverNameIntent:
+                  CallbackAction<_FocusReceiverNameIntent>(
+                    onInvoke: (_) {
+                      _nameFocus.requestFocus();
+                      return null;
+                    },
+                  ),
+            }
+          : const <Type, Action<Intent>>{},
+      shape: const G2ContinuousBorder(radius: _GlassStyle.rowRadius),
+      child: InkWell(
+        onTap: enabled ? () => onChanged(!value) : null,
+        child: _rowContent(
+          leading: leading,
+          title: title,
+          enabled: enabled,
+          trailing: ExcludeFocus(
+            child: SizedBox(
+              width: SettingsStyle.switchWidth,
+              height: SettingsStyle.switchHeight,
+              child: _G2SettingsSwitch(
+                value: value,
+                onChanged: enabled ? onChanged : null,
               ),
             ),
-            const SizedBox(width: 14),
-            Expanded(
-              child: Text(
-                title,
-                style: const TextStyle(
-                  fontSize: 16,
-                  fontWeight: FusionTypography.semiBoldFontWeight,
-                  fontVariations: FusionTypography.semiBold,
-                ),
-              ),
-            ),
-            ExcludeFocus(
-              child: SizedBox(
-                width: SettingsStyle.switchWidth,
-                height: SettingsStyle.switchHeight,
-                child: _G2SettingsSwitch(
-                  value: value,
-                  onChanged: widget.state.busy ? null : onChanged,
-                ),
-              ),
-            ),
-          ],
+          ),
         ),
       ),
-    ),
-  );
+    );
+  }
 
-  Widget _card(List<Widget> children) => DecoratedBox(
-    decoration: const ShapeDecoration(
-      color: Color(0x8CFFFFFF),
-      shape: G2ContinuousBorder(
-        radius: SettingsStyle.cardRadius,
-        side: BorderSide(color: Color(0x26FFFFFF)),
+  // ------------------------------------------------------------------
+  // Surfaces
+  // ------------------------------------------------------------------
+
+  Widget _card(List<Widget> children, {bool dividers = true}) {
+    final rows = <Widget>[];
+    for (var index = 0; index < children.length; index++) {
+      rows.add(children[index]);
+      if (dividers && index != children.length - 1) {
+        rows.add(
+          const Divider(
+            height: 1,
+            thickness: 1,
+            indent: 76,
+            endIndent: 18,
+            color: _GlassStyle.divider,
+          ),
+        );
+      }
+    }
+    return DecoratedBox(
+      decoration: const ShapeDecoration(
+        color: _GlassStyle.surface,
+        shape: G2ContinuousBorder(
+          radius: _GlassStyle.cardRadius,
+          side: BorderSide(color: _GlassStyle.surfaceBorder),
+        ),
       ),
-    ),
-    child: Column(children: children),
-  );
+      child: Column(children: rows),
+    );
+  }
 }
 
 class _G2SettingsSwitch extends StatelessWidget {
@@ -776,13 +837,8 @@ class _G2SettingsSwitch extends StatelessWidget {
             curve: FusionMotion.easeOut,
             builder: (context, progress, _) {
               final trackColor = Color.lerp(
-                SettingsStyle.switchOffTrack,
+                _GlassStyle.switchOffTrack,
                 SettingsStyle.switchOnTrack,
-                progress,
-              )!;
-              final thumbColor = Color.lerp(
-                SettingsStyle.switchOffThumb,
-                SettingsStyle.switchOnThumb,
                 progress,
               )!;
               return DecoratedBox(
@@ -799,7 +855,9 @@ class _G2SettingsSwitch extends StatelessWidget {
                       top: 4,
                       child: DecoratedBox(
                         decoration: ShapeDecoration(
-                          color: thumbColor,
+                          color: Colors.white.withValues(
+                            alpha: .78 + .22 * progress,
+                          ),
                           shape: const CircleBorder(),
                         ),
                         child: const SizedBox.square(dimension: 24),
@@ -832,11 +890,7 @@ class _SectionTitle extends StatelessWidget {
         width: 42,
         height: 42,
         child: Center(
-          child: FusionVectorIcon(
-            asset,
-            size: 25,
-            color: SettingsStyle.iconColor,
-          ),
+          child: FusionVectorIcon(asset, size: 22, color: _GlassStyle.icon),
         ),
       ),
       const SizedBox(width: 14),
@@ -844,6 +898,7 @@ class _SectionTitle extends StatelessWidget {
         text,
         style: const TextStyle(
           fontSize: 16,
+          color: _GlassStyle.textPrimary,
           fontWeight: FusionTypography.semiBoldFontWeight,
           fontVariations: FusionTypography.semiBold,
         ),
