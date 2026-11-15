@@ -144,7 +144,6 @@ void main() {
       findsOneWidget,
     );
     expect(find.byType(ArtworkCard), findsOneWidget);
-    expect(find.text('正在播放'), findsOneWidget);
     expect(find.text('Track'), findsOneWidget);
     expect(find.text('Artist'), findsOneWidget);
     // 歌词常驻右列，逐字行渲染为逐词高亮。
@@ -632,6 +631,22 @@ void main() {
         .dy;
     expect(hintBottom, lessThanOrEqualTo(dockTop), reason: '空态提示不能被底部 dock 覆盖');
     expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('dock 中播放按钮在进度条与屏幕底部之间垂直居中', (tester) async {
+    await _pumpPlayer(tester, _state(), size: const Size(800, 360));
+    // Let the control entrance (5px translate) settle before measuring.
+    await tester.pump(const Duration(milliseconds: 400));
+
+    final play = tester.getRect(
+      find.byKey(const ValueKey('playback-play-pause-button')),
+    );
+    final progress = tester.getRect(
+      find.byKey(const ValueKey('player-progress-bar')),
+    );
+    final gapAbove = play.top - progress.bottom;
+    final gapBelow = 360 - play.bottom;
+    expect(gapAbove, closeTo(gapBelow, 0.5), reason: '播放按钮上下留白应一致，而不是偏向底部');
   });
 
   testWidgets('播放中本地时钟/呼吸动画不抛异常，退出后释放', (tester) async {

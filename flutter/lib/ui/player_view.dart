@@ -451,16 +451,6 @@ class _PlayerViewState extends State<PlayerView> {
                 runSpacing: 6,
                 crossAxisAlignment: WrapCrossAlignment.center,
                 children: [
-                  const Text(
-                    '正在播放',
-                    style: TextStyle(
-                      fontSize: 12,
-                      letterSpacing: 1.8,
-                      color: Color(0x9EFFFFFF),
-                      fontWeight: FusionTypography.semiBoldFontWeight,
-                      fontVariations: FusionTypography.semiBold,
-                    ),
-                  ),
                   if (protocol != null) _chip(protocol),
                   if (quality != null && quality.isNotEmpty) _chip(quality),
                 ],
@@ -1061,7 +1051,7 @@ class _PlayerViewState extends State<PlayerView> {
         compact ? 10 : 22,
         0,
         compact ? 10 : 22,
-        compact ? 8 : 18,
+        compact ? 2 : 4,
       ),
       child: LiquidGlass(
         borderRadius: compact ? 22 : 28,
@@ -1072,7 +1062,10 @@ class _PlayerViewState extends State<PlayerView> {
           compact ? 12 : 20,
           compact ? 2 : 8,
           compact ? 12 : 20,
-          compact ? 4 : 12,
+          // Together with the outer bottom margin this equals the gap above
+          // the transport row, so the play button is visually centred between
+          // the progress bar and the bottom of the screen.
+          compact ? 6 : 12,
         ),
         child: Column(
           mainAxisSize: MainAxisSize.min,
@@ -1145,7 +1138,7 @@ class _PlayerViewState extends State<PlayerView> {
                 ),
               ],
             ),
-            SizedBox(height: compact ? 0 : 4),
+            SizedBox(height: compact ? 8 : 16),
             LayoutBuilder(
               builder: (context, dock) {
                 final wide = dock.maxWidth >= 420;
