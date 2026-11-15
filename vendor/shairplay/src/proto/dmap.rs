@@ -20,6 +20,13 @@ pub struct TrackMetadata {
     pub track_number: Option<u16>,
     /// Disc number (`asdk`).
     pub disc_number: Option<u16>,
+    /// Unknown DMAP tags seen in the last metadata message, as
+    /// `(four-character tag, payload length)`.
+    ///
+    /// Diagnostic only: used by hosts to detect protocol additions (e.g. a
+    /// possible lyrics field) without logging any metadata content. Never
+    /// contains the payload itself.
+    pub unknown_tags: Vec<(String, u32)>,
 }
 
 impl TrackMetadata {
@@ -47,7 +54,21 @@ impl TrackMetadata {
                 b"astn" => meta.track_number = as_u16(),
                 b"asdk" => meta.disc_number = as_u16(),
                 _ => {
-                    tracing::trace!(tag = %String::from_utf8_lossy(tag), len, "DMAP: unknown tag");
+                    // Keep the four-character tag and length only; hosts can
+                    // surface this as a rate-limited protocol diagnostic. The
+                    // old trace log was invisible in exported Android logs.
+                    let printable: String = tag
+                        .iter()
+                        .map(|byte| {
+                            if byte.is_ascii_graphic() {
+                                *byte as char
+                            } else {
+                                '.'
+                            }
+                        })
+                        .collect();
+                    meta.unknown_tags.push((printable.clone(), len as u32));
+                    tracing::trace!(tag = %printable, len, "DMAP: unknown tag");
                 }
             }
             pos += len;
@@ -88,6 +109,20 @@ mod tests {
         let meta = TrackMetadata::from_dmap(data);
         assert_eq!(meta.title.as_deref(), Some("Hello"));
         assert_eq!(meta.artist, None);
+    }
+
+    #[test]
+    fn dmap_unknown_tags_are_reported_without_content() {
+        // `asly` (a hypothetical lyrics tag) plus a 4-byte payload.
+        let data: &[u8] = &[
+            0x6d, 0x6c, 0x69, 0x74, 0x00, 0x00, 0x00, 0x18, 0x6d, 0x69, 0x6e, 0x6d, 0x00, 0x00, 0x00, 0x05, 0x48,
+            0x65, 0x6c, 0x6c, 0x6f, 0x61, 0x73, 0x6c, 0x79, 0x00, 0x00, 0x00, 0x04, 0xde, 0xad, 0xbe, 0xef,
+        ];
+        let meta = TrackMetadata::from_dmap(data);
+        assert_eq!(meta.title.as_deref(), Some("Hello"));
+        assert_eq!(meta.unknown_tags, vec![("asly".to_owned(), 4)]);
+        // Only tag+length is exposed; the payload never leaks into diagnostics.
+        assert!(!format!("{:?}", meta.unknown_tags).contains("dead"));
     }
 
     #[test]

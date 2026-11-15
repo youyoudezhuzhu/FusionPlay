@@ -521,6 +521,79 @@ void main() {
     await gesture.up();
   });
 
+  testWidgets('同一封面 source 的元数据变化不触发封面翻转', (tester) async {
+    const cover = 'https://example.test/cover.jpg';
+    Widget player(String trackIdentity) => MaterialApp(
+      home: Scaffold(
+        body: PlayerView(
+          artworkSource: cover,
+          artworkIdentity: trackIdentity,
+          state: AppState(
+            playback: PlaybackSnapshot(
+              title: trackIdentity,
+              durationMs: 180000,
+              streamActive: true,
+            ),
+          ),
+          onPlayback: (_) {},
+          onSeek: (_) {},
+          onVolume: (_) {},
+        ),
+      ),
+    );
+
+    await tester.pumpWidget(player('track-a'));
+    await tester.pump();
+    final first = tester.widget<ArtworkCard>(find.byType(ArtworkCard));
+    expect(first.identity, cover);
+    final firstDirection = first.flipDirection;
+
+    // 同一封面（source 不变），仅 AirPlay now-playing 的 track identity 变化：
+    // ArtworkCard 的动画身份保持为封面 source，不应翻转。
+    await tester.pumpWidget(player('track-b'));
+    await tester.pump();
+    final second = tester.widget<ArtworkCard>(find.byType(ArtworkCard));
+    expect(second.identity, cover);
+    expect(second.flipDirection, firstDirection);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('真正更换封面 source 仍会触发翻转身份变化', (tester) async {
+    Widget player(String cover) => MaterialApp(
+      home: Scaffold(
+        body: PlayerView(
+          artworkSource: cover,
+          artworkIdentity: 'same-track',
+          state: const AppState(
+            playback: PlaybackSnapshot(
+              title: 'Track',
+              durationMs: 180000,
+              streamActive: true,
+            ),
+          ),
+          onPlayback: (_) {},
+          onSeek: (_) {},
+          onVolume: (_) {},
+        ),
+      ),
+    );
+
+    await tester.pumpWidget(player('https://example.test/cover-a.jpg'));
+    await tester.pump();
+    expect(
+      tester.widget<ArtworkCard>(find.byType(ArtworkCard)).identity,
+      'https://example.test/cover-a.jpg',
+    );
+
+    await tester.pumpWidget(player('https://example.test/cover-b.jpg'));
+    await tester.pump();
+    expect(
+      tester.widget<ArtworkCard>(find.byType(ArtworkCard)).identity,
+      'https://example.test/cover-b.jpg',
+    );
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets('sender track direction controls the artwork flip', (
     tester,
   ) async {

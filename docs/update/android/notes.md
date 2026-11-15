@@ -1,29 +1,24 @@
-## FusionPlay Android 1.4.0
+## FusionPlay Android 1.4.1
 
-### 全局 Liquid Glass 视觉系统
+### AirPlay 识别修复
 
-- 新增统一玻璃材质分级：`card` / `control` / `panel`，所有播放页控件、菜单、设置面板、关于与检查更新弹窗统一使用 `GlassSpec` token，不再各页面写死玻璃颜色。
-- 动态镜面高光：跟随指针/触摸与按压位置变化，按圆角形状裁剪；不启动 ticker、空闲和动画期间无额外 GPU 工作。
-- 边缘厚度：内侧 rim 高光、右下暗边与克制阴影，替换粗白边框和塑料感投影；聚焦时高光增强。
-- 弹窗全部改为深色玻璃 `GlassDialog`：关于、检查更新（检查中/最新/发现新版本/下载安装/失败/权限）统一材质，保留原有按钮、文案与流程。
+- 修复 iPhone 把 FusionPlay 当成 TV/投屏目标的问题。根因不是 mDNS，而是连接时自述：`GET /info`、AirPlay 2 event channel 的 `updateInfo`、`/server-info` 仍固定返回 `AppleTV6,2` 和含 video/HLS 位的 features，覆盖了正确的音频广播。
+- 现在音源模式在 `/info`、`updateInfo`、`/server-info` 全部返回纯音频 features（不再含 video/photo/screen/HLS 位）和 `AirPort10,115` 模型，并且不广告 `displays`；iPhone 应只把它当音响，不再投视频。
 
-### 设置页修复
+### AirPlay 2 播放稳定性
 
-- 顶栏不再用不透明黑色渐变：改为顶层半透明玻璃 header + 内容真正从下方滚过 + 顶部渐隐，没有黑带或硬分割线。
-- 进入设置不再自动聚焦名称输入框、不会自动弹出输入法、不自动全选文本；默认焦点在 MiPlay。
-- 名称改为「展示 + 编辑按钮」：点击后才进入编辑并弹键盘；取消恢复原名，应用只提交一次，恢复默认需应用后生效。
+- 复核 AAC/ALAC、时间戳、重采样和 Oboe 回调后未发现解码/丢包根因；针对 ColorOS/OPPO 上 `LowLatency + Shared` 小硬件缓冲导致的 underrun，改为 Oboe 稳定模式，Android 本地缓冲 240→480 ms、预填充 120→240 ms（总延迟仍以协议 2 s 为主）。
+- 增加 underrun/重新预填充限频日志，下一次导出的 `airplay.jsonl` 可直接确认是否还有欠载。
 
-### 性能
+### 歌词与界面
 
-- 玻璃保持静态，无 shader ticker；morph overlay 改用局部 `AnimatedBuilder`，设置子树避免每帧重建，关键玻璃层加 `RepaintBoundary`。
-- 继续关闭实验性 `ImageFilter.shader`，避免 Flutter 3.32 多层玻璃白色反馈。
-
-### 技术限制
-
-- 当前实现是实时背景模糊 + 绘制高光/边缘，不是屏幕空间几何折射；真实折射因 Flutter #187820/#170820 保持关闭。
-- TV 字号放大、真机帧率/GPU 数据尚未完成，后续单独优化。
+- 不再按协议写死「AirPlay 2 不提供歌词」：改为实时判断，无歌词统一显示「音频流未提供歌词」，AirPlay 有歌词时正常渲染并显示歌词开关。
+- 布局顺序调整为封面 → 曲名 → 作者 → 歌词（曲名在作者上方）；360 高手机空态也保留作者行。
+- 修复每切一句歌词封面旋转：封面动画身份改为封面 source 的稳定指纹，同一封面遇到频繁 now-playing 更新不再 flip。
+- 顶部错误提示从白色 Material 改为深色玻璃 toast（例如妙播音量同步失败这类提示），与整体玻璃系统一致。
+- AirPlay 协议层未找到可验证的歌词字段；新增未知 DMAP 标签（仅标签名+长度，不含内容）诊断日志，下次可确认发送端是否使用厂商扩展歌词标签。
 
 ### 安装
 
-- 版本 1.4.0 / versionCode 10400，固定 release 签名，可直接覆盖 1.3.8。
-- 1.3.4 及以上可在「设置 → 检查更新」直接升级；1.3.3 及更早需手动安装一次。
+- 版本 1.4.1 / versionCode 10401，固定 release 签名，可直接覆盖 1.4.0。
+- 1.3.4 及以上可在「设置 → 检查更新」直接升级。

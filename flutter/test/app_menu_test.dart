@@ -153,6 +153,32 @@ void main() {
     expect(find.byKey(const ValueKey('app-menu')), findsNothing);
   });
 
+  testWidgets('错误提示是玻璃 toast，不再使用白色实心 Material', (tester) async {
+    final errorController = NativeAppController();
+    addTearDown(errorController.dispose);
+    tester.view.physicalSize = const Size(1200, 600);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    await tester.pumpWidget(
+      MaterialApp(
+        home: FusionPlayHome(
+          controller: errorController,
+          state: const AppState(initialized: true, lastError: '同步妙播音量失败'),
+          isAndroid: false,
+          forceGlassFallback: true,
+        ),
+      ),
+    );
+    await tester.pump();
+    final toast = find.byKey(const ValueKey('error-toast'));
+    expect(toast, findsOneWidget);
+    expect(find.text('同步妙播音量失败'), findsOneWidget);
+    final glass = tester.widget<LiquidGlass>(toast);
+    expect(glass.level, GlassLevel.panel);
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets('菜单项「设置」morph 成右侧玻璃面板，焦点进入设置内容', (tester) async {
     await _pumpHome(tester, controller: controller);
     await _openMenu(tester);

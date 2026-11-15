@@ -680,6 +680,65 @@ mod tests {
         assert_eq!(DEFAULT_AIRPLAY_LATENCY_FRAMES, 88_200);
     }
 
+    struct NoopAudioSession;
+
+    impl shairplay::AudioSession for NoopAudioSession {
+        fn audio_process(&mut self, _samples: &[f32]) {}
+    }
+
+    struct NoopAudioHandler;
+
+    impl shairplay::AudioHandler for NoopAudioHandler {
+        fn audio_init(&self, _format: shairplay::AudioFormat) -> Box<dyn shairplay::AudioSession> {
+            Box::new(NoopAudioSession)
+        }
+    }
+
+    /// The Android host passes `airplay_audio_only: true`; this pins the
+    /// builder -> mDNS contract so iOS/macOS never see a video-capable profile.
+    #[test]
+    fn audio_only_settings_produce_an_audio_only_service_info() {
+        let server = RaopServer::builder()
+            .name("Android phone")
+            .hwaddr([0x02, 0x00, 0x00, 0x00, 0x00, 0x01])
+            .port(0)
+            .audio_only(true)
+            .build(Arc::new(NoopAudioHandler))
+            .expect("test server");
+        let info = server.service_info();
+
+        let find = |txt: &[(String, String)], key: &str| {
+            txt.iter()
+                .find(|(name, _)| name == key)
+                .map(|(_, value)| value.clone())
+        };
+        assert_eq!(
+            find(&info.airplay_txt, "model").as_deref(),
+            Some("AirPort10,115"),
+            "audio-only service info must use the speaker model"
+        );
+        assert_eq!(
+            find(&info.raop_txt, "am").as_deref(),
+            Some("AirPort10,115"),
+            "raop model must be audio-only as well"
+        );
+
+        let features = find(&info.airplay_txt, "features").expect("features");
+        let (lo, hi) = features.split_once(',').expect("lo,hi feature split");
+        let lo = u64::from_str_radix(lo.trim_start_matches("0x"), 16).unwrap();
+        let hi = u64::from_str_radix(hi.trim_start_matches("0x"), 16).unwrap();
+        let features = lo | (hi << 32);
+        for bit in [0u8, 1, 2, 4, 5, 6, 7, 49] {
+            assert_eq!(
+                features & (1u64 << bit),
+                0,
+                "audio-only service info leaked video bit {bit}"
+            );
+        }
+        assert_ne!(features & (1u64 << 9), 0, "audio capability missing");
+        assert_ne!(features & (1u64 << 40), 0, "buffered audio capability missing");
+    }
+
     #[test]
     fn shutdown_command_does_not_require_request_id() {
         let command: UiCommand = serde_json::from_str(r#"{"command":"shutdown"}"#).unwrap();

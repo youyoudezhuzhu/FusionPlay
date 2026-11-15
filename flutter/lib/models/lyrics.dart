@@ -6,15 +6,14 @@ export 'playback_channel.dart';
 
 /// Whether the current channel can provide lyrics at all.
 ///
-/// AirPlay 2 receiver metadata has no lyrics field, so the player shows an
-/// explanatory panel instead of the usual "暂无歌词" empty state. DLNA / MiPlay
-/// and unknown sources stay optimistic: the sender *may* provide lyrics.
+/// Availability is judged at runtime from the lyrics payload, never from the
+/// protocol: a sender may deliver lyrics over any channel (including AirPlay),
+/// and a channel that usually carries lyrics may omit them. The enum is kept
+/// for API compatibility; every channel is optimistic.
 enum LyricsAvailability { unsupported, supported }
 
 LyricsAvailability lyricsAvailabilityForChannel(PlaybackChannel channel) =>
-    channel == PlaybackChannel.airPlay
-    ? LyricsAvailability.unsupported
-    : LyricsAvailability.supported;
+    LyricsAvailability.supported;
 
 LyricsAvailability lyricsAvailabilityForProtocol(String? protocol) =>
     lyricsAvailabilityForChannel(playbackChannelForProtocol(protocol));
@@ -27,8 +26,10 @@ class LyricsEmptyCopy {
   final String description;
 }
 
-/// Channel-specific "no lyrics this time" copy (never used for AirPlay, which
-/// has its own unsupported-info panel).
+/// Channel-specific "no lyrics this time" copy.
+///
+/// AirPlay is not special-cased as "unsupported": when the stream provides no
+/// lyrics the neutral copy below is used instead ("音频流未提供歌词").
 LyricsEmptyCopy lyricsEmptyCopyForChannel(PlaybackChannel channel) =>
     switch (channel) {
       PlaybackChannel.dlna => const LyricsEmptyCopy(
@@ -39,7 +40,7 @@ LyricsEmptyCopy lyricsEmptyCopyForChannel(PlaybackChannel channel) =>
         title: '此歌曲没有歌词',
         description: '歌词由手机端随媒体信息下发，当前歌曲未附带',
       ),
-      _ => const LyricsEmptyCopy(title: '暂无歌词', description: '歌词由发送端提供'),
+      _ => const LyricsEmptyCopy(title: '暂无歌词', description: '音频流未提供歌词'),
     };
 
 /// One karaoke word/token inside a lyric line (MiPlay / AirPlay word timing).

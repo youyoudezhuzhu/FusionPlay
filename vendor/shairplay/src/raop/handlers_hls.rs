@@ -18,12 +18,25 @@ pub(crate) fn handle_server_info(
         .join(":");
 
     let mut dict = plist::Dictionary::new();
-    // Bits 0-6 + 9: video, photo, FairPlay DRM, volume, HLS, slideshow, unknown, audio
-    dict.insert("features".into(), plist::Value::Integer(0x27F_i64.into()));
+    // Bits 0-6 + 9: video, photo, FairPlay DRM, volume, HLS, slideshow, unknown, audio.
+    // An audio-only receiver must not describe itself as a video/HLS server.
+    let features = if conn.shared.audio_only {
+        1i64 << 9
+    } else {
+        0x27F_i64
+    };
+    dict.insert("features".into(), plist::Value::Integer(features.into()));
     dict.insert("macAddress".into(), plist::Value::String(mac.clone()));
     dict.insert(
         "model".into(),
-        plist::Value::String(crate::raop::config::GLOBAL_MODEL.into()),
+        plist::Value::String(
+            if conn.shared.audio_only {
+                crate::raop::config::AUDIO_ONLY_MODEL
+            } else {
+                crate::raop::config::GLOBAL_MODEL
+            }
+            .into(),
+        ),
     );
     dict.insert("osBuildVersion".into(), plist::Value::String("12B435".into()));
     dict.insert("protovers".into(), plist::Value::String("1.0".into()));

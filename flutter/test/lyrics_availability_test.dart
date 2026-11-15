@@ -3,11 +3,11 @@ import 'package:fusionplay_android_flutter/models/app_state.dart';
 
 void main() {
   group('歌词可用性（按渠道）', () {
-    test('AirPlay 永远不支持歌词', () {
+    test('AirPlay 也按运行时歌词判断，不再标记 unsupported', () {
       for (final protocol in ['airplay', 'AirPlay', 'airplay2', 'AirPlay 2']) {
         expect(
           lyricsAvailabilityForProtocol(protocol),
-          LyricsAvailability.unsupported,
+          LyricsAvailability.supported,
           reason: protocol,
         );
       }
@@ -32,14 +32,33 @@ void main() {
       }
     });
 
-    test('渠道切换: AirPlay→DLNA 的可用性随之变化', () {
+    test('渠道切换仍保持 supported（AirPlay→DLNA）', () {
       expect(
         lyricsAvailabilityForProtocol('airplay'),
-        LyricsAvailability.unsupported,
+        LyricsAvailability.supported,
       );
       expect(
         lyricsAvailabilityForProtocol('dlna'),
         LyricsAvailability.supported,
+      );
+    });
+
+    test('AirPlay 无歌词使用中性的「音频流未提供歌词」说明', () {
+      final copy = lyricsEmptyCopyForChannel(PlaybackChannel.airPlay);
+      expect(copy.title, '暂无歌词');
+      expect(copy.description, '音频流未提供歌词');
+      expect(copy.description.contains('不提供歌词'), isFalse);
+      expect(copy.title.contains('不提供歌词'), isFalse);
+    });
+
+    test('DLNA / MiPlay 保留更具体的无歌词提示', () {
+      expect(
+        lyricsEmptyCopyForChannel(PlaybackChannel.dlna).title,
+        '此发送端未提供歌词',
+      );
+      expect(
+        lyricsEmptyCopyForChannel(PlaybackChannel.miPlay).title,
+        '此歌曲没有歌词',
       );
     });
   });
@@ -83,10 +102,12 @@ void main() {
       expect(copy.description, contains('当前歌曲未附带'));
     });
 
-    test('未知来源保持通用文案', () {
-      final copy = lyricsEmptyCopyForChannel(PlaybackChannel.other);
-      expect(copy.title, '暂无歌词');
-      expect(copy.description, '歌词由发送端提供');
+    test('未知来源/AirPlay 使用「音频流未提供歌词」通用文案', () {
+      for (final channel in [PlaybackChannel.other, PlaybackChannel.airPlay]) {
+        final copy = lyricsEmptyCopyForChannel(channel);
+        expect(copy.title, '暂无歌词');
+        expect(copy.description, '音频流未提供歌词');
+      }
     });
   });
 }

@@ -207,9 +207,13 @@ class _PlayerViewState extends State<PlayerView> {
       _lyricsVisible = true;
     }
     _lastTrackKey = nextTrackKey;
-    final artworkTransitionChanged = widget.artworkIdentity != null
-        ? widget.artworkIdentity != oldWidget.artworkIdentity
-        : widget.artworkSource != oldWidget.artworkSource;
+    final sourceChanged = widget.artworkSource != oldWidget.artworkSource;
+    final hasSource = widget.artworkSource?.trim().isNotEmpty ?? false;
+    // Metadata identity is only a fallback for sources without artwork bytes
+    // (tests/legacy channels). With a real source, only a source change flips.
+    final artworkTransitionChanged =
+        sourceChanged ||
+        (!hasSource && widget.artworkIdentity != oldWidget.artworkIdentity);
     if (artworkTransitionChanged) {
       final identity = _artworkHistoryIdentity(widget);
       if (artworkFlipDirectionPending) {
@@ -270,10 +274,23 @@ class _PlayerViewState extends State<PlayerView> {
   }
 
   String? _artworkHistoryIdentity(PlayerView view) {
-    final identity = (view.artworkIdentity ?? view.artworkSource)?.trim();
+    // Prefer the actual artwork source fingerprint. Metadata identities change
+    // on every now-playing update (AirPlay especially) even when the cover
+    // image is identical, which must not rotate/flip the artwork.
+    final source = view.artworkSource?.trim();
+    final identity = (source != null && source.isNotEmpty)
+        ? source
+        : view.artworkIdentity?.trim();
     if (identity == null || identity.isEmpty) return null;
-    final protocol = view.state.playback.protocol?.trim().toLowerCase() ?? '';
-    return '$protocol\u001f$identity';
+    return identity;
+  }
+
+  /// Identity handed to [ArtworkCard]: follows the actual image source when
+  /// present, so metadata-only updates never trigger a flip.
+  String? get _artworkCardIdentity {
+    final source = widget.artworkSource?.trim();
+    if (source != null && source.isNotEmpty) return source;
+    return widget.artworkIdentity;
   }
 
   ArtworkFlipDirection _inferArtworkDirection(String identity) {
@@ -682,34 +699,85 @@ class _PlayerViewState extends State<PlayerView> {
     padding: const EdgeInsets.fromLTRB(30, 4, 24, 10),
     child: LayoutBuilder(
       builder: (context, content) {
-        final leftWidth = (content.maxWidth * .36)
-            .clamp(210.0, 380.0)
-            .toDouble();
+        final playback = widget.state.playback;
+        final title = playback.title?.trim().isNotEmpty == true
+            ? playback.title!.trim()
+            : '暂无音乐';
+        final artist = playback.artist?.trim();
+        final lyricsChip = _lyricsStatusLabel(playback);
         final dense = content.maxHeight < 260;
-        final artwork = math
-            .min(leftWidth - 8, content.maxHeight * (dense ? .50 : .62))
-            .clamp(dense ? 40.0 : 96.0, 360.0)
+        final ultra = content.maxHeight < 170;
+        final leftWidth = (content.maxWidth * .34)
+            .clamp(170.0, 360.0)
             .toDouble();
-        final rightWidth = content.maxWidth - leftWidth - 28;
-        final activeFont = (rightWidth * .042).clamp(22.0, 34.0).toDouble();
+        final artwork = math
+            .min(leftWidth, content.maxHeight * (dense ? .62 : .78))
+            .clamp(ultra ? 40.0 : (dense ? 56.0 : 96.0), 360.0)
+            .toDouble();
+        final rightWidth = content.maxWidth - artwork - (dense ? 18 : 32);
+        final activeFont = (rightWidth * .042).clamp(20.0, 34.0).toDouble();
+        final titleSize = (artwork / 11.5).clamp(
+          ultra ? 15.0 : (dense ? 18.0 : 22.0),
+          32.0,
+        );
+        final showArtist = artist != null && artist.isNotEmpty && !ultra;
         return Row(
           key: const ValueKey('player-layout-horizontal'),
           crossAxisAlignment: CrossAxisAlignment.center,
           children: [
-            SizedBox(
-              width: leftWidth,
-              child: _leftColumn(
-                artwork: artwork,
-                compact: content.maxHeight < 420,
-                center: false,
-                dense: dense,
-              ),
-            ),
-            const SizedBox(width: 28),
+            _breathingArtwork(size: artwork, child: _artworkCard(artwork)),
+            SizedBox(width: dense ? 18 : 32),
             Expanded(
-              child: _lyricsColumn(
-                activeFontSize: activeFont,
-                inactiveFontSize: activeFont * .68,
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Text(
+                    title,
+                    maxLines: dense ? 1 : 2,
+                    overflow: TextOverflow.ellipsis,
+                    textAlign: TextAlign.start,
+                    style: TextStyle(
+                      fontSize: titleSize,
+                      height: 1.2,
+                      color: Colors.white,
+                      fontWeight: FusionTypography.semiBoldFontWeight,
+                      fontVariations: FusionTypography.semiBold,
+                      shadows: const [
+                        Shadow(blurRadius: 20, color: Color(0x66000000)),
+                      ],
+                    ),
+                  ),
+                  if (showArtist) ...[
+                    SizedBox(height: dense ? 2 : 5),
+                    Text(
+                      artist,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      textAlign: TextAlign.start,
+                      style: TextStyle(
+                        fontSize: dense ? 13 : 16,
+                        color: Colors.white.withValues(alpha: .68),
+                        fontWeight: FusionTypography.regularFontWeight,
+                        fontVariations: FusionTypography.regular,
+                      ),
+                    ),
+                  ],
+                  if (!dense && lyricsChip != null) ...[
+                    const SizedBox(height: 8),
+                    Align(
+                      alignment: Alignment.centerLeft,
+                      child: _chip(lyricsChip),
+                    ),
+                  ],
+                  SizedBox(height: dense ? 4 : 10),
+                  Expanded(
+                    child: _lyricsColumn(
+                      activeFontSize: activeFont,
+                      inactiveFontSize: activeFont * .68,
+                    ),
+                  ),
+                ],
               ),
             ),
           ],
@@ -825,7 +893,7 @@ class _PlayerViewState extends State<PlayerView> {
         source: widget.artworkSource,
         size: size,
         hasPlayback: _hasPlayback,
-        identity: widget.artworkIdentity,
+        identity: _artworkCardIdentity,
         flipDirection: artworkFlipDirection,
       ),
     ),
@@ -838,10 +906,10 @@ class _PlayerViewState extends State<PlayerView> {
 
   String _centeredHint(PlaybackSnapshot playback) {
     final channel = playbackChannelForProtocol(playback.protocol);
-    if (channel == PlaybackChannel.airPlay) {
-      return 'AirPlay 2 不提供歌词';
-    }
-    return lyricsEmptyCopyForChannel(channel).title;
+    final copy = lyricsEmptyCopyForChannel(channel);
+    // Neutral runtime wording: never claim the protocol lacks lyric support.
+    if (channel == PlaybackChannel.airPlay) return copy.description;
+    return copy.title;
   }
 
   /// Single-column centered layout used when no lyrics can be displayed:
@@ -862,7 +930,9 @@ class _PlayerViewState extends State<PlayerView> {
         // status bar are accounted for. Size the cover from the space that is
         // actually left after the text block instead of letting it overflow
         // under the dock (which used to clip the channel hint).
-        final ultra = available < 230;
+        // Keep the artist line visible on 360-high phones; only the extremely
+        // short fallback (e.g. split-screen) drops it.
+        final ultra = available < 190;
         final compact = available < 360;
         final titleSize = ultra
             ? 17.0
@@ -1012,11 +1082,8 @@ class _PlayerViewState extends State<PlayerView> {
   }
 
   String? _lyricsStatusLabel(PlaybackSnapshot playback) {
-    if (playbackChannelForProtocol(playback.protocol) ==
-        PlaybackChannel.airPlay) {
-      // AirPlay 2 never carries lyrics; don't advertise a lyric state chip.
-      return null;
-    }
+    // Availability is decided from the payload, not the protocol: AirPlay can
+    // carry lyrics from senders that support it.
     final lyrics = playback.lyrics;
     if (lyrics != null && lyrics.hasLyrics) {
       if (lyrics.hasWordTiming) return '逐字歌词';

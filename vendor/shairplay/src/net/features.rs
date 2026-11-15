@@ -146,17 +146,49 @@ pub fn receiver_features() -> u64 {
 
 /// Features for an audio-only receiver.
 ///
-/// Same known-good AP2 audio profile as [`receiver_features_for_pairing`], but
-/// the `hls` build's optional video/HLS bits (bit 0 = AirPlay video v1,
-/// bit 4 = HTTP Live Streaming) are **not** advertised. Smartphones then treat
-/// the receiver as an audio device instead of a TV/screen target.
+/// An audio-only receiver must **never** be advertised as a video target: Apple
+/// senders decide between audio and video/screen-mirroring from these bits (and
+/// the advertised model). Do not derive this set by clearing bits from the
+/// `video`/`hls` profiles — build the pure audio capability set directly so a
+/// future profile change cannot reintroduce video bits.
 pub(crate) fn receiver_features_for_pairing_with(
     requires_pin_pairing: bool,
     audio_only: bool,
 ) -> u64 {
-    let mut features = receiver_features_for_pairing(requires_pin_pairing);
     if audio_only {
-        features &= !((1u64 << 0) | (1u64 << 4));
+        return audio_only_features(requires_pin_pairing);
+    }
+    receiver_features_for_pairing(requires_pin_pairing)
+}
+
+/// Pure audio-only AirPlay 2 feature set (model `AirPort10,115`).
+///
+/// Contains audio, FairPlay, progress, an audio format range, unified media
+/// control, buffered audio, PTP, HomeKit pairing and transient pairing. It
+/// deliberately contains **no** video/photo/screen/HLS bits, independent of
+/// which optional crate features (`video`, `hls`) are compiled in.
+pub(crate) fn audio_only_features(requires_pin_pairing: bool) -> u64 {
+    use AirPlayFeature::*;
+    let bits: &[AirPlayFeature] = &[
+        SupportsAirPlayAudio,                  // bit 9
+        AudioRedundant,                        // bit 11
+        Authentication4,                       // bit 14 — FairPlay
+        MetadataProgress,                      // bit 16
+        AudioFormats0,                         // bit 18
+        AudioFormats1,                         // bit 19
+        AudioFormats2,                         // bit 20
+        AudioFormats4,                         // bit 22
+        HasUnifiedAdvertiserInfo,              // bit 30
+        SupportsUnifiedMediaControl,           // bit 38
+        SupportsBufferedAudio,                 // bit 40
+        SupportsPtp,                           // bit 41
+        SupportsHkPairingAndAccessControl,     // bit 46
+        SupportsTransientPairing,              // bit 47
+        SupportsCoreUtilsPairingAndEncryption, // bit 48
+    ];
+    let mut features = features_from(bits);
+    if requires_pin_pairing {
+        features &= !(1u64 << (SupportsTransientPairing as u8));
     }
     features
 }
@@ -261,6 +293,67 @@ mod tests {
         assert!(f & (1 << 9) != 0);
         assert!(f & (1 << 41) != 0);
         assert!(f & (1 << 0) == 0);
+    }
+
+    /// VIDEO_BITS are the feature bits Apple senders use to decide that a
+    /// receiver can act as a video / photo / screen-mirroring target.
+    const VIDEO_BITS: &[u8] = &[0, 1, 2, 4, 5, 6, 7, 10, 12, 13, 25, 28, 33, 42, 44, 49];
+
+    #[test]
+    fn audio_only_features_are_pure_audio_regardless_of_build_features() {
+        for pin in [false, true] {
+            let features = receiver_features_for_pairing_with(pin, true);
+            for &bit in VIDEO_BITS {
+                assert_eq!(
+                    features & (1u64 << bit),
+                    0,
+                    "audio-only receiver must never advertise video bit {bit} (pin={pin})"
+                );
+            }
+            // Audio, FairPlay, metadata, AP2 timing/buffered audio and pairing
+            // capabilities must stay.
+            for bit in [9u8, 11, 14, 16, 18, 19, 20, 22, 30, 38, 40, 41, 46, 48] {
+                assert_ne!(
+                    features & (1u64 << bit),
+                    0,
+                    "audio-only receiver must keep needed bit {bit}"
+                );
+            }
+            if pin {
+                assert_eq!(features & (1u64 << 47), 0, "PIN pairing clears transient bit");
+            } else {
+                assert_ne!(features & (1u64 << 47), 0, "transient pairing bit kept without PIN");
+            }
+            // Exact values are pinned: 0x0001C340405D4A00 (no PIN) and
+            // 0x00014340405D4A00 (PIN, transient bit cleared).
+            let expected = if pin {
+                0x0001_4340_405D_4A00u64
+            } else {
+                0x0001_C340_405D_4A00u64
+            };
+            assert_eq!(
+                features, expected,
+                "audio-only feature set drifted (pin={pin})"
+            );
+        }
+    }
+
+    #[test]
+    fn non_audio_only_profiles_keep_their_existing_behaviour() {
+        // Sanity: the audio-only fix must not change the full-capability
+        // profiles (video build still uses UxPlay's set, hls adds relay bits).
+        #[cfg(feature = "video")]
+        assert_eq!(receiver_features_for_pairing_with(false, false), 0x527F_FEE6);
+        #[cfg(all(not(feature = "video"), feature = "hls"))]
+        assert_eq!(
+            receiver_features_for_pairing_with(false, false),
+            0x0001_C340_405D_4A11
+        );
+        #[cfg(all(not(feature = "video"), not(feature = "hls")))]
+        assert_eq!(
+            receiver_features_for_pairing_with(false, false),
+            0x0001_C340_405D_4A00
+        );
     }
 
     #[test]

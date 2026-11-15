@@ -647,6 +647,63 @@ mod ap2_tests {
         server.stop().await;
     }
 
+    #[tokio::test]
+    #[serial]
+    async fn ap2_get_info_audio_only_is_not_a_video_target() {
+        // Regression: 1.4.0 advertised the correct audio-only mDNS profile but
+        // GET /info still returned AppleTV6,2 plus video/HLS feature bits, so
+        // iOS/macOS offered the receiver as a TV / screen-mirroring target.
+        let mut server = RaopServer::builder()
+            .name("AudioOnlyTest")
+            .hwaddr([0x00, 0x11, 0x22, 0x33, 0x44, 0x55])
+            .port(0)
+            .audio_only(true)
+            .build(empty_handler())
+            .unwrap();
+        server.start().await.unwrap();
+        let port = server.service_info().port;
+
+        let mut stream = TcpStream::connect(format!("127.0.0.1:{port}")).await.unwrap();
+        stream
+            .write_all(b"GET /info RTSP/1.0\r\nCSeq: 1\r\n\r\n")
+            .await
+            .unwrap();
+        let mut buf = vec![0u8; 16384];
+        let n = stream.read(&mut buf).await.unwrap();
+        let headers = String::from_utf8_lossy(&buf[..n]);
+        assert!(headers.contains("200 OK"), "GET /info should be 200 OK: {headers}");
+        let header_end = headers.find("\r\n\r\n").map(|p| p + 4).unwrap_or(n);
+        let body = buf[header_end..n].to_vec();
+        let plist_val = plist::Value::from_reader(std::io::Cursor::new(body))
+            .expect("GET /info body should be a valid plist");
+        let dict = plist_val.as_dictionary().expect("dictionary");
+
+        assert_eq!(
+            dict.get("model").and_then(|value| value.as_string()),
+            Some("AirPort10,115"),
+            "audio-only /info must not advertise the AppleTV model"
+        );
+        let features = dict
+            .get("features")
+            .and_then(|value| value.as_unsigned_integer())
+            .expect("features");
+        for bit in [0u8, 1, 2, 4, 5, 6, 7, 49] {
+            assert_eq!(
+                features & (1u64 << bit),
+                0,
+                "audio-only /info must not advertise video bit {bit}"
+            );
+        }
+        assert_ne!(features & (1u64 << 9), 0, "audio capability missing");
+        assert_ne!(features & (1u64 << 40), 0, "buffered audio capability missing");
+        assert!(
+            dict.get("displays").is_none(),
+            "audio-only /info must not advertise a display"
+        );
+
+        server.stop().await;
+    }
+
     async fn perform_transient_pairing(stream: &mut TcpStream) -> [u8; 64] {
         use num_bigint::BigUint;
         use sha2::{Digest, Sha512};

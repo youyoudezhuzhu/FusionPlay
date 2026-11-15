@@ -174,8 +174,11 @@ class _FusionPlayHomeState extends State<FusionPlayHome> {
       widget.state.playback.coverArt,
     );
     final nextIdentity = widget.state.playback.artworkTransitionIdentity;
-    if (nextArtwork == _requestedArtworkSource &&
-        nextIdentity == _requestedArtworkIdentity) {
+    if (nextArtwork == _requestedArtworkSource) {
+      // Same (or still absent) cover image: now-playing metadata/track identity
+      // churn must not restart the artwork flip. Keep the displayed identity
+      // until the actual image source changes.
+      _requestedArtworkIdentity = nextIdentity;
       return;
     }
     _requestedArtworkSource = nextArtwork;
@@ -208,7 +211,9 @@ class _FusionPlayHomeState extends State<FusionPlayHome> {
             _requestedArtworkIdentity == identity) {
           setState(() {
             _displayedArtworkSource = null;
-            _displayedArtworkIdentity = identity;
+            _displayedArtworkIdentity = _displayedArtworkSource == null
+                ? _displayedArtworkIdentity
+                : identity;
           });
         }
       });
@@ -222,8 +227,10 @@ class _FusionPlayHomeState extends State<FusionPlayHome> {
           _requestedArtworkSource == source &&
           _requestedArtworkIdentity == identity) {
         setState(() {
+          _displayedArtworkIdentity = _displayedArtworkSource == source
+              ? _displayedArtworkIdentity
+              : identity;
           _displayedArtworkSource = source;
-          _displayedArtworkIdentity = identity;
         });
       }
     } catch (_) {
@@ -611,37 +618,44 @@ class _FusionPlayHomeState extends State<FusionPlayHome> {
                       alignment: Alignment.topCenter,
                       child: Padding(
                         padding: const EdgeInsets.all(16),
-                        child: Material(
-                          color: const Color(0xFFE3E3E3),
-                          borderRadius: BorderRadius.circular(22),
-                          child: Padding(
-                            padding: const EdgeInsets.only(
-                              left: 18,
-                              right: 6,
-                              top: 6,
-                              bottom: 6,
+                        child: LiquidGlass(
+                          key: const ValueKey('error-toast'),
+                          level: GlassLevel.panel,
+                          interactive: true,
+                          borderRadius: 22,
+                          padding: const EdgeInsets.fromLTRB(18, 8, 6, 8),
+                          child: DefaultTextStyle.merge(
+                            style: const TextStyle(
+                              color: Color(0xEBFFFFFF),
+                              fontSize: 14,
                             ),
-                            child: Row(
-                              mainAxisSize: MainAxisSize.min,
-                              children: [
-                                Flexible(
-                                  child: Text(
-                                    state.lastError!,
-                                    maxLines: 2,
-                                    overflow: TextOverflow.ellipsis,
-                                  ),
-                                ),
-                                RemoteFocusFrame(
-                                  onActivate: widget.controller.clearError,
-                                  shape: const CircleBorder(),
-                                  child: IconButton(
-                                    onPressed: widget.controller.clearError,
-                                    icon: const FusionVectorIcon(
-                                      FusionIcons.close,
+                            child: IconTheme.merge(
+                              data: const IconThemeData(
+                                color: Color(0xDEFFFFFF),
+                              ),
+                              child: Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  Flexible(
+                                    child: Text(
+                                      state.lastError!,
+                                      maxLines: 2,
+                                      overflow: TextOverflow.ellipsis,
                                     ),
                                   ),
-                                ),
-                              ],
+                                  RemoteFocusFrame(
+                                    onActivate: widget.controller.clearError,
+                                    borderColor: Colors.white,
+                                    shape: const CircleBorder(),
+                                    child: IconButton(
+                                      onPressed: widget.controller.clearError,
+                                      icon: const FusionVectorIcon(
+                                        FusionIcons.close,
+                                      ),
+                                    ),
+                                  ),
+                                ],
+                              ),
                             ),
                           ),
                         ),

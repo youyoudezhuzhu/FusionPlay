@@ -546,6 +546,15 @@ pub(crate) mod tests {
         handler: Arc<dyn AudioHandler>,
         audio_latency_frames: u32,
     ) -> RaopConnection {
+        test_connection_with_profile(handler, audio_latency_frames, false)
+    }
+
+    /// Build a test connection with a configurable audio-only profile.
+    pub(crate) fn test_connection_with_profile(
+        handler: Arc<dyn AudioHandler>,
+        audio_latency_frames: u32,
+        audio_only: bool,
+    ) -> RaopConnection {
         let shared = Arc::new(RaopShared {
             rsakey: Arc::new(RsaKey::from_pem(include_str!("../../airport.key")).unwrap()),
             pairing: Arc::new(Pairing::generate().unwrap()),
@@ -561,6 +570,8 @@ pub(crate) mod tests {
             audio_latency_frames,
             #[cfg(feature = "ap2")]
             pin: None,
+            #[cfg(feature = "ap2")]
+            audio_only,
             #[cfg(feature = "ap2")]
             rtcp_announce: Arc::new(std::sync::Mutex::new(None)),
             #[cfg(feature = "ap2")]

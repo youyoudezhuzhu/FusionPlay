@@ -82,10 +82,12 @@ pub trait PcmOutput: Send + Sync {
 const OUTPUT_BACKLOG_MILLISECONDS: usize = 80;
 /// Android can briefly delay even a high-priority Oboe callback while the
 /// system changes routes, restores an AudioTrack, or schedules heavy UI work.
-/// Keep a backend-sized cushion comparable to mature AirPlay receivers rather
-/// than treating those ordinary stalls as missing network audio.
+/// 1.4.0 shipped a 240 ms cue and still stuttered on ColorOS; the AirPlay 2
+/// protocol buffer is 2 s, so spending 480 ms on the *local* output cushion
+/// only moves the audible delay to 2.48 s while removing the underrun/stutter
+/// cycle. Keep this a small fraction of the protocol latency.
 #[cfg(target_os = "android")]
-const OUTPUT_BACKLOG_MILLISECONDS: usize = 240;
+const OUTPUT_BACKLOG_MILLISECONDS: usize = 480;
 /// Amount of decoded PCM collected before the platform output starts draining.
 ///
 /// AirPlay realtime audio arrives in short network packets. Starting from the
@@ -97,26 +99,64 @@ const OUTPUT_PREFILL_MILLISECONDS: usize = 40;
 /// A larger one-time/recovery fill prevents a short scheduling delay at the
 /// start of a connection from becoming a repeating fill/drain cycle.
 #[cfg(target_os = "android")]
-const OUTPUT_PREFILL_MILLISECONDS: usize = 120;
+const OUTPUT_PREFILL_MILLISECONDS: usize = 240;
 
 struct AudioBuffer {
     samples: VecDeque<f32>,
     capacity: usize,
     prefill: usize,
     primed: bool,
+    /// True while the output is waiting to build the initial/recovery prefill.
+    waiting_for_prefill: bool,
+    /// Number of times the queue ran dry while output was primed.
+    underruns: u64,
+    /// Number of times output had to wait for the prefill cushion again.
+    prefill_waits: u64,
+    #[cfg_attr(not(any(target_os = "android", test)), allow(dead_code))]
+    channels: usize,
+}
+
+/// Snapshot of the local output cushion, used for rate-limited diagnostics.
+#[cfg_attr(not(any(target_os = "android", test)), allow(dead_code))]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+struct AudioBufferStats {
+    underruns: u64,
+    prefill_waits: u64,
+    buffered_frames: usize,
+    capacity_frames: usize,
+    prefill_frames: usize,
 }
 
 impl AudioBuffer {
     fn new(sample_rate: u32, channels: u16) -> Self {
-        let capacity =
-            sample_rate as usize * channels as usize * OUTPUT_BACKLOG_MILLISECONDS / 1_000;
-        let prefill =
-            sample_rate as usize * channels as usize * OUTPUT_PREFILL_MILLISECONDS / 1_000;
+        Self::new_with_limits(
+            sample_rate,
+            channels,
+            OUTPUT_BACKLOG_MILLISECONDS,
+            OUTPUT_PREFILL_MILLISECONDS,
+        )
+    }
+
+    /// Build a buffer with explicit millisecond limits (also used by tests).
+    #[cfg_attr(not(any(target_os = "android", test)), allow(dead_code))]
+    fn new_with_limits(
+        sample_rate: u32,
+        channels: u16,
+        backlog_milliseconds: usize,
+        prefill_milliseconds: usize,
+    ) -> Self {
+        let channels = channels.max(1) as usize;
+        let capacity = sample_rate as usize * channels * backlog_milliseconds / 1_000;
+        let prefill = sample_rate as usize * channels * prefill_milliseconds / 1_000;
         Self {
             samples: VecDeque::with_capacity(capacity),
             capacity,
             prefill: prefill.clamp(1, capacity.max(1)),
             primed: false,
+            waiting_for_prefill: false,
+            underruns: 0,
+            prefill_waits: 0,
+            channels,
         }
     }
 
@@ -144,14 +184,22 @@ impl AudioBuffer {
     fn pop(&mut self) -> f32 {
         if !self.primed {
             if self.samples.len() < self.prefill {
+                if !self.waiting_for_prefill {
+                    self.waiting_for_prefill = true;
+                    self.prefill_waits = self.prefill_waits.saturating_add(1);
+                }
                 return 0.0;
             }
             self.primed = true;
+            self.waiting_for_prefill = false;
         }
         match self.samples.pop_front() {
             Some(sample) => sample,
             None => {
+                // Ran dry while audible: the next output resumes only after the
+                // full prefill cushion has been rebuilt.
                 self.primed = false;
+                self.underruns = self.underruns.saturating_add(1);
                 0.0
             }
         }
@@ -160,6 +208,18 @@ impl AudioBuffer {
     fn clear(&mut self) {
         self.samples.clear();
         self.primed = false;
+        self.waiting_for_prefill = false;
+    }
+
+    #[cfg_attr(not(any(target_os = "android", test)), allow(dead_code))]
+    fn stats(&self) -> AudioBufferStats {
+        AudioBufferStats {
+            underruns: self.underruns,
+            prefill_waits: self.prefill_waits,
+            buffered_frames: self.samples.len() / self.channels,
+            capacity_frames: self.capacity / self.channels,
+            prefill_frames: self.prefill / self.channels,
+        }
     }
 }
 
@@ -605,10 +665,17 @@ fn open_android_audio_stream(
         gain_bits,
         commands,
     };
+    // Stability beats a few milliseconds here: `LowLatency` + `Shared` on
+    // ColorOS/OPPO requests a very small hardware buffer, and scheduling
+    // hiccups on those devices drained it repeatedly (audible stutter even
+    // with a 240 ms app-level cushion). The AirPlay 2 protocol already buffers
+    // two seconds, so a normal-latency Oboe stream plus the 480/240 ms local
+    // cushion is imperceptible while being far more tolerant of callback
+    // jitter. See OUTPUT_BACKLOG_MILLISECONDS / OUTPUT_PREFILL_MILLISECONDS.
     let mut stream = AudioStreamBuilder::default()
         .set_usage(Usage::Media)
         .set_content_type(ContentType::Music)
-        .set_performance_mode(PerformanceMode::LowLatency)
+        .set_performance_mode(PerformanceMode::None)
         .set_sharing_mode(SharingMode::Shared)
         .set_sample_rate(sample_rate as i32)
         .set_sample_rate_conversion_quality(SampleRateConversionQuality::Medium)
@@ -633,7 +700,50 @@ fn manage_android_audio_output(
     sample_rate: u32,
 ) {
     let mut stream = Some(initial_stream);
-    while let Ok(command) = receiver.recv() {
+    // One startup line so the next exported log shows the active cushion and
+    // Oboe mode even when playback is otherwise healthy.
+    if let Ok(buffer) = buffer.lock() {
+        let stats = buffer.stats();
+        let message = format!(
+            "Android 音频输出已就绪：Oboe 稳定模式，本地缓冲 {} ms（容量 {} ms，{} 帧），采样率 {} Hz",
+            stats.prefill_frames * 1_000 / sample_rate.max(1) as usize,
+            stats.capacity_frames * 1_000 / sample_rate.max(1) as usize,
+            stats.prefill_frames,
+            sample_rate
+        );
+        events.emit(CoreEvent::Log {
+            level: "info",
+            message: &message,
+        });
+    }
+    let mut last_stats = AudioBufferStats::default();
+    loop {
+        let command = match receiver.recv_timeout(Duration::from_secs(2)) {
+            Ok(command) => command,
+            Err(mpsc::RecvTimeoutError::Timeout) => {
+                // Rate-limited observability: report only when an underrun or
+                // a prefill restart actually happened since the last report.
+                let stats = buffer.lock().map(|buffer| buffer.stats()).unwrap_or_default();
+                if stats.underruns > last_stats.underruns
+                    || stats.prefill_waits > last_stats.prefill_waits
+                {
+                    let message = format!(
+                        "Android 音频输出欠载：累计 underrun {} 次、重新预填充 {} 次，当前缓冲 {:.0} ms / 容量 {:.0} ms",
+                        stats.underruns,
+                        stats.prefill_waits,
+                        stats.buffered_frames as f64 * 1_000.0 / sample_rate.max(1) as f64,
+                        stats.capacity_frames as f64 * 1_000.0 / sample_rate.max(1) as f64
+                    );
+                    events.emit(CoreEvent::Log {
+                        level: "warning",
+                        message: &message,
+                    });
+                    last_stats = stats;
+                }
+                continue;
+            }
+            Err(mpsc::RecvTimeoutError::Disconnected) => break,
+        };
         match command {
             AndroidAudioCommand::Shutdown => break,
             AndroidAudioCommand::Restart(error) => {
@@ -671,6 +781,7 @@ fn manage_android_audio_output(
                     });
                     break;
                 }
+                last_stats = buffer.lock().map(|buffer| buffer.stats()).unwrap_or_default();
             }
         }
     }
@@ -1228,6 +1339,51 @@ fn progress_milliseconds(start: u32, current: u32, end: u32, timebase: u32) -> O
     ))
 }
 
+
+/// Report previously unseen DMAP tags (four-character tag + payload length)
+/// through the event log, once per tag per process.
+///
+/// AirPlay's DMAP metadata has no documented lyrics tag; if iOS/macOS 27 or an
+/// app starts sending one (e.g. `asly`), this rate-limited line makes it
+/// visible in the next exported log without recording any metadata content.
+fn report_unknown_dmap_tags(events: &EventSink, unknown_tags: &[(String, u32)]) {
+    use std::collections::HashSet;
+    use std::sync::OnceLock;
+
+    static REPORTED: OnceLock<Mutex<HashSet<String>>> = OnceLock::new();
+    const MAX_REPORTED_TAGS: usize = 256;
+    if unknown_tags.is_empty() {
+        return;
+    }
+    let Ok(mut reported) = REPORTED.get_or_init(|| Mutex::new(HashSet::new())).lock() else {
+        return;
+    };
+    if reported.len() >= MAX_REPORTED_TAGS {
+        return;
+    }
+    let mut fresh = Vec::new();
+    for (tag, len) in unknown_tags {
+        if reported.insert(tag.clone()) {
+            fresh.push(format!("{tag}({len})"));
+            if fresh.len() >= 32 || reported.len() >= MAX_REPORTED_TAGS {
+                break;
+            }
+        }
+    }
+    drop(reported);
+    if fresh.is_empty() {
+        return;
+    }
+    let message = format!(
+        "AirPlay 元数据包含未知 DMAP 标签（诊断，仅标签名+长度）：{}",
+        fresh.join(", ")
+    );
+    events.emit(CoreEvent::Log {
+        level: "info",
+        message: &message,
+    });
+}
+
 fn merge_track_metadata(
     current: Option<&TrackMetadata>,
     incoming: &TrackMetadata,
@@ -1248,6 +1404,8 @@ fn merge_track_metadata(
         duration_ms: incoming.duration_ms.filter(|duration| *duration > 0),
         track_number: incoming.track_number.filter(|number| *number > 0),
         disc_number: incoming.disc_number.filter(|number| *number > 0),
+        // Diagnostics are reported from `on_metadata`, never merged/persisted.
+        unknown_tags: Vec::new(),
     };
     let identity_changed = current.is_some_and(|current| {
         let title_changed = sanitized
@@ -1387,6 +1545,7 @@ impl AudioHandler for ReceiverAudioHandler {
     }
 
     fn on_metadata(&self, metadata: &TrackMetadata) {
+        report_unknown_dmap_tags(&self.events, &metadata.unknown_tags);
         let Some(session) = self.current_session() else {
             return;
         };
@@ -1791,6 +1950,38 @@ mod tests {
     }
 
     #[test]
+    fn android_style_cushion_prefills_and_reports_underruns() {
+        // 480 ms backlog / 240 ms prefill is the Android stabilised cushion:
+        // still well below the 2 s AirPlay 2 protocol latency.
+        let mut buffer = AudioBuffer::new_with_limits(48_000, 2, 480, 240);
+        let stats = buffer.stats();
+        assert_eq!(stats.capacity_frames, 48_000 * 480 / 1_000);
+        assert_eq!(stats.prefill_frames, 48_000 * 240 / 1_000);
+
+        // Less than the prefill → silence, and the wait is counted once.
+        let hundred_ms = vec![0.25_f32; 48_000 * 2 / 10];
+        buffer.push(&hundred_ms);
+        buffer.push(&hundred_ms);
+        assert_eq!(buffer.pop(), 0.0);
+        assert_eq!(buffer.pop(), 0.0);
+        let stats = buffer.stats();
+        assert_eq!(stats.prefill_waits, 1);
+        assert_eq!(stats.underruns, 0);
+
+        // Cross the prefill threshold → real audio starts.
+        buffer.push(&hundred_ms);
+        assert_eq!(buffer.pop(), 0.25);
+
+        // Drain while primed → exactly one underrun event, never a panic.
+        for _ in 0..(48_000 * 2 * 3 / 10) {
+            let _ = buffer.pop();
+        }
+        let stats = buffer.stats();
+        assert_eq!(stats.underruns, 1);
+        assert_eq!(stats.buffered_frames, 0);
+    }
+
+    #[test]
     fn windows_output_backlog_is_bounded_and_keeps_the_newest_audio() {
         let mut buffer = AudioBuffer::new(1_000, 1);
         let samples: Vec<f32> = (0..300).map(|sample| sample as f32).collect();
@@ -1799,6 +1990,36 @@ mod tests {
 
         assert_eq!(buffer.samples.len(), 80);
         assert_eq!(buffer.pop(), 220.0);
+    }
+
+    #[test]
+    fn unknown_dmap_tags_are_logged_once_without_content() {
+        let (handler, _arbiter, _buffer) = test_handler();
+        handler.on_metadata(&TrackMetadata {
+            title: Some("Track".into()),
+            unknown_tags: vec![("zzdiag".to_owned(), 64)],
+            ..TrackMetadata::default()
+        });
+        handler.on_metadata(&TrackMetadata {
+            title: Some("Track".into()),
+            unknown_tags: vec![("zzdiag".to_owned(), 64)],
+            ..TrackMetadata::default()
+        });
+
+        let messages: Vec<String> = handler
+            .events
+            .captured_events()
+            .iter()
+            .filter(|event| event["type"] == "log")
+            .filter_map(|event| event["message"].as_str().map(ToOwned::to_owned))
+            .filter(|message| message.contains("未知 DMAP 标签"))
+            .collect();
+        assert_eq!(messages.len(), 1, "unknown tag reported exactly once");
+        assert!(messages[0].contains("zzdiag(64)"), "tag+length must be logged");
+        assert!(
+            !messages[0].contains("payload"),
+            "no metadata content may be logged"
+        );
     }
 
     #[test]
@@ -2182,6 +2403,7 @@ mod tests {
             duration_ms: Some(180_000),
             track_number: Some(3),
             disc_number: Some(1),
+            unknown_tags: Vec::new(),
         };
         let incoming = TrackMetadata {
             title: None,

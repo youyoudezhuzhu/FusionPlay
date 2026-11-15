@@ -284,6 +284,8 @@ impl RaopServerBuilder {
             #[cfg(feature = "ap2")]
             pin: self.pin,
             #[cfg(feature = "ap2")]
+            audio_only: self.audio_only,
+            #[cfg(feature = "ap2")]
             rtcp_announce: Arc::new(std::sync::Mutex::new(None)),
             #[cfg(feature = "ap2")]
             peers: Arc::new(std::sync::Mutex::new(Vec::new())),

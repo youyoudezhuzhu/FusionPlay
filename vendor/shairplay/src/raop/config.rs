@@ -11,6 +11,12 @@
 /// Apple clients cache the model against the persistent device identifier.
 pub(crate) const GLOBAL_MODEL: &str = "AppleTV6,2";
 
+/// Audio-only hardware model advertised to Apple clients.
+///
+/// An AirPort Express-style audio endpoint tells iOS/macOS that this receiver
+/// is an audio output, never a TV / screen-mirroring target.
+pub(crate) const AUDIO_ONLY_MODEL: &str = "AirPort10,115";
+
 // --- Audio output latency ---
 //
 // Advertised in the RTSP `RECORD` `Audio-Latency` header. The sender buffers

@@ -113,6 +113,28 @@ offset-only behaviour. No iOS/macOS 27 hardware was available to validate the
 27-specific paths (SETMAGICCOOKIE, buffered ALAC from Apple Music, RTCP timing)
 end to end.
 
+### Receiver classification (audio-only vs TV/video)
+
+Apple senders classify a receiver from `GET /info` (and the event channel's
+`updateInfo`) as well as mDNS. An audio-only receiver therefore answers all of
+those with the pure audio feature set (no video/photo/screen/HLS bits) and the
+`AirPort10,115` model; `receiver_features_for_pairing_with(.., audio_only=true)`
+builds that set directly instead of clearing bits from the video profile. 1.4.0
+advertised the mDNS audio profile correctly but still returned `AppleTV6,2` plus
+video/HLS bits from `/info`, which made iOS/macOS offer screen mirroring. This
+is covered by unit tests in `net::features`, `net::mdns` and
+`handlers_ap2::info_profile`.
+
+### Lyrics in AirPlay metadata (no verifiable field)
+
+AirPlay's DMAP metadata carries `minm` (title), `asar`, `asal`, `asgn`, `astm`,
+`astn` and `asdk`; neither this crate, shairport-sync, nor the openairplay
+`dxxp.py` tag table defines a lyrics field. Changing `title` lengths in captured
+logs therefore cannot be treated as lyrics. To detect vendor extensions (which
+may appear with iOS/macOS 27) unknown DMAP tags are now reported (tag + payload
+length only, never content) as a rate-limited event log, so the next exported
+log can confirm or rule out a lyrics tag.
+
 ### Security hardening
 
 * ALAC decoder: frame length bounded (≤16384 samples), bit depth restricted to

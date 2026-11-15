@@ -94,3 +94,35 @@ MediaRemote 不是公开的 AirPlay 2 API。本实现参考了 2026 年 2 月公
 上游 Cargo 元数据声明 `LGPL-3.0-or-later`，但
 `src/raop/config.rs` 标注 `GPL-3.0-only`。请同时阅读本目录的 `LICENSE`
 和项目根目录的 `THIRD_PARTY_NOTICES.md`。在上游澄清前，本项目只按内部研究原型交付。
+
+## 2026-11 Android 1.4.0 实机问题修复
+
+- **AirPlay 被识别成 TV/投屏目标（已修）**：根因有两个，均在"接收器自述"路径上：
+  1. `GET /info`（及加密 event channel 的 `updateInfo`、`/server-info`）此前用
+     `receiver_features_for_pairing` 生成 `features` 且固定 `model=AppleTV6,2`，
+     `hls` 构建下会带上 bit0（AirPlay video v1）/ bit4（HLS），iOS/macOS 因此把
+     音频接收器当电视/投屏目标。现在这些响应根据 `audio_only` 使用纯音频
+     feature set 和 `AirPort10,115` 模型。
+  2. `receiver_features_for_pairing_with(audio_only=true)` 不再从 `video` 特性集
+     清位，而是直接构建纯音频 AP2 feature set（见 `audio_only_features`），
+     保证任何 feature 组合下都不含 bit0/1/2/4/5/6/7/10/12/13/25/28/33/42/44/49。
+  - mDNS `_airplay`/`_raop` 的 `features`/`ft` 与 `am`/`model` 本来就是纯音频值
+    （0x0001C340405D4A00 / AirPort10,115），现在 `/info` 与真实广播一致。
+  - 回归测试：vendor `net::features`、`net::mdns`、`handlers_ap2::info_profile`；
+    core `host::tests::audio_only_settings_produce_an_audio_only_service_info`
+    与 Android `android_jni` 设置断言。
+- **AirPlay 2 播放卡顿稳定化**：审查未发现丢包/时间戳解码 bug（AAC 44100→48000
+  路径、buffered 103 播放均正常）。低风险稳定化：
+  - Android 本地输出缓冲 240→480 ms、预填充 120→240 ms（仍远小于协议 2s）；
+  - Oboe `PerformanceMode::LowLatency` → `None`（ColorOS/OPPO 上 Shared+LowLatency
+    的小硬件缓冲更易 underrun）；
+  - `AudioBuffer` 增加限频可观测性：累计 underrun / 重新预填充次数、当前缓冲 ms，
+    启动时输出一条缓冲配置日志，发生欠载时最多每 2s 一条 warning（供下次日志确认）。
+  - 延迟影响：稳态本地延迟 +240 ms（约 2.24–2.48 s 总延迟），换来更稳的输出。
+- **AirPlay 歌词协议诊断**：核对 AirPlay DMAP 标签（vendor 解析器、shairport-sync、
+  openairplay `dxxp.py`）均**没有歌词字段**；`TrackMetadata` 只有
+  minm/asar/asal/asgn/astm/astn/asdk。因此不伪造 lyrics 下发。新增协议层诊断：
+  未知 DMAP tag 以「4 字符标签+长度」形式（不含任何内容）经 core
+  `CoreEvent::Log` 每标签限频记录一次，供用户下次导出日志确认是否有厂商扩展
+  （如 `asly`）。日志中 now_playing 的 title_length 变化通常是发送端 App 自身的
+  now-playing 标题更新，不能据此认定存在歌词字段。

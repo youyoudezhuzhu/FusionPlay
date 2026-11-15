@@ -49,7 +49,7 @@ pub(crate) const GLOBAL_MODEL: &str = crate::raop::config::GLOBAL_MODEL;
 /// Audio-only model identifier (2nd-gen AirPort Express, AirPlay 2 audio-only).
 /// Smartphones show this receiver as a speaker, not as an Apple TV / video
 /// target; the model is what iOS uses for the device icon and video choices.
-pub(crate) const AUDIO_ONLY_MODEL: &str = "AirPort10,115";
+pub(crate) const AUDIO_ONLY_MODEL: &str = crate::raop::config::AUDIO_ONLY_MODEL;
 /// Software version string.
 pub(crate) const GLOBAL_VERSION: &str = "130.14";
 /// Darwin major version corresponding to the advertised macOS 15 profile.
@@ -558,8 +558,16 @@ mod tests {
         let features = lo | (hi << 32);
         assert_ne!(features & (1 << 9), 0, "audio feature must stay");
         assert_ne!(features & (1u64 << 40), 0, "AP2 buffered audio must stay");
-        assert_eq!(features & (1 << 0), 0, "AirPlay video v1 must be cleared");
-        assert_eq!(features & (1 << 4), 0, "HLS video must be cleared");
+        assert_ne!(features & (1u64 << 41), 0, "PTP must stay");
+        // No video/photo/screen/HLS capability may be advertised at all,
+        // otherwise iOS/macOS offer the receiver as a TV target.
+        for bit in [0u8, 1, 2, 4, 5, 6, 7, 10, 12, 13, 25, 28, 33, 42, 44, 49] {
+            assert_eq!(
+                features & (1u64 << bit),
+                0,
+                "audio-only mDNS features leaked video bit {bit}"
+            );
+        }
         assert_eq!(
             find(&info.raop_txt, "ft").as_deref(),
             Some(features_txt.as_str()),

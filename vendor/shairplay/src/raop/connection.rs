@@ -44,6 +44,11 @@ pub(crate) struct RaopShared {
     pub(crate) audio_latency_frames: u32,
     #[cfg(feature = "ap2")]
     pub(crate) pin: Option<String>,
+    /// Whether this receiver advertises the audio-only profile. Also gates the
+    /// `features`/`model` returned by `GET /info` and the encrypted event
+    /// channel's `updateInfo`, which is how iOS/macOS classify the receiver.
+    #[cfg(feature = "ap2")]
+    pub(crate) audio_only: bool,
     /// Latest RTCP time announce from the sender's control channel. Written by
     /// the per-connection [`crate::raop::rtcp::RtcpListener`], read by the
     /// buffered-audio playout as a fallback anchor.

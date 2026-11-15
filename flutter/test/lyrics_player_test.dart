@@ -161,6 +161,31 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
+  testWidgets('信息顺序：封面 → 标题 → 作者 → 歌词（横向布局）', (tester) async {
+    await _pumpPlayer(
+      tester,
+      _state(lyrics: _lyrics(), protocol: 'airplay'),
+      size: const Size(800, 360),
+    );
+
+    expect(
+      find.byKey(const ValueKey('player-layout-horizontal')),
+      findsOneWidget,
+    );
+    final cover = tester.getRect(find.byType(ArtworkCard));
+    final title = tester.getRect(find.text('Track'));
+    final artist = tester.getRect(find.text('Artist'));
+    final lyrics = tester.getRect(
+      find.byKey(const ValueKey('player-lyrics-view')),
+    );
+
+    // 标题在作者上方，歌词在标题/作者之后的下方区域。
+    expect(title.top, lessThan(artist.top));
+    expect(artist.bottom, lessThanOrEqualTo(lyrics.top + 1));
+    expect(cover.left, lessThan(title.left));
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets('无歌词时改为封面居中布局并显示渠道说明', (tester) async {
     await _pumpPlayer(tester, _state());
 
@@ -358,7 +383,7 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('AirPlay 无歌词：居中布局 + AirPlay 2 不提供歌词', (tester) async {
+  testWidgets('AirPlay 无歌词：居中布局 + 音频流未提供歌词（不按协议断言）', (tester) async {
     await _pumpPlayer(
       tester,
       _state(
@@ -372,12 +397,12 @@ void main() {
       findsOneWidget,
     );
     expect(find.byKey(const ValueKey('player-lyrics-view')), findsNothing);
-    expect(find.text('AirPlay 2 不提供歌词'), findsOneWidget);
-    expect(find.text('暂无歌词'), findsNothing);
+    expect(find.text('音频流未提供歌词'), findsOneWidget);
+    expect(find.textContaining('不提供歌词'), findsNothing);
     // 顶部保留音频来源（协议）胶囊，但不再显示音质胶囊。
     expect(find.text('AirPlay 2'), findsWidgets);
     expect(find.text('AAC / 44.1 kHz / 16-bit / 2 ch'), findsNothing);
-    // AirPlay 永远不出现歌词开关。
+    // 没有歌词时不出现歌词开关。
     expect(
       find.byKey(const ValueKey('playback-lyrics-toggle-button')),
       findsNothing,
@@ -408,16 +433,17 @@ void main() {
     expect(find.text('暂无歌词'), findsNothing);
   });
 
-  testWidgets('AirPlay 即使带 lyrics 也走居中布局（容错不崩）', (tester) async {
+  testWidgets('AirPlay 带 lyrics 时正常渲染歌词（实时判断，不按协议禁用）', (tester) async {
     await _pumpPlayer(tester, _state(lyrics: _lyrics(), protocol: 'airplay'));
 
+    expect(find.byKey(const ValueKey('player-lyrics-view')), findsOneWidget);
+    expect(find.text('第一句'), findsWidgets);
+    expect(find.text('第二句歌词'), findsOneWidget);
+    expect(find.textContaining('不提供歌词'), findsNothing);
     expect(
-      find.byKey(const ValueKey('player-centered-layout')),
+      find.byKey(const ValueKey('playback-lyrics-toggle-button')),
       findsOneWidget,
     );
-    expect(find.byKey(const ValueKey('player-lyrics-view')), findsNothing);
-    expect(find.text('第一句'), findsNothing);
-    expect(find.text('AirPlay 2 不提供歌词'), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
 

@@ -185,6 +185,13 @@ class PlaybackSnapshot {
       return result == null || result.isEmpty ? null : result;
     }
 
+    // Prefer the actual artwork source: metadata identities (trackIdentity,
+    // title/artist) change frequently on AirPlay now-playing updates even when
+    // the cover image stays the same, which used to rotate/flip the artwork on
+    // every lyric line. A real cover change still produces a new identity.
+    final coverIdentity = normalized(coverArt);
+    if (coverIdentity != null) return 'cover:$coverIdentity';
+
     final explicitIdentity = normalized(trackIdentity);
     if (explicitIdentity != null) return 'track:$explicitIdentity';
 

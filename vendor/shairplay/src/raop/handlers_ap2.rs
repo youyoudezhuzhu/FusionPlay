@@ -259,13 +259,27 @@ pub(crate) fn handle_info(
     dict.insert("macAddress".into(), plist::Value::String(hw));
     dict.insert("pi".into(), plist::Value::String(conn.shared.pairing_id.clone()));
     dict.insert("name".into(), plist::Value::String(conn.shared.airplay_name.clone()));
+    // This is where Apple senders classify the receiver: a video/HLS feature
+    // bit or the `AppleTV` model here makes iOS offer it as a TV / screen
+    // target even when the mDNS audio-only profile is correct.
     dict.insert(
         "features".into(),
         plist::Value::Integer(
-            (crate::net::features::receiver_features_for_pairing(conn.shared.pin.is_some()) as i64).into(),
+            (crate::net::features::receiver_features_for_pairing_with(
+                conn.shared.pin.is_some(),
+                conn.shared.audio_only,
+            ) as i64)
+                .into(),
         ),
     );
-    dict.insert("model".into(), plist::Value::String(config::GLOBAL_MODEL.into()));
+    dict.insert(
+        "model".into(),
+        plist::Value::String(if conn.shared.audio_only {
+            config::AUDIO_ONLY_MODEL.into()
+        } else {
+            config::GLOBAL_MODEL.into()
+        }),
+    );
     dict.insert(
         "protocolVersion".into(),
         plist::Value::String(config::AP2_PROTOVERS.into()),
@@ -280,9 +294,10 @@ pub(crate) fn handle_info(
     );
     dict.insert("pk".into(), plist::Value::String(pk_hex));
 
-    // Video: advertise a display so the iPhone offers screen mirroring
+    // Video: advertise a display so the iPhone offers screen mirroring. An
+    // audio-only receiver must not advertise a display at all.
     #[cfg(feature = "video")]
-    if conn.shared.video_handler.is_some() {
+    if !conn.shared.audio_only && conn.shared.video_handler.is_some() {
         let display = plist::Dictionary::from_iter([
             (
                 "widthPixels".to_string(),
@@ -329,7 +344,11 @@ pub(crate) fn handle_pair_pin_start(
 /// Build the `updateInfo` `POST /command` message queued on a freshly-opened
 /// event channel (status flags, features, model, versions). Identical for the
 /// RC-only and normal event channels.
-fn build_update_info_message(requires_pin_pairing: bool, already_paired: bool) -> Option<Vec<u8>> {
+fn build_update_info_message(
+    requires_pin_pairing: bool,
+    already_paired: bool,
+    audio_only: bool,
+) -> Option<Vec<u8>> {
     use crate::raop::config;
 
     let mut update_info = plist::Dictionary::new();
@@ -342,10 +361,18 @@ fn build_update_info_message(requires_pin_pairing: bool, already_paired: bool) -
     value.insert(
         "features".into(),
         plist::Value::Integer(
-            (crate::net::features::receiver_features_for_pairing(requires_pin_pairing) as i64).into(),
+            (crate::net::features::receiver_features_for_pairing_with(requires_pin_pairing, audio_only) as i64)
+                .into(),
         ),
     );
-    value.insert("model".into(), plist::Value::String(config::GLOBAL_MODEL.into()));
+    value.insert(
+        "model".into(),
+        plist::Value::String(if audio_only {
+            config::AUDIO_ONLY_MODEL.into()
+        } else {
+            config::GLOBAL_MODEL.into()
+        }),
+    );
     value.insert("sourceVersion".into(), plist::Value::String(config::AP2_SRCVERS.into()));
     value.insert(
         "protocolVersion".into(),
@@ -531,6 +558,7 @@ fn setup_initial(conn: &mut RaopConnection, dict: &plist::Dictionary) -> Option<
                     if let Some(msg) = build_update_info_message(
                         conn.shared.pin.is_some(),
                         conn.shared.pairing_store.has_any_pairing(),
+                        conn.shared.audio_only,
                     ) {
                         let _ = tx.send(msg);
                         tracing::debug!("updateInfo queued for RC event channel");
@@ -578,9 +606,11 @@ fn setup_initial(conn: &mut RaopConnection, dict: &plist::Dictionary) -> Option<
             let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
 
             // Queue updateInfo so it's sent immediately when client connects
-            if let Some(msg) =
-                build_update_info_message(conn.shared.pin.is_some(), conn.shared.pairing_store.has_any_pairing())
-            {
+            if let Some(msg) = build_update_info_message(
+                conn.shared.pin.is_some(),
+                conn.shared.pairing_store.has_any_pairing(),
+                conn.shared.audio_only,
+            ) {
                 let _ = tx.send(msg);
                 tracing::debug!("updateInfo queued for event channel");
             }
@@ -1474,6 +1504,92 @@ pub(crate) fn handle_audio_mode(
 }
 
 /// Verifies the AP2 RECORD `Audio-Latency` header follows the configured value.
+#[cfg(all(test, feature = "ap2"))]
+mod info_profile_tests {
+    use super::handle_info;
+    use crate::proto::http::HttpRequest;
+    use crate::proto::http::HttpResponse;
+    use crate::raop::handlers_ap1::tests::test_connection_with_profile;
+    use crate::raop::{AudioFormat, AudioHandler, AudioSession};
+    use std::sync::Arc;
+
+    struct NoopSession;
+
+    impl AudioSession for NoopSession {
+        fn audio_process(&mut self, _samples: &[f32]) {}
+    }
+
+    struct NoopHandler;
+
+    impl AudioHandler for NoopHandler {
+        fn audio_init(&self, _format: AudioFormat) -> Box<dyn AudioSession> {
+            Box::new(NoopSession)
+        }
+    }
+
+    const VIDEO_BITS: &[u8] = &[0, 1, 2, 4, 5, 6, 7, 10, 12, 13, 25, 28, 33, 42, 44, 49];
+
+    fn info_value(audio_only: bool) -> plist::Dictionary {
+        let mut conn = test_connection_with_profile(Arc::new(NoopHandler), 88_200, audio_only);
+        let mut request = HttpRequest::new();
+        request.add_data(b"GET /info RTSP/1.0\r\nCSeq: 1\r\n\r\n").unwrap();
+        let mut response = HttpResponse::new("RTSP/1.0", 200, "OK");
+        let body = handle_info(&mut conn, &request, &mut response).expect("info body");
+        plist::from_bytes::<plist::Value>(&body)
+            .expect("plist")
+            .as_dictionary()
+            .expect("dictionary")
+            .clone()
+    }
+
+    #[test]
+    fn audio_only_info_never_looks_like_a_video_target() {
+        let dict = info_value(true);
+        let features = dict
+            .get("features")
+            .and_then(|value| value.as_unsigned_integer())
+            .expect("features");
+        for &bit in VIDEO_BITS {
+            assert_eq!(
+                features & (1u64 << bit),
+                0,
+                "GET /info must not advertise video bit {bit} for an audio-only receiver"
+            );
+        }
+        for bit in [9u8, 14, 40, 41, 46, 48] {
+            assert_ne!(features & (1u64 << bit), 0, "needed audio bit {bit} missing");
+        }
+        assert_eq!(
+            dict.get("model").and_then(|value| value.as_string()),
+            Some("AirPort10,115"),
+            "audio-only /info must advertise the speaker model"
+        );
+        assert!(
+            dict.get("displays").is_none(),
+            "audio-only /info must not advertise a screen-mirroring display"
+        );
+    }
+
+    #[test]
+    fn full_profile_info_still_advertises_tv_identity() {
+        let dict = info_value(false);
+        let features = dict
+            .get("features")
+            .and_then(|value| value.as_unsigned_integer())
+            .expect("features");
+        // The non-audio-only profile keeps its existing capability set; this
+        // guards against over-clearing when the fix is applied. (The `video`
+        // build deliberately uses UxPlay's legacy 32-bit set without AP2 bits.)
+        assert_ne!(features & (1u64 << 9), 0, "audio capability must stay");
+        #[cfg(not(feature = "video"))]
+        assert_ne!(features & (1u64 << 40), 0, "buffered audio must stay");
+        assert_eq!(
+            dict.get("model").and_then(|value| value.as_string()),
+            Some(crate::raop::config::GLOBAL_MODEL)
+        );
+    }
+}
+
 #[cfg(all(test, feature = "ap2"))]
 mod peers_tests {
     use super::handle_set_peers;

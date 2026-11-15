@@ -1001,3 +1001,27 @@ pub extern "system" fn Java_com_airplayreceiver_desktop_nativebridge_FusionPlayN
         .map(|value| value.into_raw())
         .unwrap_or(std::ptr::null_mut())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn android_airplay_settings_use_the_audio_only_profile() {
+        for protocol in [AndroidCoreProtocol::AirPlay, AndroidCoreProtocol::Dlna] {
+            let settings = protocol.settings(
+                "Android phone".to_owned(),
+                PathBuf::from("/tmp/fusionplay-state.json"),
+                None,
+            );
+            assert!(
+                settings.airplay_audio_only,
+                "Android must advertise the audio-only AirPlay profile"
+            );
+            assert_eq!(
+                settings.airplay_latency_frames,
+                crate::DEFAULT_AIRPLAY_LATENCY_FRAMES
+            );
+        }
+    }
+}

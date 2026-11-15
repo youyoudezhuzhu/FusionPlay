@@ -53,18 +53,36 @@ void main() {
     );
   });
 
-  test('同一曲目的不同封面来源共用一个动画身份', () {
-    const first = PlaybackSnapshot(
-      trackIdentity: 'track-42',
-      coverArt: 'https://example.test/cover-small.jpg',
+  test('动画身份优先跟随实际封面来源，元数据变化不触发 flip', () {
+    const sameCoverDifferentMetadata = PlaybackSnapshot(
+      trackIdentity: 'track-a',
+      coverArt: 'https://example.test/cover.jpg',
+      title: 'Song A',
+      artist: 'Artist A',
     );
-    const second = PlaybackSnapshot(
-      trackIdentity: 'track-42',
+    const sameCoverOtherMetadata = PlaybackSnapshot(
+      trackIdentity: 'track-b',
+      coverArt: 'https://example.test/cover.jpg',
+      title: 'Song B',
+      artist: 'Artist B',
+    );
+    const otherCover = PlaybackSnapshot(
+      trackIdentity: 'track-a',
       coverArt: 'https://example.test/cover-large.jpg',
     );
 
-    expect(first.artworkTransitionIdentity, second.artworkTransitionIdentity);
-    expect(first.artworkTransitionIdentity, 'track:track-42');
+    expect(
+      sameCoverDifferentMetadata.artworkTransitionIdentity,
+      sameCoverOtherMetadata.artworkTransitionIdentity,
+    );
+    expect(
+      sameCoverDifferentMetadata.artworkTransitionIdentity,
+      'cover:https://example.test/cover.jpg',
+    );
+    expect(
+      otherCover.artworkTransitionIdentity,
+      isNot(sameCoverDifferentMetadata.artworkTransitionIdentity),
+    );
   });
 
   test('解析发送端的上一曲和下一曲方向', () {
