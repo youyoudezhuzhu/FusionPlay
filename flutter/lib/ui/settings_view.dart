@@ -67,6 +67,7 @@ class SettingsView extends StatefulWidget {
     this.nameFocusNode,
     this.miPlayFocusNode,
     this.isAndroid,
+    this.scrollable = true,
     this.onCheckUpdate,
     this.onInstallUpdate,
     this.showHeader = true,
@@ -96,6 +97,11 @@ class SettingsView extends StatefulWidget {
   /// Overrides the platform detection so widget tests can render the update
   /// row for Android and hide it for Windows without touching the host OS.
   final bool? isAndroid;
+
+  /// When false the host (the morphing settings sheet) owns the scrolling via a
+  /// [CustomScrollView] + [PinnedHeaderSliver]; this widget then only renders
+  /// its padded content. Standalone pages/tests keep the internal scroll view.
+  final bool scrollable;
 
   /// Update check triggered by the "检查更新" row (Android only).
   final Future<UpdateCheckResult> Function()? onCheckUpdate;
@@ -170,112 +176,121 @@ class _SettingsViewState extends State<SettingsView> {
               data: const IconThemeData(color: _GlassStyle.icon, size: 22),
               child: FocusTraversalGroup(
                 policy: ReadingOrderTraversalPolicy(),
-                child: SingleChildScrollView(
-                  padding: EdgeInsets.fromLTRB(
-                    horizontalPadding,
-                    padding.top + (narrow ? 8 : 16),
-                    horizontalPadding,
-                    24,
-                  ),
-                  child: Column(
-                    children: [
-                      if (widget.showHeader) ...[
-                        const SizedBox(
-                          height: 48,
-                          child: Center(
-                            child: Text(
-                              '设置',
-                              maxLines: 1,
-                              style: TextStyle(
-                                fontSize: 24,
-                                color: _GlassStyle.textPrimary,
-                                fontWeight: FusionTypography.boldFontWeight,
-                                fontVariations: FusionTypography.bold,
+                child: Builder(
+                  builder: (context) {
+                    final content = Column(
+                      children: [
+                        if (widget.showHeader) ...[
+                          const SizedBox(
+                            height: 48,
+                            child: Center(
+                              child: Text(
+                                '设置',
+                                maxLines: 1,
+                                style: TextStyle(
+                                  fontSize: 24,
+                                  color: _GlassStyle.textPrimary,
+                                  fontWeight: FusionTypography.boldFontWeight,
+                                  fontVariations: FusionTypography.bold,
+                                ),
                               ),
                             ),
                           ),
-                        ),
+                          SizedBox(height: cardSpacing),
+                        ],
+                        _card([_nameEditor()]),
                         SizedBox(height: cardSpacing),
-                      ],
-                      _card([_nameEditor()]),
-                      SizedBox(height: cardSpacing),
-                      _card([
-                        _switchRow(
-                          asset: 'assets/miplay-logo.svg',
-                          preserveAssetColors: true,
-                          title: 'MiPlay',
-                          value: settings.miPlayEnabled,
-                          focusNode: _miPlayFocus,
-                          focusNameOnUp: true,
-                          onChanged: widget.onMiPlay,
-                        ),
-                        _switchRow(
-                          asset: 'assets/airplay-broadcast.svg',
-                          title: 'AirPlay',
-                          value: settings.airPlayEnabled,
-                          onChanged: widget.onAirPlay,
-                        ),
-                        _switchRow(
-                          asset: FusionIcons.dlna,
-                          title: 'DLNA',
-                          value: settings.dlnaEnabled,
-                          onChanged: widget.onDlna,
-                        ),
-                      ]),
-                      SizedBox(height: cardSpacing),
-                      _card(dividers: false, [
-                        for (final identity in MiPlayDeviceIdentity.values)
-                          _identityRow(
-                            identity,
-                            settings.miPlayDeviceIdentity,
-                            reduceMotion: reduceMotion,
+                        _card([
+                          _switchRow(
+                            asset: 'assets/miplay-logo.svg',
+                            preserveAssetColors: true,
+                            title: 'MiPlay',
+                            value: settings.miPlayEnabled,
+                            focusNode: _miPlayFocus,
+                            focusNameOnUp: true,
+                            onChanged: widget.onMiPlay,
                           ),
-                        // Xiaomi's device picker is version dependent: some
-                        // HyperOS builds hide "speaker" receivers from the
-                        // MiPlay list while "television" works. Surface that
-                        // instead of letting users think the receiver vanished.
-                        const Padding(
-                          padding: EdgeInsets.fromLTRB(20, 2, 20, 14),
-                          child: Text(
-                            '设备类型影响小米手机妙播列表中的图标与可见性；'
-                            '若选「音响」后手机里找不到设备，请改用「电视」。',
-                            style: TextStyle(
-                              fontSize: 12,
-                              height: 1.4,
-                              color: _GlassStyle.textSecondary,
+                          _switchRow(
+                            asset: 'assets/airplay-broadcast.svg',
+                            title: 'AirPlay',
+                            value: settings.airPlayEnabled,
+                            onChanged: widget.onAirPlay,
+                          ),
+                          _switchRow(
+                            asset: FusionIcons.dlna,
+                            title: 'DLNA',
+                            value: settings.dlnaEnabled,
+                            onChanged: widget.onDlna,
+                          ),
+                        ]),
+                        SizedBox(height: cardSpacing),
+                        _card(dividers: false, [
+                          for (final identity in MiPlayDeviceIdentity.values)
+                            _identityRow(
+                              identity,
+                              settings.miPlayDeviceIdentity,
+                              reduceMotion: reduceMotion,
+                            ),
+                          // Xiaomi's device picker is version dependent: some
+                          // HyperOS builds hide "speaker" receivers from the
+                          // MiPlay list while "television" works. Surface that
+                          // instead of letting users think the receiver vanished.
+                          const Padding(
+                            padding: EdgeInsets.fromLTRB(20, 2, 20, 14),
+                            child: Text(
+                              '设备类型影响小米手机妙播列表中的图标与可见性；'
+                              '若选「音响」后手机里找不到设备，请改用「电视」。',
+                              style: TextStyle(
+                                fontSize: 12,
+                                height: 1.4,
+                                color: _GlassStyle.textSecondary,
+                              ),
                             ),
                           ),
-                        ),
-                      ]),
-                      SizedBox(height: cardSpacing),
-                      _card([
-                        _switchRow(
-                          asset: 'assets/icon-power-settings-new.svg',
-                          title: '开机自启',
-                          value: settings.startupEnabled,
-                          onChanged: widget.onStartup,
-                        ),
-                        _switchRow(
-                          asset: 'assets/auto-wake.svg',
-                          title: '自动唤起',
-                          value: settings.autoWakeEnabled,
-                          onChanged: widget.onAutoWake,
-                        ),
-                        _switchRow(
-                          icon: Icons.auto_awesome_rounded,
-                          title: '高级效果',
-                          value: settings.advancedEffectsEnabled,
-                          onChanged: widget.onAdvancedEffects,
-                        ),
-                      ]),
-                      SizedBox(height: cardSpacing),
-                      _card([
-                        _aboutRow(),
-                        if (_showUpdateRow) _checkUpdateRow(),
-                        _exportLogsRow(),
-                      ]),
-                    ],
-                  ),
+                        ]),
+                        SizedBox(height: cardSpacing),
+                        _card([
+                          _switchRow(
+                            asset: 'assets/icon-power-settings-new.svg',
+                            title: '开机自启',
+                            value: settings.startupEnabled,
+                            onChanged: widget.onStartup,
+                          ),
+                          _switchRow(
+                            asset: 'assets/auto-wake.svg',
+                            title: '自动唤起',
+                            value: settings.autoWakeEnabled,
+                            onChanged: widget.onAutoWake,
+                          ),
+                          _switchRow(
+                            icon: Icons.auto_awesome_rounded,
+                            title: '高级效果',
+                            value: settings.advancedEffectsEnabled,
+                            onChanged: widget.onAdvancedEffects,
+                          ),
+                        ]),
+                        SizedBox(height: cardSpacing),
+                        _card([
+                          _aboutRow(),
+                          if (_showUpdateRow) _checkUpdateRow(),
+                          _exportLogsRow(),
+                        ]),
+                      ],
+                    );
+                    final contentPadding = EdgeInsets.fromLTRB(
+                      horizontalPadding,
+                      padding.top + (narrow ? 8 : 16),
+                      horizontalPadding,
+                      24,
+                    );
+                    if (!widget.scrollable) {
+                      return Padding(padding: contentPadding, child: content);
+                    }
+                    return SingleChildScrollView(
+                      padding: contentPadding,
+                      child: content,
+                    );
+                  },
                 ),
               ),
             ),

@@ -181,6 +181,34 @@ void main() {
     expect(FocusManager.instance.primaryFocus?.debugLabel, 'player-menu');
   });
 
+  testWidgets('设置标题使用官方 PinnedHeaderSliver，内容从标题下滚过', (tester) async {
+    await _pumpHome(tester, controller: controller);
+    await _openMenu(tester);
+
+    await tester.tap(find.text('设置'));
+    await tester.pumpAndSettle();
+
+    expect(
+      find.byKey(const ValueKey('settings-pinned-header')),
+      findsOneWidget,
+    );
+    expect(find.byKey(const ValueKey('settings-scroll')), findsOneWidget);
+
+    await tester.drag(
+      find.byKey(const ValueKey('settings-scroll')),
+      const Offset(0, -140),
+    );
+    await tester.pumpAndSettle();
+
+    // 标题仍钉在顶部，内容没有在标题区域留下硬分割/裁切。
+    expect(
+      find.byKey(const ValueKey('settings-pinned-header')),
+      findsOneWidget,
+    );
+    expect(find.text('设置'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets('设置浮层可滚动且关闭按钮可点击', (tester) async {
     await _pumpHome(tester, controller: controller);
     await _openMenu(tester);

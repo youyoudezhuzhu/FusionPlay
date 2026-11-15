@@ -137,53 +137,55 @@ class FusionSettingsSheet extends StatelessWidget {
   final VoidCallback onClose;
 
   @override
-  Widget build(BuildContext context) => Column(
-    children: [
-      Padding(
-        padding: const EdgeInsets.fromLTRB(20, 10, 10, 8),
-        child: Row(
-          children: [
-            const FusionVectorIcon(
-              FusionIcons.settings,
-              size: 20,
-              color: Color(0xB8FFFFFF),
-            ),
-            const SizedBox(width: 10),
-            Expanded(
-              child: Text(
-                title,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: const TextStyle(
-                  fontSize: 20,
-                  color: Color(0xEBFFFFFF),
-                  fontWeight: FusionTypography.semiBoldFontWeight,
-                  fontVariations: FusionTypography.semiBold,
-                ),
-              ),
-            ),
-            _CloseSettingsButton(onClose: onClose),
-          ],
-        ),
-      ),
-      Expanded(
-        child: ShaderMask(
-          // Instead of a hard 1px divider, let scrolled settings content fade
-          // out as it approaches the title bar. The mask is cheap (no backdrop
-          // filter) and only affects the body, never the header controls.
-          shaderCallback: (rect) {
-            final fade = (24.0 / math.max(1.0, rect.height)).clamp(0.0, .4);
-            return LinearGradient(
+  Widget build(BuildContext context) => CustomScrollView(
+    key: const ValueKey('settings-scroll'),
+    slivers: [
+      // Official sticky-header primitive (same pattern as Flutter's iOS
+      // Settings example): the title bar is pinned and the body really scrolls
+      // underneath it instead of being clipped at a hard boundary and covered
+      // by a mask. The header surface is a top-to-transparent gradient so the
+      // content fades into it naturally and there is no 1px divider.
+      PinnedHeaderSliver(
+        key: const ValueKey('settings-pinned-header'),
+        child: DecoratedBox(
+          decoration: const BoxDecoration(
+            gradient: LinearGradient(
               begin: Alignment.topCenter,
               end: Alignment.bottomCenter,
-              colors: const [Colors.transparent, Colors.white],
-              stops: [0.0, fade],
-            ).createShader(rect);
-          },
-          blendMode: BlendMode.dstIn,
-          child: Padding(padding: const EdgeInsets.only(top: 10), child: child),
+              colors: [Color(0xFF14191F), Color(0xFF14191F), Color(0x0014191F)],
+              stops: [0.0, 0.72, 1.0],
+            ),
+          ),
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(20, 10, 10, 8),
+            child: Row(
+              children: [
+                const FusionVectorIcon(
+                  FusionIcons.settings,
+                  size: 20,
+                  color: Color(0xB8FFFFFF),
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Text(
+                    title,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      fontSize: 20,
+                      color: Color(0xEBFFFFFF),
+                      fontWeight: FusionTypography.semiBoldFontWeight,
+                      fontVariations: FusionTypography.semiBold,
+                    ),
+                  ),
+                ),
+                _CloseSettingsButton(onClose: onClose),
+              ],
+            ),
+          ),
         ),
       ),
+      SliverList.list(children: [child]),
     ],
   );
 }

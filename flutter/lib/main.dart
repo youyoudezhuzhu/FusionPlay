@@ -560,6 +560,7 @@ class _FusionPlayHomeState extends State<FusionPlayHome> {
                       settingsChild: SettingsView(
                         state: state,
                         showHeader: false,
+                        scrollable: false,
                         initialFocusNode: _settingsInitialFocus,
                         nameFocusNode: _settingsNameFocus,
                         miPlayFocusNode: isTelevision
