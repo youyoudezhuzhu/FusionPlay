@@ -22,6 +22,15 @@ use crate::media::{EventEmitter, PlaybackGate, StreamKeys, spawn_rtsp_receiver};
 pub(crate) const CONTROL_PORT: u16 = 8899;
 const PROTOCOL_VERSION: &str = "2.1.5071614";
 
+/// How long a closed media source is still remembered for playback controls.
+/// Legacy senders (e.g. PushMi) keep streaming after their OPEN control socket
+/// closes or send PAUSE/RESUME on a companion socket; the retained window lets
+/// the UI apply those state changes instead of only ACKing them.
+const RECENT_SOURCE_TTL: Duration = Duration::from_secs(10 * 60);
+
+/// Minimum interval between identical playback-resolution diagnostics.
+const RESOLUTION_LOG_INTERVAL: Duration = Duration::from_secs(10);
+
 const GET_VERSION: u8 = 0x36;
 const GET_VERSION_ACK: u8 = 0x37;
 const DEVICE_ID: u8 = 0x28;
@@ -145,6 +154,12 @@ pub struct DeviceIdentity {
 #[derive(Clone)]
 pub struct ControlHub {
     active: Arc<Mutex<Option<ActiveSession>>>,
+    /// Last media source that opened a stream. Kept after its control socket
+    /// closes so legacy senders can still drive pause/resume state (and so the
+    /// retained [`PlaybackGate`] keeps muting the RTP output).
+    recent_source: Arc<Mutex<Option<RecentSource>>>,
+    /// Throttled diagnostics for playback controls that need the fallback path.
+    resolution_log: Arc<Mutex<Option<(String, Instant)>>>,
     sessions: Arc<Mutex<HashMap<u64, TcpStream>>>,
     control_routes: Arc<Mutex<HashMap<u64, ControlRoute>>>,
     stream_keys: Arc<Mutex<HashMap<IpAddr, SharedStreamKeys>>>,
@@ -174,6 +189,14 @@ struct ControlRoute {
     next_notification_sequence: Arc<AtomicU32>,
     reverse_control_ready: bool,
     play_source_registered: bool,
+    updated_at: Instant,
+}
+
+#[derive(Clone)]
+struct RecentSource {
+    session_id: u64,
+    remote_ip: IpAddr,
+    playback_gate: PlaybackGate,
     updated_at: Instant,
 }
 
@@ -220,10 +243,48 @@ struct SharedStreamKeys {
     session_id: u64,
 }
 
+/// Where a playback-state command's target session was found.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PlaybackControlResolution {
+    /// Headers matched the session that opened or owns the media route.
+    Active(u64),
+    /// The media route's control socket closed; its retained gate is used.
+    Recent(u64),
+    /// No header matched, but exactly one active media route exists (companion
+    /// socket / dual-homed phone), so the command is applied to it.
+    ActiveRouteMismatch(u64),
+    /// Same as [`Self::ActiveRouteMismatch`] but the media route is retained.
+    RecentRouteMismatch(u64),
+    /// No media route is known; only the ACK is sent.
+    None,
+}
+
+impl PlaybackControlResolution {
+    fn session_id(self) -> Option<u64> {
+        match self {
+            Self::Active(id) | Self::Recent(id) => Some(id),
+            Self::ActiveRouteMismatch(id) | Self::RecentRouteMismatch(id) => Some(id),
+            Self::None => None,
+        }
+    }
+
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Active(_) => "active",
+            Self::Recent(_) => "recent",
+            Self::ActiveRouteMismatch(_) => "active_route_mismatch",
+            Self::RecentRouteMismatch(_) => "recent_route_mismatch",
+            Self::None => "none",
+        }
+    }
+}
+
 impl ControlHub {
     fn new(volume_percent: Arc<AtomicU32>) -> Self {
         Self {
             active: Arc::new(Mutex::new(None)),
+            recent_source: Arc::new(Mutex::new(None)),
+            resolution_log: Arc::new(Mutex::new(None)),
             sessions: Arc::new(Mutex::new(HashMap::new())),
             control_routes: Arc::new(Mutex::new(HashMap::new())),
             stream_keys: Arc::new(Mutex::new(HashMap::new())),
@@ -322,6 +383,9 @@ impl ControlHub {
         }
         if let Ok(mut routes) = self.control_routes.lock() {
             routes.clear();
+        }
+        if let Ok(mut recent) = self.recent_source.lock() {
+            *recent = None;
         }
     }
 
@@ -520,6 +584,14 @@ impl ControlHub {
             playback_gate: playback_gate.clone(),
             next_notification_sequence,
         });
+        if let Ok(mut recent) = self.recent_source.lock() {
+            *recent = Some(RecentSource {
+                session_id: id,
+                remote_ip,
+                playback_gate: playback_gate.clone(),
+                updated_at: Instant::now(),
+            });
+        }
         drop(active);
         if let Ok(mut effects) = self.remote_effects.lock() {
             effects.track_identity = None;
@@ -534,14 +606,35 @@ impl ControlHub {
         }
     }
 
-    fn observe_playback(&self, id: u64, paused: bool) -> bool {
-        let target = self.active.lock().ok().and_then(|active| {
-            active
+    /// Playback gate for `id`: the active session first, then the retained
+    /// recent source (its gate is the same object the RTSP receiver mutes).
+    fn playback_gate_for(&self, id: u64) -> Option<PlaybackGate> {
+        if let Some(gate) = self
+            .active
+            .lock()
+            .ok()
+            .and_then(|active| {
+                active
+                    .as_ref()
+                    .filter(|session| session.id == id)
+                    .map(|session| session.playback_gate.clone())
+            })
+        {
+            return Some(gate);
+        }
+        self.recent_source.lock().ok().and_then(|recent| {
+            recent
                 .as_ref()
-                .filter(|session| session.id == id)
-                .map(|session| session.playback_gate.clone())
-        });
-        let Some(target) = target else {
+                .filter(|source| {
+                    source.session_id == id
+                        && source.updated_at.elapsed() <= RECENT_SOURCE_TTL
+                })
+                .map(|source| source.playback_gate.clone())
+        })
+    }
+
+    fn observe_playback(&self, id: u64, paused: bool) -> bool {
+        let Some(target) = self.playback_gate_for(id) else {
             return false;
         };
         target.set_paused(paused);
@@ -552,13 +645,7 @@ impl ControlHub {
     }
 
     fn observe_playback_snapshot(&self, id: u64, paused: bool) -> bool {
-        let target = self.active.lock().ok().and_then(|active| {
-            active
-                .as_ref()
-                .filter(|session| session.id == id)
-                .map(|session| session.playback_gate.clone())
-        });
-        let Some(target) = target else {
+        let Some(target) = self.playback_gate_for(id) else {
             return false;
         };
         // HyperOS replays cached SET_MEDIA_STATE=paused frames while restoring
@@ -637,13 +724,7 @@ impl ControlHub {
     }
 
     fn resume_if_paused(&self, id: u64) -> bool {
-        let target = self.active.lock().ok().and_then(|active| {
-            active
-                .as_ref()
-                .filter(|session| session.id == id)
-                .map(|session| session.playback_gate.clone())
-        });
-        let Some(target) = target else {
+        let Some(target) = self.playback_gate_for(id) else {
             return false;
         };
         if !target.is_paused() || !target.accepts_weak_resume() {
@@ -679,6 +760,9 @@ impl ControlHub {
         if let Ok(mut active) = self.active.lock()
             && active.as_ref().is_some_and(|current| current.id == id)
         {
+            // Keep `recent_source` (gate + id) alive: legacy senders keep the
+            // media stream and send PAUSE/RESUME from a companion socket after
+            // the OPEN control socket is gone.
             *active = None;
         }
         let completions = self
@@ -736,26 +820,115 @@ impl ControlHub {
         self.media_generation.fetch_add(1, Ordering::AcqRel) + 1
     }
 
+    fn recent_source(&self) -> Option<RecentSource> {
+        self.recent_source
+            .lock()
+            .ok()
+            .and_then(|recent| recent.clone())
+            .filter(|source| source.updated_at.elapsed() <= RECENT_SOURCE_TTL)
+    }
+
     fn active_source_session_id(&self, id: u64, remote_ip: IpAddr) -> Option<u64> {
-        self.active.lock().ok().and_then(|active| {
-            active.as_ref().and_then(|session| {
-                (session.id == id || session.remote_ip == remote_ip).then_some(session.id)
-            })
-        })
+        if let Some(active) = self.active.lock().ok().and_then(|active| active.clone())
+            && (active.id == id || active.remote_ip == remote_ip)
+        {
+            return Some(active.id);
+        }
+        self.recent_source()
+            .filter(|source| source.session_id == id || source.remote_ip == remote_ip)
+            .map(|source| source.session_id)
+    }
+
+    /// Resolve the target of a playback-state command (PAUSE/RESUME/
+    /// SET_MEDIA_STATE).
+    ///
+    /// The exact session/IP match comes first. Legacy senders (PushMi) may send
+    /// these frames from a companion socket, after the OPEN control socket has
+    /// closed, or from a second phone interface; because a MiPlay receiver has
+    /// exactly one media route, such a frame still applies to that route. The
+    /// resolution used is reported (throttled) for field diagnosis.
+    fn resolve_playback_control(
+        &self,
+        id: u64,
+        remote_ip: IpAddr,
+    ) -> PlaybackControlResolution {
+        let active = self.active.lock().ok().and_then(|active| active.clone());
+        if let Some(active) = &active
+            && (active.id == id || active.remote_ip == remote_ip)
+        {
+            return PlaybackControlResolution::Active(active.id);
+        }
+        if let Some(recent) = self.recent_source()
+            && (recent.session_id == id || recent.remote_ip == remote_ip)
+        {
+            return PlaybackControlResolution::Recent(recent.session_id);
+        }
+        if let Some(active) = active {
+            return PlaybackControlResolution::ActiveRouteMismatch(active.id);
+        }
+        if let Some(recent) = self.recent_source() {
+            return PlaybackControlResolution::RecentRouteMismatch(recent.session_id);
+        }
+        PlaybackControlResolution::None
+    }
+
+    fn report_playback_control(
+        &self,
+        command: &str,
+        session_id: u64,
+        remote_ip: IpAddr,
+        resolution: PlaybackControlResolution,
+        events: &EventEmitter,
+    ) {
+        if matches!(resolution, PlaybackControlResolution::Active(_)) {
+            return;
+        }
+        let key = format!("{command}:{session_id}:{remote_ip}:{}", resolution.as_str());
+        if let Ok(mut last) = self.resolution_log.lock() {
+            let throttled = last.as_ref().is_some_and(|(previous, at)| {
+                previous == &key && at.elapsed() < RESOLUTION_LOG_INTERVAL
+            });
+            if throttled {
+                return;
+            }
+            *last = Some((key, Instant::now()));
+        }
+        let mut route_keys = self
+            .control_routes
+            .lock()
+            .ok()
+            .map(|routes| routes.keys().copied().collect::<Vec<_>>())
+            .unwrap_or_default();
+        route_keys.sort_unstable();
+        events(json!({
+            "event": "playback_command_resolution",
+            "protocol": "xiaomi_miplay",
+            "command": command,
+            "session_id": session_id,
+            "remote": remote_ip.to_string(),
+            "resolution": resolution.as_str(),
+            "resolved_session_id": resolution.session_id(),
+            "route_keys": route_keys,
+        }));
     }
 
     fn playback_state_for(&self, id: u64, remote_ip: IpAddr) -> u32 {
-        let active = self.active.lock().ok().and_then(|active| active.clone());
-        let Some(active) =
-            active.filter(|session| session.id == id || session.remote_ip == remote_ip)
-        else {
+        let gate = self
+            .active
+            .lock()
+            .ok()
+            .and_then(|active| active.clone())
+            .filter(|session| session.id == id || session.remote_ip == remote_ip)
+            .map(|session| session.playback_gate)
+            .or_else(|| {
+                self.recent_source()
+                    .filter(|source| source.session_id == id || source.remote_ip == remote_ip)
+                    .map(|source| source.playback_gate)
+            });
+        let Some(gate) = gate else {
             return 0;
         };
-        if active.playback_gate.is_paused() {
-            3
-        } else {
-            2
-        }
+        if gate.is_paused() { 3 } else { 2 }
     }
 
     fn is_paused(&self) -> bool {
@@ -1232,7 +1405,7 @@ fn run_session(
                     vec![5, b's', b't', b'a', b't', b'e', 3, 0],
                 ))?;
             }
-            SAFETY_INFO if !frame.encrypted => {
+            SAFETY_INFO if !frame.encrypted && media_open_url(&frame.body).is_none() => {
                 let response = concat!(
                     "{\n\t\"aesIvType\": \"2\",\n\t\"aesKeyType\": \"1\",\n",
                     "\t\"authAlgorithmType\": \"4\",\n\t\"authKeyType\": \"1\",\n",
@@ -1466,10 +1639,12 @@ fn run_session(
                     "context": parse_json_payload(&frame.body),
                 }));
             }
-            OPEN if frame.encrypted => {
-                let url = String::from_utf8_lossy(&frame.body)
-                    .trim_matches(char::from(0))
-                    .to_owned();
+            OPEN if frame.encrypted || media_open_url(&frame.body).is_some() => {
+                let url = media_open_url(&frame.body).unwrap_or_else(|| {
+                    String::from_utf8_lossy(&frame.body)
+                        .trim_matches(char::from(0))
+                        .to_owned()
+                });
                 let (host, port) = parse_wfd_url(&url)?;
                 let (keys, key_session_id, key_scope) = if let Some(keys) = mirror_keys.clone() {
                     (Some(keys), Some(session_id), "same_control_session")
@@ -1497,11 +1672,15 @@ fn run_session(
                     "key_fingerprint": keys.as_ref().map(StreamKeys::fingerprint),
                     "encrypted_media_expected": keys.is_some(),
                 }));
-                tx.send(Outgoing::encrypted(
-                    OPEN_ACK,
-                    frame.sequence,
-                    vec![0, 0, 0, 0, 0],
-                ))?;
+                let open_ack = vec![0, 0, 0, 0, 0];
+                if frame.encrypted {
+                    tx.send(Outgoing::encrypted(OPEN_ACK, frame.sequence, open_ack))?;
+                } else {
+                    // Legacy (SAFETY_AUTH) senders use plain 0x00 command
+                    // frames; answering with an encrypted body would make them
+                    // ignore the ACK.
+                    tx.send(Outgoing::raw(OPEN_ACK, frame.sequence, open_ack))?;
+                }
                 // Current HyperOS normally requests media info before OPEN.
                 // Keep a defensive fallback for older senders that omit the
                 // request, while never publishing the same sequence twice.
@@ -1518,6 +1697,16 @@ fn run_session(
                 // Publish the session to playback controls only after the
                 // source explicitly opens a media stream.
                 let media_generation = hub.begin_media_session();
+                // Field diagnostic: proves whether a legacy plaintext OPEN
+                // registered the media route before PAUSE/RESUME arrives.
+                events(json!({
+                    "event": "media_route_activated",
+                    "protocol": "xiaomi_miplay",
+                    "session_id": session_id,
+                    "remote": remote.to_string(),
+                    "open_encrypted": frame.encrypted,
+                    "resolution": "open",
+                }));
                 let media_paused = hub.activate(
                     session_id,
                     remote.ip(),
@@ -1552,19 +1741,35 @@ fn run_session(
                 }));
             }
             PAUSE => {
+                // ACK first: legacy senders retry (and may tear the route
+                // down) when the acknowledgement is delayed by state work.
                 tx.send(Outgoing::encrypted(PAUSE_ACK, frame.sequence, Vec::new()))?;
-                if let Some(active_session_id) =
-                    hub.active_source_session_id(session_id, remote.ip())
-                {
+                let resolution = hub.resolve_playback_control(session_id, remote.ip());
+                hub.report_playback_control(
+                    "pause",
+                    session_id,
+                    remote.ip(),
+                    resolution,
+                    &events,
+                );
+                if let Some(active_session_id) = resolution.session_id() {
+                    // Even when the sender's own state snapshot is ignored, the
+                    // explicit PAUSE is authoritative for the receiver UI.
                     hub.observe_playback(active_session_id, true);
                     emit_playback(false, true, &events);
                 }
             }
             RESUME => {
                 tx.send(Outgoing::encrypted(RESUME_ACK, frame.sequence, Vec::new()))?;
-                if let Some(active_session_id) =
-                    hub.active_source_session_id(session_id, remote.ip())
-                {
+                let resolution = hub.resolve_playback_control(session_id, remote.ip());
+                hub.report_playback_control(
+                    "resume",
+                    session_id,
+                    remote.ip(),
+                    resolution,
+                    &events,
+                );
+                if let Some(active_session_id) = resolution.session_id() {
                     hub.observe_playback(active_session_id, false);
                     emit_playback(true, true, &events);
                 }
@@ -1680,11 +1885,18 @@ fn run_session(
                     frame.sequence,
                     Vec::new(),
                 ))?;
-                if let Some(active_session_id) =
-                    hub.active_source_session_id(session_id, remote.ip())
+                let resolution = hub.resolve_playback_control(session_id, remote.ip());
+                if let Some(active_session_id) = resolution.session_id()
                     && let Some(playing) = decode_playback_state(&frame.body)
                     && hub.observe_playback_snapshot(active_session_id, !playing)
                 {
+                    hub.report_playback_control(
+                        "set_media_state",
+                        session_id,
+                        remote.ip(),
+                        resolution,
+                        &events,
+                    );
                     emit_playback(playing, true, &events);
                 }
             }
@@ -2319,6 +2531,19 @@ fn emit_media_info(body: &[u8], events: &EventEmitter) {
     }));
 }
 
+/// Media URL carried by an `OPEN` command.
+///
+/// HyperOS encrypts the whole body (handled by `read_frame`), while legacy
+/// senders such as PushMi send the `wfd://` URL as plain text and with the
+/// plain `0x00` wire type. Both forms are recognised here so an unencrypted
+/// OPEN can no longer be swallowed by the `SAFETY_INFO` arm (they share the
+/// command byte `0x00`) and the media route gets registered.
+fn media_open_url(body: &[u8]) -> Option<String> {
+    let text = String::from_utf8_lossy(body);
+    let trimmed = text.trim_matches(|ch: char| ch == '\0' || ch.is_whitespace());
+    (trimmed.starts_with("wfd://") || trimmed.starts_with("rtsp://")).then(|| trimmed.to_owned())
+}
+
 fn decode_playback_state(body: &[u8]) -> Option<bool> {
     let state = if body.len() == 4 {
         Some(u32::from_be_bytes(body.try_into().ok()?))
@@ -2403,14 +2628,89 @@ mod tests {
     use crate::media::{EventEmitter, StreamKeys};
     use serde_json::Value;
     use std::io::{ErrorKind, Read};
-    use std::net::{SocketAddr, TcpListener, TcpStream};
+    use std::net::{IpAddr, SocketAddr, TcpListener, TcpStream};
     use std::sync::atomic::{AtomicU32, Ordering};
     use std::sync::{Arc, Mutex, mpsc};
     use std::thread;
-    use std::time::Duration;
+    use std::time::{Duration, Instant};
 
     fn control_notification_sequence() -> Arc<AtomicU32> {
         Arc::new(AtomicU32::new(FIRST_ENCRYPTED_NOTIFICATION_SEQUENCE + 1))
+    }
+
+    fn test_identity() -> DeviceIdentity {
+        DeviceIdentity {
+            device_id: "A0-36-BC-25-05-43".to_owned(),
+            device_name: "FusionPlay".to_owned(),
+            model: "Windows".to_owned(),
+            platform: "Windows".to_owned(),
+            device_type: MiPlayDeviceType::Television,
+        }
+    }
+
+    /// Connect one loopback control session, read the receiver's DEVICE_ID and
+    /// return both ciphers plus the running session thread.
+    #[allow(clippy::type_complexity)]
+    fn start_control_session(
+        hub: &ControlHub,
+        session_id: u64,
+        recorded: &Arc<Mutex<Vec<Value>>>,
+    ) -> (
+        TcpStream,
+        ControlCipher,
+        ControlCipher,
+        std::thread::JoinHandle<anyhow::Result<()>>,
+    ) {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let mut client = TcpStream::connect(address).unwrap();
+        client
+            .set_read_timeout(Some(Duration::from_secs(2)))
+            .unwrap();
+        let (server, _) = listener.accept().unwrap();
+        let auth_key = generate_auth_key(
+            server.local_addr().unwrap(),
+            client.local_addr().unwrap(),
+        );
+        let mut key = [0_u8; 16];
+        key.copy_from_slice(&auth_key.as_bytes()[..16]);
+        let mut server_to_client = ControlCipher::new(key);
+        let client_to_server = ControlCipher::new(key);
+        let session_hub = hub.clone();
+        let sink = Arc::clone(recorded);
+        let session_events: EventEmitter =
+            Arc::new(move |event| sink.lock().unwrap().push(event));
+        let thread = thread::spawn(move || {
+            run_session(session_id, server, test_identity(), None, session_hub, session_events)
+        });
+        let device_id = read_frame(&mut client, &mut server_to_client).unwrap();
+        assert_eq!(device_id.command, super::DEVICE_ID);
+        (client, server_to_client, client_to_server, thread)
+    }
+
+    /// Playback-state transitions produced by the control plane. The RTSP
+    /// failure path reports `session_active: false` when its dial fails, which
+    /// is unrelated to phone-side pause/resume (the test source is closed).
+    fn playback_states_since(recorded: &Arc<Mutex<Vec<Value>>>, from: usize) -> Vec<bool> {
+        recorded.lock().unwrap()[from..]
+            .iter()
+            .filter(|event| event["event"] == "playback_state")
+            .filter(|event| event["session_active"] == true)
+            .filter_map(|event| event["playing"].as_bool())
+            .collect()
+    }
+
+    /// The control writer runs on its own thread, so ACK receipt only orders
+    /// frames on the wire; state updates and events are checked with a timeout.
+    fn wait_until(mut condition: impl FnMut() -> bool) -> bool {
+        let deadline = Instant::now() + Duration::from_secs(2);
+        while Instant::now() < deadline {
+            if condition() {
+                return true;
+            }
+            thread::sleep(Duration::from_millis(2));
+        }
+        condition()
     }
 
     #[test]
@@ -3203,6 +3503,207 @@ mod tests {
         drop(client);
         hub.deactivate(77);
         assert!(server_thread.join().unwrap().is_err());
+    }
+
+
+    #[test]
+    fn playback_control_survives_the_open_socket_closing() {
+        let hub = ControlHub::new(Arc::new(AtomicU32::new(100)));
+        let source: IpAddr = "192.168.31.207".parse().unwrap();
+        let (sender, _receiver) = mpsc::channel();
+        let gate = hub.activate(41, source, sender, control_notification_sequence());
+
+        // The OPEN control socket closes while the RTSP media stream (which
+        // holds this gate clone) keeps playing.
+        hub.deactivate(41);
+        assert_eq!(hub.active_source_session_id(41, source), Some(41));
+        assert_eq!(
+            hub.resolve_playback_control(42, source),
+            super::PlaybackControlResolution::Recent(41)
+        );
+
+        assert!(hub.observe_playback(41, true));
+        assert_eq!(hub.playback_state_for(42, source), 3);
+        assert!(gate.is_paused());
+
+        assert!(hub.observe_playback(41, false));
+        assert_eq!(hub.playback_state_for(42, source), 2);
+        assert!(!gate.is_paused());
+    }
+
+    #[test]
+    fn playback_control_uses_the_sole_active_route_for_mismatched_headers() {
+        let hub = ControlHub::new(Arc::new(AtomicU32::new(100)));
+        let source: IpAddr = "192.168.31.207".parse().unwrap();
+        let other: IpAddr = "192.168.31.220".parse().unwrap();
+        let (sender, _receiver) = mpsc::channel();
+        hub.activate(41, source, sender, control_notification_sequence());
+
+        // A companion socket (or a second phone interface) still drives the
+        // single media route instead of silently ACKing without state.
+        assert_eq!(
+            hub.resolve_playback_control(42, other),
+            super::PlaybackControlResolution::ActiveRouteMismatch(41)
+        );
+        assert_eq!(
+            hub.resolve_playback_control(99, other).session_id(),
+            Some(41)
+        );
+    }
+
+    #[test]
+    fn legacy_plaintext_open_registers_route_and_pause_resume_update_playback() {
+        let recorded = Arc::new(Mutex::new(Vec::<Value>::new()));
+        let hub = ControlHub::new(Arc::new(AtomicU32::new(100)));
+        let (mut client, mut server_to_client, _client_to_server, session) =
+            start_control_session(&hub, 77, &recorded);
+
+        // PushMi (legacy SAFETY_AUTH sender) sends OPEN as plain text with the
+        // plain 0x00 wire type. This used to be swallowed by the SAFETY_INFO
+        // arm (same command byte), leaving no active media source.
+        write_frame(
+            &mut client,
+            0x00,
+            super::OPEN,
+            100,
+            b"wfd://127.0.0.1:9?mirrorMode=1",
+        )
+        .unwrap();
+        let open_ack = read_frame(&mut client, &mut server_to_client).unwrap();
+        assert_eq!(open_ack.command, super::OPEN_ACK);
+        assert_eq!(open_ack.sequence, 100);
+        // The receiver also publishes its initial mediaInfo NOTIFY (encrypted).
+        let media_info = read_frame(&mut client, &mut server_to_client).unwrap();
+        assert_eq!(media_info.command, NOTIFY);
+
+        let source: IpAddr = "127.0.0.1".parse().unwrap();
+        assert!(wait_until(|| hub.active_source_session_id(77, source) == Some(77)));
+        assert!(wait_until(|| recorded.lock().unwrap().iter().any(|event| {
+            event["event"] == "media_route_activated"
+                && event["session_id"] == 77
+                && event["open_encrypted"] == false
+        })));
+
+        // Phone-side pause: ACK must stay first, then the UI state must flip.
+        let before_pause = recorded.lock().unwrap().len();
+        write_frame(&mut client, 0x00, super::PAUSE, 101, &[]).unwrap();
+        let pause_ack = read_frame(&mut client, &mut server_to_client).unwrap();
+        assert_eq!(pause_ack.command, super::PAUSE_ACK);
+        assert_eq!(pause_ack.sequence, 101);
+        assert!(wait_until(|| playback_states_since(&recorded, before_pause)
+            == vec![false]));
+
+        // Phone-side resume.
+        let before_resume = recorded.lock().unwrap().len();
+        write_frame(&mut client, 0x00, super::RESUME, 102, &[]).unwrap();
+        let resume_ack = read_frame(&mut client, &mut server_to_client).unwrap();
+        assert_eq!(resume_ack.command, super::RESUME_ACK);
+        assert!(wait_until(|| playback_states_since(&recorded, before_resume)
+            == vec![true]));
+
+        drop(client);
+        hub.deactivate(77);
+        let _ = session.join();
+    }
+
+    #[test]
+    fn encrypted_open_keeps_registering_and_pause_updates_playback() {
+        let recorded = Arc::new(Mutex::new(Vec::<Value>::new()));
+        let hub = ControlHub::new(Arc::new(AtomicU32::new(100)));
+        let (mut client, mut server_to_client, mut client_to_server, session) =
+            start_control_session(&hub, 78, &recorded);
+
+        let encrypted_open = client_to_server
+            .encrypt(b"wfd://127.0.0.1:9?mirrorMode=1")
+            .unwrap();
+        write_frame(&mut client, 0x00, super::OPEN, 200, &encrypted_open).unwrap();
+        let open_ack = read_frame(&mut client, &mut server_to_client).unwrap();
+        assert_eq!(open_ack.command, super::OPEN_ACK);
+        let media_info = read_frame(&mut client, &mut server_to_client).unwrap();
+        assert_eq!(media_info.command, NOTIFY);
+        let source: IpAddr = "127.0.0.1".parse().unwrap();
+        assert!(wait_until(|| hub.active_source_session_id(78, source) == Some(78)));
+        assert!(wait_until(|| recorded.lock().unwrap().iter().any(|event| {
+            event["event"] == "media_route_activated" && event["open_encrypted"] == true
+        })));
+
+        let before_pause = recorded.lock().unwrap().len();
+        let encrypted_pause = client_to_server.encrypt(&[]).unwrap();
+        write_frame(&mut client, 0x00, super::PAUSE, 201, &encrypted_pause).unwrap();
+        let pause_ack = read_frame(&mut client, &mut server_to_client).unwrap();
+        assert_eq!(pause_ack.command, super::PAUSE_ACK);
+        assert!(wait_until(|| playback_states_since(&recorded, before_pause)
+            == vec![false]));
+
+        drop(client);
+        hub.deactivate(78);
+        let _ = session.join();
+    }
+
+    #[test]
+    fn pause_from_companion_session_after_the_open_socket_closed_is_applied() {
+        let recorded = Arc::new(Mutex::new(Vec::<Value>::new()));
+        let hub = ControlHub::new(Arc::new(AtomicU32::new(100)));
+
+        // Primary control session: legacy plaintext OPEN, then the phone closes
+        // the control socket while the RTSP stream keeps running.
+        let (mut primary, mut primary_reader, _primary_writer, primary_session) =
+            start_control_session(&hub, 77, &recorded);
+        write_frame(
+            &mut primary,
+            0x00,
+            super::OPEN,
+            100,
+            b"wfd://127.0.0.1:9?mirrorMode=1",
+        )
+        .unwrap();
+        assert_eq!(
+            read_frame(&mut primary, &mut primary_reader).unwrap().command,
+            super::OPEN_ACK
+        );
+        assert_eq!(
+            read_frame(&mut primary, &mut primary_reader).unwrap().command,
+            NOTIFY
+        );
+        let source: IpAddr = "127.0.0.1".parse().unwrap();
+        assert!(wait_until(|| hub.active_source_session_id(77, source) == Some(77)));
+        drop(primary);
+        hub.deactivate(77);
+        let _ = primary_session.join();
+
+        // Companion control session from the same source: PAUSE must still flip
+        // the retained playback gate and publish playback_state.
+        let (mut companion, mut companion_reader, _companion_writer, companion_session) =
+            start_control_session(&hub, 78, &recorded);
+        let before_pause = recorded.lock().unwrap().len();
+        write_frame(&mut companion, 0x00, super::PAUSE, 101, &[]).unwrap();
+        let pause_ack = read_frame(&mut companion, &mut companion_reader).unwrap();
+        assert_eq!(pause_ack.command, super::PAUSE_ACK);
+        let source: IpAddr = "127.0.0.1".parse().unwrap();
+        assert!(wait_until(|| hub.playback_state_for(78, source) == 3));
+        assert!(wait_until(|| playback_states_since(&recorded, before_pause)
+            == vec![false]));
+        assert!(recorded.lock().unwrap()[before_pause..].iter().any(|event| {
+            event["event"] == "playback_command_resolution"
+                && event["command"] == "pause"
+                && event["resolution"] == "recent"
+        }));
+
+        // Resume from the companion session also updates the retained gate.
+        let before_resume = recorded.lock().unwrap().len();
+        write_frame(&mut companion, 0x00, super::RESUME, 102, &[]).unwrap();
+        assert_eq!(
+            read_frame(&mut companion, &mut companion_reader)
+                .unwrap()
+                .command,
+            super::RESUME_ACK
+        );
+        assert!(wait_until(|| playback_states_since(&recorded, before_resume)
+            == vec![true]));
+
+        drop(companion);
+        hub.deactivate(78);
+        let _ = companion_session.join();
     }
 
     #[test]

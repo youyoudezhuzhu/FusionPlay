@@ -6,12 +6,12 @@
 >
 > 基线：本轮 AirPlay 深入改造前的 **Android 1.3.5（commit `b42984c`）**。
 > 如果你所说的“原版”是更早的 1.2.3 开源版本，可以用文末的 git 命令查看更早差异。
-> 当前代码：`main`，最新 release `android-v1.5.0`（2026-11-16）。
+> 当前代码：`main`，最新 release `android-v1.5.1`（2026-11-16）。
 > **注意：1.4.5 已实测 AirPlay 音频正常播放；1.4.6 实测 iPhone 已发送
 > `SET_PARAMETER volume`；1.4.7 映射到 Android `STREAM_MUSIC`；1.4.8 按 AirPlay dB
 > 线性曲线校准。1.4.9 将错误气泡缩短到 3 秒，并增加 now-playing 键名诊断。
-> AirPlay 2 标准元数据没有歌词字段；1.5.0 对“网易云把歌词放在 title”这类
-> 发送端做启发式识别。**
+> AirPlay 2 标准元数据没有歌词字段；1.5.0/1.5.1 对“网易云把歌词放在 title”
+> 这类发送端做启发式识别。**
 
 ## 1. 一句话结论
 
@@ -343,6 +343,20 @@ AirPlay 音量滑块在约 [-30 dB, 0 dB] 上更接近线性；MiPlay 则直接�
 局限：同一 artist/album 连续换歌时前 3 个 title 可能误判；标题到达时间不是歌曲
 内时间，所以歌词目前是静态行，没有逐行高亮。
 
+### 5.9 MiPlay PAUSE_ACK 无 UI 更新修复（1.5.1）
+
+GitHub 上另一 Agent 的 `docs/MIPLAY_PAUSE_ACK_NO_UI_UPDATE.md` 已处理：
+
+- 根因 1：legacy OPEN 与 SAFETY_INFO 共用 0x00，明文/包装 OPEN 可能未进入
+  `hub.activate`，PAUSE 时查不到 active，只回 ACK 不更新 UI。
+- 根因 2：控制 socket 关闭即清空 `active`，PushMi 的 companion socket PAUSE
+  找不到媒体源。
+- 修复：明文 `wfd://`/`rtsp://` OPEN 兼容；`ControlHub.recent_source` 保留
+  最近媒体源与 PlaybackGate（10 分钟）；PAUSE/RESUME/SET_MEDIA_STATE 用
+  active → recent → 唯一媒体路由兜底；ACK 顺序保持先 ACK；增加
+  `media_route_activated` / `playback_command_resolution` 诊断。
+- 单元测试：FusionPlay.MiPlaySdk **118 passed**（新增 5 个），需 PushMi 真机确认。
+
 ## 6. 已知根因/未决问题
 ### 5.4 1.4.4 复盘（paced 仍未生效）
 
@@ -442,6 +456,20 @@ AirPlay 音量滑块在约 [-30 dB, 0 dB] 上更接近线性；MiPlay 则直接�
 
 局限：同一 artist/album 连续换歌时前 3 个 title 可能误判；标题到达时间不是歌曲
 内时间，所以歌词目前是静态行，没有逐行高亮。
+
+### 5.9 MiPlay PAUSE_ACK 无 UI 更新修复（1.5.1）
+
+GitHub 上另一 Agent 的 `docs/MIPLAY_PAUSE_ACK_NO_UI_UPDATE.md` 已处理：
+
+- 根因 1：legacy OPEN 与 SAFETY_INFO 共用 0x00，明文/包装 OPEN 可能未进入
+  `hub.activate`，PAUSE 时查不到 active，只回 ACK 不更新 UI。
+- 根因 2：控制 socket 关闭即清空 `active`，PushMi 的 companion socket PAUSE
+  找不到媒体源。
+- 修复：明文 `wfd://`/`rtsp://` OPEN 兼容；`ControlHub.recent_source` 保留
+  最近媒体源与 PlaybackGate（10 分钟）；PAUSE/RESUME/SET_MEDIA_STATE 用
+  active → recent → 唯一媒体路由兜底；ACK 顺序保持先 ACK；增加
+  `media_route_activated` / `playback_command_resolution` 诊断。
+- 单元测试：FusionPlay.MiPlaySdk **118 passed**（新增 5 个），需 PushMi 真机确认。
 
 ## 6. 已知根因/未决问题
 

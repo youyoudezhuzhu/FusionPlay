@@ -1,34 +1,32 @@
-## FusionPlay Android 1.5.0
+## FusionPlay Android 1.5.1
 
-### AirPlay 歌词：识别“标题即歌词”的发送端
+### 妙播（MiPlay）暂停状态修复
 
-部分 AirPlay 发送端（实测网易云音乐）不使用标准歌词字段，而是把**当前歌词行**
-放在 now-playing 的 title 字段里，artist 字段放“歌曲名 + 作曲/歌手”：
-- 第一行（原歌曲名）会随歌词变化；
-- 第二行显示歌曲名 + 作曲/歌手；
-- 标准 DMAP 中没有可解析的 lyrics 字段。
+另一 Agent 报告的 `docs/MIPLAY_PAUSE_ACK_NO_UI_UPDATE.md` 问题已修：
 
-1.5.0 的处理：
+- PushMi legacy 发送端暂停时，FusionPlay 回了 PAUSE_ACK，但 active 媒体源没有登记/已随控制 socket 关闭而清空，导致 UI 仍显示播放、进度继续。
+- 处理：
+  - legacy 明文 `wfd://`/`rtsp://` OPEN 不再被 `SAFETY_INFO` 分支吞掉；OPEN 正确登记媒体路由。
+  - 保留最近媒体源（10 分钟 TTL），控制 socket 关闭后仍能用其 PlaybackGate 暂停/恢复。
+  - PAUSE/RESUME/SET_MEDIA_STATE 依次按 active → recent → 唯一媒体路由兜底；ACK 仍先回。
+  - 增加 `media_route_activated` / `playback_command_resolution` 定向日志。
+- 预期：PushMi 开始推送后，FusionPlay 点暂停 → UI 显示暂停、进度停住；恢复/手机侧暂停也能同步。
+- 仍需 PushMi 2.6.20a10 真机确认。
 
-- AirPlay 通道下检测 title 是否在短时间内连续变化；连续出现 3 个不同 title 后，
-  判定为“标题即歌词”。
-- 把这些 title 按出现顺序作为歌词行，显示为 **左封面、右歌词** 的双栏布局；
-  第二行从 artist 中拆出歌曲名/作者，避免把歌词误当歌曲名。
-- 判定成立时使用现有的 300ms fade+scale 布局过渡，并立即移除「音频流未提供歌词」
-  空态；不会再出现“歌词已显示但空态还在”的情况。
-- 这不是按协议伪造歌词：只对明确检测到 title 连续变化的 AirPlay 发送端生效；
-  哔哩哔哩这类 title 稳定的普通视频不会误判。
-- 局限：如果同一 artist/album 下连续换歌，前 3 个 title 可能被误认为歌词；
-  后续可按实际发送端日志继续收紧阈值。歌词目前是**静态行**（没有逐行时间高亮），
-  因为标题到达时间不等于歌曲内时间。
+### AirPlay 歌词
+
+保持 1.5.0 的“标题持续变化即歌词”识别（网易云 title 是歌词行、artist 是歌曲名/作者）：
+- 连续 3 个不同 title 判定为歌词；
+- 左封面/右歌词、300ms fade+scale 动画、移除空态；
+- 哔哩哔哩等 title 稳定的发送端不误判。
 
 ### 其他
 
-- 顶部错误气泡保持 3 秒自动消失。
-- 音量映射保持 1.4.8 的系统媒体音量曲线；音频/进度逻辑不变。
+- 音量映射保持 1.4.8 的妙播同款系统媒体音量曲线。
+- 错误气泡 3 秒自动消失。
 - APK 约 12.4MB，arm64-v8a。
 
 ### 安装
 
-- 版本 1.5.0 / versionCode 10500，可直接覆盖 1.4.9。
+- 版本 1.5.1 / versionCode 10501，可直接覆盖 1.5.0。
 - 1.3.4+ 可在「设置 → 检查更新」升级。
