@@ -570,10 +570,10 @@ class _PlayerViewState extends State<PlayerView> {
         final compactChrome = outer.maxHeight < 430;
         final reduceMotion = _reduceMotion;
         final showLyrics = _showLyricsLayout;
-        final inlinePlayerControls = landscape && showLyrics;
-        final body = showLyrics
-            ? (landscape ? _landscapeBody() : _portraitBody())
-            : _centeredBody(landscape: landscape);
+        final inlinePlayerControls = landscape;
+        final body = landscape
+            ? (showLyrics ? _landscapeBody() : _appleNoLyricsBody())
+            : (showLyrics ? _portraitBody() : _centeredBody(landscape: false));
         return Column(
           children: [
             _topBar(landscape: landscape, compact: compactChrome),
@@ -1164,6 +1164,108 @@ class _PlayerViewState extends State<PlayerView> {
     // Neutral runtime wording: never claim the protocol lacks lyric support.
     if (channel == PlaybackChannel.airPlay) return copy.description;
     return copy.title;
+  }
+
+  /// Apple Music-style no-lyrics landscape: one large cover with the real
+  /// transport/progress/volume column beside it. No empty lyrics column, and no
+  /// bottom dock (the same inline controls are used when lyrics are present).
+  Widget _appleNoLyricsBody() {
+    final playback = widget.state.playback;
+    final (title, artist) = _displayMetadata(playback);
+    final hiddenByUser = _lyricsSupported && _hasDisplayableLyrics;
+    final hint = hiddenByUser ? null : _centeredHint(playback);
+    return Padding(
+      key: const ValueKey('player-layout-horizontal'),
+      padding: const EdgeInsets.fromLTRB(22, 2, 22, 16),
+      child: LayoutBuilder(
+        builder: (context, content) {
+          final compact = content.maxHeight < 360;
+          final cover = math
+              .min(content.maxWidth * .34, content.maxHeight * .62)
+              .clamp(110.0, 380.0)
+              .toDouble();
+          final rightWidth = content.maxWidth - cover - (compact ? 24 : 40);
+          final column = Column(
+            key: const ValueKey('player-centered-layout'),
+            mainAxisAlignment: MainAxisAlignment.center,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Text(
+                title,
+                maxLines: compact ? 1 : 2,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  fontSize: compact ? 24.0 : 32.0,
+                  height: 1.18,
+                  color: Colors.white,
+                  fontWeight: FusionTypography.semiBoldFontWeight,
+                  fontVariations: FusionTypography.semiBold,
+                  shadows: const [
+                    Shadow(blurRadius: 22, color: Color(0x66000000)),
+                  ],
+                ),
+              ),
+              if (artist != null && artist.isNotEmpty) ...[
+                const SizedBox(height: 5),
+                Text(
+                  artist,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    fontSize: compact ? 14.0 : 16.0,
+                    color: Colors.white.withValues(alpha: .68),
+                  ),
+                ),
+              ],
+              if (hint != null) ...[
+                const SizedBox(height: 8),
+                Text(
+                  hint,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    fontSize: 12,
+                    color: Colors.white.withValues(alpha: .48),
+                  ),
+                ),
+              ],
+              SizedBox(height: compact ? 16 : 24),
+              _progressRow(compact: compact),
+              SizedBox(height: compact ? 10 : 16),
+              _transport(compact: compact),
+              SizedBox(height: compact ? 8 : 14),
+              Align(
+                alignment: Alignment.centerLeft,
+                child: _volumeControls(compact: compact),
+              ),
+            ],
+          );
+          return Row(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Expanded(
+                flex: 5,
+                child: Center(
+                  child: _breathingArtwork(
+                    size: cover,
+                    child: _artworkCard(cover, radius: compact ? 22 : 30),
+                  ),
+                ),
+              ),
+              SizedBox(width: compact ? 24 : 40),
+              Expanded(
+                flex: 6,
+                child: FittedBox(
+                  fit: BoxFit.scaleDown,
+                  alignment: Alignment.center,
+                  child: SizedBox(width: rightWidth, child: column),
+                ),
+              ),
+            ],
+          );
+        },
+      ),
+    );
   }
 
   /// Single-column centered layout used when no lyrics can be displayed:

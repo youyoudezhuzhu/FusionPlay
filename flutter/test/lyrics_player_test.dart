@@ -680,26 +680,22 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('手机横屏空态完整显示在 dock 上方（不被裁切/重叠）', (tester) async {
-    await _pumpPlayer(
-      tester,
-      const AppState(initialized: true),
-      size: const Size(800, 360),
-    );
+  testWidgets('横屏空态使用封面+控制双区，不再被底部 dock 挤压', (tester) async {
+    await _pumpPlayer(tester, _state(), size: const Size(800, 360));
 
-    expect(find.text('暂无音乐'), findsOneWidget);
+    expect(find.text('Track'), findsOneWidget);
     expect(find.text('暂无歌词'), findsOneWidget);
-    final hintBottom = tester.getBottomRight(find.text('暂无歌词')).dy;
-    final dockTop = tester
-        .getTopLeft(find.byKey(const ValueKey('player-dock')))
-        .dy;
-    expect(hintBottom, lessThanOrEqualTo(dockTop), reason: '空态提示不能被底部 dock 覆盖');
+    expect(find.byKey(const ValueKey('player-dock')), findsNothing);
+    expect(
+      find.byKey(const ValueKey('playback-play-pause-button')),
+      findsOneWidget,
+    );
+    expect(find.byKey(const ValueKey('volume-slider')), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('dock 中播放按钮在进度条与屏幕底部之间垂直居中', (tester) async {
+  testWidgets('无歌词横屏播放按钮与进度/音量同列可用', (tester) async {
     await _pumpPlayer(tester, _state(), size: const Size(800, 360));
-    // Let the control entrance (5px translate) settle before measuring.
     await tester.pump(const Duration(milliseconds: 400));
 
     final play = tester.getRect(
@@ -708,9 +704,10 @@ void main() {
     final progress = tester.getRect(
       find.byKey(const ValueKey('player-progress-bar')),
     );
-    final gapAbove = play.top - progress.bottom;
-    final gapBelow = 360 - play.bottom;
-    expect(gapAbove, closeTo(gapBelow, 0.5), reason: '播放按钮上下留白应一致，而不是偏向底部');
+    expect(play.top, greaterThan(progress.bottom));
+    expect(play.left, greaterThan(0));
+    expect(play.right, lessThanOrEqualTo(800));
+    expect(find.byKey(const ValueKey('volume-slider')), findsOneWidget);
   });
 
   testWidgets('播放中本地时钟/呼吸动画不抛异常，退出后释放', (tester) async {
