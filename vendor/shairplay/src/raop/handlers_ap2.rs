@@ -845,6 +845,10 @@ fn setup_stream_buffered(
         alac_format,
         samples_per_frame,
         time_announce: std::sync::Arc::clone(&conn.shared.rtcp_announce),
+        // 1.4.0–1.4.2 timed playout delivered only the first frame on device;
+        // deliver decoded PCM immediately (the local AudioBuffer keeps the
+        // jitter cushion) until the timed path is re-validated.
+        direct_feed: true,
     };
 
     let proc = crate::raop::buffered_audio::BufferedAudioProcessor {

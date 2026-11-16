@@ -111,6 +111,10 @@ struct AudioBuffer {
     underruns: u64,
     /// Number of times output had to wait for the prefill cushion again.
     prefill_waits: u64,
+    /// Number of successful producer pushes.
+    pushes: u64,
+    /// Number of times the queue was cleared (new stream / flush / restart).
+    clears: u64,
     #[cfg_attr(not(any(target_os = "android", test)), allow(dead_code))]
     channels: usize,
 }
@@ -126,6 +130,9 @@ struct AudioBufferStats {
     prefill_frames: usize,
     /// True once the output has started draining real PCM.
     primed: bool,
+    /// Producer pushes / queue clears since startup.
+    pushes: u64,
+    clears: u64,
 }
 
 impl AudioBuffer {
@@ -157,11 +164,14 @@ impl AudioBuffer {
             waiting_for_prefill: false,
             underruns: 0,
             prefill_waits: 0,
+            pushes: 0,
+            clears: 0,
             channels,
         }
     }
 
     fn push(&mut self, input: &[f32]) {
+        self.pushes = self.pushes.saturating_add(1);
         if input.len() >= self.capacity {
             self.samples.clear();
             self.samples.extend(
@@ -210,6 +220,7 @@ impl AudioBuffer {
         self.samples.clear();
         self.primed = false;
         self.waiting_for_prefill = false;
+        self.clears = self.clears.saturating_add(1);
     }
 
     #[cfg_attr(not(any(target_os = "android", test)), allow(dead_code))]
@@ -221,6 +232,8 @@ impl AudioBuffer {
             capacity_frames: self.capacity / self.channels,
             prefill_frames: self.prefill / self.channels,
             primed: self.primed,
+            pushes: self.pushes,
+            clears: self.clears,
         }
     }
 }
@@ -463,6 +476,8 @@ pub fn start_audio(
     let buffer = Arc::new(Mutex::new(AudioBuffer::new(sample_rate, channels)));
     let gain_bits = Arc::new(AtomicU32::new(1.0_f32.to_bits()));
     let volume_db_bits = Arc::new(AtomicU32::new(0.0_f32.to_bits()));
+    let pcm_received = Arc::new(AtomicU64::new(0));
+    let buffer_lock_failures = Arc::new(AtomicU64::new(0));
 
     let stream = match sample_format {
         cpal::SampleFormat::F32 => build_output_stream::<f32>(
@@ -495,6 +510,8 @@ pub fn start_audio(
         buffer,
         gain_bits,
         volume_db_bits,
+        pcm_received,
+        buffer_lock_failures,
         events,
         arbiter,
         artwork_dir,
@@ -533,6 +550,8 @@ pub fn start_audio_external(
     let buffer = Arc::new(Mutex::new(AudioBuffer::new(EXTERNAL_RATE, EXTERNAL_CHANNELS)));
     let gain_bits = Arc::new(AtomicU32::new(1.0_f32.to_bits()));
     let volume_db_bits = Arc::new(AtomicU32::new(0.0_f32.to_bits()));
+    let pcm_received = Arc::new(AtomicU64::new(0));
+    let buffer_lock_failures = Arc::new(AtomicU64::new(0));
     let stop = Arc::new(AtomicBool::new(false));
     let pump = {
         let buffer = Arc::clone(&buffer);
@@ -574,6 +593,8 @@ pub fn start_audio_external(
         buffer,
         gain_bits,
         volume_db_bits,
+        pcm_received,
+        buffer_lock_failures,
         events,
         arbiter,
         artwork_dir,
@@ -608,6 +629,8 @@ pub fn start_audio(
     let buffer = Arc::new(Mutex::new(AudioBuffer::new(sample_rate, channels)));
     let gain_bits = Arc::new(AtomicU32::new(1.0_f32.to_bits()));
     let volume_db_bits = Arc::new(AtomicU32::new(0.0_f32.to_bits()));
+    let pcm_received = Arc::new(AtomicU64::new(0));
+    let buffer_lock_failures = Arc::new(AtomicU64::new(0));
     let (commands, command_receiver) = mpsc::channel();
     let initial_stream = open_android_audio_stream(
         Arc::clone(&buffer),
@@ -619,6 +642,8 @@ pub fn start_audio(
     let output_buffer = Arc::clone(&buffer);
     let output_gain = Arc::clone(&gain_bits);
     let output_commands = commands.clone();
+    let pcm_received_monitor = Arc::clone(&pcm_received);
+    let lock_failures_monitor = Arc::clone(&buffer_lock_failures);
     thread::Builder::new()
         .name("airplay-audio-route".to_owned())
         .spawn(move || {
@@ -630,6 +655,8 @@ pub fn start_audio(
                 output_gain,
                 output_events,
                 sample_rate,
+                Arc::clone(&pcm_received_monitor),
+                Arc::clone(&lock_failures_monitor),
             );
         })
         .context("无法启动 Android 音频路由监控")?;
@@ -639,6 +666,8 @@ pub fn start_audio(
         buffer,
         gain_bits,
         volume_db_bits,
+        pcm_received,
+        buffer_lock_failures,
         events,
         arbiter,
         artwork_dir,
@@ -704,6 +733,8 @@ fn manage_android_audio_output(
     gain_bits: Arc<AtomicU32>,
     events: Arc<EventSink>,
     sample_rate: u32,
+    pcm_received: Arc<AtomicU64>,
+    buffer_lock_failures: Arc<AtomicU64>,
 ) {
     let mut stream = Some(initial_stream);
     // One startup line so the next exported log shows the active cushion and
@@ -724,6 +755,7 @@ fn manage_android_audio_output(
     }
     let mut last_stats = AudioBufferStats::default();
     let mut announced_start = false;
+    let mut last_heartbeat = std::time::Instant::now();
     loop {
         let command = match receiver.recv_timeout(Duration::from_secs(2)) {
             Ok(command) => command,
@@ -735,6 +767,27 @@ fn manage_android_audio_output(
                     announced_start = true;
                     let message = format!(
                         "Android 音频输出已开始播放：当前缓冲 {:.0} ms / 容量 {:.0} ms",
+                        stats.buffered_frames as f64 * 1_000.0 / sample_rate.max(1) as f64,
+                        stats.capacity_frames as f64 * 1_000.0 / sample_rate.max(1) as f64
+                    );
+                    events.emit(CoreEvent::Log {
+                        level: "info",
+                        message: &message,
+                    });
+                }
+                // 10 s heartbeat: shows whether decoded PCM is reaching the
+                // local queue (push count / total samples) and whether the
+                // producer or the consumer is the bottleneck.
+                if last_heartbeat.elapsed() >= std::time::Duration::from_secs(10) {
+                    last_heartbeat = std::time::Instant::now();
+                    let message = format!(
+                        "Android 输出诊断：已收 PCM {} 采样，push {} 次，clear {} 次，锁失败 {} 次，underrun {}，预填充 {}，当前缓冲 {:.0} ms / 容量 {:.0} ms",
+                        pcm_received.load(Ordering::Relaxed),
+                        stats.pushes,
+                        stats.clears,
+                        buffer_lock_failures.load(Ordering::Relaxed),
+                        stats.underruns,
+                        stats.prefill_waits,
                         stats.buffered_frames as f64 * 1_000.0 / sample_rate.max(1) as f64,
                         stats.capacity_frames as f64 * 1_000.0 / sample_rate.max(1) as f64
                     );
@@ -852,6 +905,10 @@ pub struct ReceiverAudioHandler {
     /// sender by `GET_PARAMETER volume` and updated by both the sender's
     /// `SET_PARAMETER volume` and the local UI volume.
     volume_db_bits: Arc<AtomicU32>,
+    /// Cumulative decoded PCM samples handed to the local output queue.
+    pcm_received: Arc<AtomicU64>,
+    /// Times the output queue mutex could not be taken in `audio_process`.
+    buffer_lock_failures: Arc<AtomicU64>,
     events: Arc<EventSink>,
     arbiter: Arc<PlaybackArbiter>,
     artwork_dir: PathBuf,
@@ -1603,6 +1660,8 @@ impl AudioHandler for ReceiverAudioHandler {
             output_channels: self.output_channels,
             pcm_samples,
             stream_label,
+            pcm_received: Arc::clone(&self.pcm_received),
+            buffer_lock_failures: Arc::clone(&self.buffer_lock_failures),
         })
     }
 
@@ -1852,6 +1911,10 @@ struct ReceiverAudioSession {
     pcm_samples: Arc<AtomicU64>,
     /// Human-readable stream format for diagnostics.
     stream_label: String,
+    /// Cumulative decoded PCM samples handed to the output queue (all streams).
+    pcm_received: Arc<AtomicU64>,
+    /// Times the output queue mutex could not be taken.
+    buffer_lock_failures: Arc<AtomicU64>,
 }
 
 impl ReceiverAudioSession {
@@ -1941,6 +2004,10 @@ impl AudioSession for ReceiverAudioSession {
                 && self.arbiter.is_current(lease)
             {
                 buffer.push(samples);
+                self.pcm_received
+                    .fetch_add(samples.len() as u64, Ordering::Relaxed);
+            } else {
+                self.buffer_lock_failures.fetch_add(1, Ordering::Relaxed);
             }
             self.note_audio_delivered(samples.len());
             return;
@@ -1967,6 +2034,10 @@ impl AudioSession for ReceiverAudioSession {
             && self.arbiter.is_current(lease)
         {
             buffer.push(&converted);
+            self.pcm_received
+                .fetch_add(converted.len() as u64, Ordering::Relaxed);
+        } else {
+            self.buffer_lock_failures.fetch_add(1, Ordering::Relaxed);
         }
         self.note_audio_delivered(converted.len());
     }
@@ -2020,7 +2091,7 @@ impl Drop for ReceiverAudioSession {
 #[cfg(test)]
 mod tests {
     use std::path::PathBuf;
-    use std::sync::atomic::{AtomicU32, Ordering};
+    use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
     use std::sync::{Arc, Mutex};
 
     use super::{
@@ -2106,6 +2177,8 @@ mod tests {
                 buffer: Arc::clone(&buffer),
                 gain_bits: Arc::new(AtomicU32::new(1.0_f32.to_bits())),
                 volume_db_bits: Arc::new(AtomicU32::new(0.0_f32.to_bits())),
+                pcm_received: Arc::new(AtomicU64::new(0)),
+                buffer_lock_failures: Arc::new(AtomicU64::new(0)),
                 events,
                 arbiter: Arc::clone(&arbiter),
                 artwork_dir: PathBuf::new(),

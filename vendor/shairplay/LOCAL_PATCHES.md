@@ -164,3 +164,40 @@ MediaRemote 不是公开的 AirPlay 2 API。本实现参考了 2026 年 2 月公
 - **缓冲诊断**：buffered/realtime 音频管线新增限频诊断（收包、解密失败、解码失败、
   解码静音、诊断行每 10 秒），经新增 `AudioHandler::on_diagnostic` 写入 core
   `CoreEvent::Log`（持久化日志 `persistent/fusionplay.jsonl`）。
+
+## 2026-11 Android 1.4.2 无声根因与声音优先兜底
+
+1.4.2 实机日志（`/tmp/fplogs3`，OPPO OPD2506，AAC 44100→48000）证据：
+- 收包/解密/解码全部正常（`收包 1895、解密失败 0、解码失败 0、解码静音 0`）；
+- core 收到首块 PCM（2230 采样）后**再无后续**：本地 `AudioBuffer` 一直
+  `underrun 1/2、重新预填充 3→11、缓冲 0 ms`，且从未出现
+  `Android 音频输出已开始播放`；
+- 结论：问题不在解码/音量，而在 **buffered_audio 的定时 playout**：解码后的 PCM
+  只被 `delivery_loop` 送出首帧，之后全部滞留。
+
+根因（安全推断）：`SETRATEANCHORTIME` 的 anchor 时间是**网络/PTP 时间**，而本机
+没有 PTP 共享时钟，`set_rate_anchor` 走 `LocalFallback` 时把 `anchor_local` 设为
+本地 now，忽略发送端约 2 s 的 lead；发送端周期性重发 SETRATEANCHORTIME 时每次都
+把 anchor 重置到“现在”，而缓冲头的 RTP 时间戳始终在 anchor 之后约 2 s，
+`playout_target_rtp` 追不上，于是永远没有 due 帧（只有 RECORD/Resume 锚定到最早
+已缓冲帧的那一刻会送出首帧）。这也解释了 1.4.0/1.4.1 的“偶尔响一两声”。
+
+修复：
+- **直接喂音（direct-feed）兜底，默认开启**：`buffered_audio` 在
+  `receive → decrypt → decode → resample` 成功后，`delivery_loop` 立即按 RTP 时间
+  顺序把所有已缓冲帧送入 `AudioSession`（`take_all`），不再依赖 anchor/rate/
+  target 的定时门控；本机 `AudioBuffer` 的 120 ms 预填充继续吸收网络抖动。
+  RTSP PAUSE 时丢弃缓冲帧、RECORD 恢复，避免暂停时积压。
+- FLUSH 语义修正：`FLUSHBUFFERED` 的 `flushFromSeq/flushUntilSeq` 是 **RTP 序列号**，
+  旧代码拿它和 RTP 时间戳低 32 位比较（可能清空整段或完全无效）。现在按收到的
+  包维护 `seq(16-bit) → 扩展时间戳` 历史（上限 4096），仅删除真正落在该序列号区间
+  内的帧；无法映射时**忽略**而不是误删，并记录诊断。
+- 诊断增强（限频写入 core 日志）：
+  - buffered：收包数、解码帧/采样数、解密/解码失败、解码静音；
+  - delivery：模式（direct/timed）、已送出帧/采样、待播帧、rate、flush 次数/删除帧数；
+  - FLUSH：请求 seq 区间、映射包数、实际删除帧数；
+  - Android 输出每 10 s 心跳：已收 PCM 采样、push 次数、clear 次数、锁失败次数、
+    underrun/预填充、当前缓冲；并保留 underrun/“输出已开始播放”日志。
+- 定时 playout 代码保留（`BufferedSourceConfig::direct_feed = false`），待真机验证后
+  可恢复；若恢复，需要为无 PTP 场景改用相对 RTP 锚定（把 anchor_local 前移到
+  缓冲头），否则仍会饥饿。

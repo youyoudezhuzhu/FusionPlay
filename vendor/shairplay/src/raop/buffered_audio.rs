@@ -13,7 +13,7 @@
 //! timestamp wraps every ~27 hours, and the old `u32` + signed-difference
 //! playout math started misbehaving once a stream passed 2^31 frames (~13.5 h).
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, VecDeque};
 use std::sync::{Arc, Condvar, Mutex};
 use std::time::Duration;
 use tokio::io::AsyncReadExt;
@@ -47,6 +47,10 @@ const MAX_BUFFERED_SECONDS: usize = 20;
 /// as a restart (seek/new track) instead of packet reordering.
 const TIMELINE_REBASE_SECONDS: u32 = 30;
 
+/// Packets remembered for mapping FLUSHBUFFERED sequence numbers back to RTP
+/// timestamps. A flush normally covers the last few seconds (≈100 packets).
+const MAX_SEQ_HISTORY: usize = 4_096;
+
 #[derive(Debug, Clone)]
 /// Output configuration passed from the server builder.
 pub(crate) struct OutputConfig {
@@ -58,7 +62,7 @@ pub(crate) struct OutputConfig {
 
 /// Input configuration passed from the type-103 SETUP and the RTCP control
 /// channel.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 pub(crate) struct BufferedSourceConfig {
     /// ALAC parameters advertised by the SETUP `audioFormat` field, if that
     /// field describes an ALAC format.
@@ -68,6 +72,25 @@ pub(crate) struct BufferedSourceConfig {
     /// Latest RTCP time announce, written by the per-connection control-channel
     /// listener and read by the playout.
     pub(crate) time_announce: Arc<Mutex<Option<TimeAnnounce>>>,
+    /// Sound-first fallback: deliver decoded frames as soon as they arrive
+    /// instead of gating them on anchor/RTP-timestamp timing.
+    ///
+    /// 1.4.0–1.4.2 devices decoded/decrypted every packet but the timed playout
+    /// delivered only the first frame, so the local output stayed silent. The
+    /// local `AudioBuffer` cushion still provides jitter tolerance; this can be
+    /// turned off once the timed path is validated on device.
+    pub(crate) direct_feed: bool,
+}
+
+impl Default for BufferedSourceConfig {
+    fn default() -> Self {
+        Self {
+            alac_format: None,
+            samples_per_frame: None,
+            time_announce: Arc::new(Mutex::new(None)),
+            direct_feed: true,
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -184,6 +207,13 @@ struct PlayoutState {
     max_buffered_f32: usize,
     stopped: bool,
     format_changed: bool,
+    /// See [`BufferedSourceConfig::direct_feed`].
+    direct_feed: bool,
+    /// sequence number → extended RTP timestamp of packets seen recently.
+    seq_history: VecDeque<(u16, u64)>,
+    /// Diagnostics: FLUSH commands applied and frames they removed.
+    flushes: u64,
+    flushed_frames: u64,
 }
 
 /// Decoder chosen for the stream's SSRC. Apple can switch AAC↔ALAC mid-stream.
@@ -294,6 +324,16 @@ fn resume_playout(state: &mut PlayoutState) {
         // The next received frame will establish the anchor.
         state.anchor_valid = false;
         state.anchor_source = AnchorSource::None;
+    }
+}
+
+/// Whether a 16-bit RTP sequence number falls inside `from..=until`, handling
+/// wraparound.
+fn seq_in_range(seq: u16, from: u16, until: u16) -> bool {
+    if from <= until {
+        seq >= from && seq <= until
+    } else {
+        seq >= from || seq <= until
     }
 }
 
@@ -490,6 +530,20 @@ fn take_ready(state: &mut PlayoutState, target_rtp: u64) -> Vec<(u64, Vec<f32>)>
     frames
 }
 
+/// Remove every buffered frame, preserving RTP timestamp order. Used by the
+/// sound-first direct-feed mode (no timing gate).
+fn take_all(state: &mut PlayoutState) -> Vec<(u64, Vec<f32>)> {
+    let keys: Vec<u64> = state.buffer.keys().copied().collect();
+    let mut frames = Vec::with_capacity(keys.len());
+    for timestamp in keys {
+        if let Some(data) = state.buffer.remove(&timestamp) {
+            state.buffered_f32 = state.buffered_f32.saturating_sub(data.len());
+            frames.push((timestamp, data));
+        }
+    }
+    frames
+}
+
 /// TCP listener for buffered audio. Binds a port and spawns the processing pipeline.
 pub(crate) struct BufferedAudioProcessor {
     /// TCP listener waiting for the iPhone to connect.
@@ -511,6 +565,9 @@ impl BufferedAudioProcessor {
         let (cmd_tx, cmd_rx) = tokio::sync::mpsc::unbounded_channel();
         let default_sr = output_config.sample_rate.unwrap_or(44100);
 
+        // In direct-feed mode start playing immediately (sound-first); RTSP
+        // PAUSE/RECORD still flip `rate` afterwards.
+        let initial_rate = if self.source_config.direct_feed { 1 } else { 0 };
         let state = Arc::new((
             Mutex::new(PlayoutState {
                 buffer: BTreeMap::new(),
@@ -519,7 +576,7 @@ impl BufferedAudioProcessor {
                 anchor_local_ns: 0,
                 anchor_valid: false,
                 anchor_source: AnchorSource::None,
-                rate: 0,
+                rate: initial_rate,
                 rtp_clock_rate: 44_100,
                 sample_rate: default_sr,
                 channels: 2,
@@ -528,6 +585,10 @@ impl BufferedAudioProcessor {
                 max_buffered_f32: default_sr as usize * 2 * MAX_BUFFERED_SECONDS,
                 stopped: false,
                 format_changed: false,
+                direct_feed: self.source_config.direct_feed,
+                seq_history: VecDeque::new(),
+                flushes: 0,
+                flushed_frames: 0,
             }),
             Condvar::new(),
         ));
@@ -544,6 +605,7 @@ impl BufferedAudioProcessor {
 
         // Command handler
         let state3 = state.clone();
+        let handler3 = handler.clone();
         let ptp_clock = self.ptp_clock.clone();
         let announce_clock = Arc::clone(&self.source_config.time_announce);
         let mut cmd_rx = cmd_rx;
@@ -613,24 +675,48 @@ impl BufferedAudioProcessor {
                         cvar.notify_all();
                     }
                     PlayoutCommand::Flush { from_seq, until_seq } => {
-                        // The FLUSHBUFFERED plist carries sequence numbers, while
-                        // the buffer is keyed by RTP timestamps; compare the low
-                        // 32 bits so the historical behaviour is preserved.
-                        let keys: Vec<u64> = s
-                            .buffer
-                            .keys()
-                            .filter(|&&ts| {
-                                let ts32 = ts as u32;
-                                ts32 >= from_seq && ts32 <= until_seq
-                            })
-                            .copied()
+                        // FLUSHBUFFERED carries RTP **sequence numbers**, while the
+                        // playout buffer is keyed by RTP timestamps. Map the range
+                        // through the packet history; comparing raw values used to
+                        // delete whole buffers or nothing at all.
+                        let from_seq = from_seq as u16;
+                        let until_seq = until_seq as u16;
+                        let mapped: Vec<u64> = s
+                            .seq_history
+                            .iter()
+                            .filter(|(seq, _)| seq_in_range(*seq, from_seq, until_seq))
+                            .map(|(_, ts)| *ts)
                             .collect();
-                        for k in &keys {
-                            if let Some(data) = s.buffer.remove(k) {
-                                s.buffered_f32 = s.buffered_f32.saturating_sub(data.len());
+                        let removed = if let (Some(min), Some(max)) =
+                            (mapped.iter().min(), mapped.iter().max())
+                        {
+                            let keys: Vec<u64> =
+                                s.buffer.range(*min..=*max).map(|(ts, _)| *ts).collect();
+                            let mut removed = 0usize;
+                            for k in keys {
+                                if let Some(data) = s.buffer.remove(&k) {
+                                    s.buffered_f32 =
+                                        s.buffered_f32.saturating_sub(data.len());
+                                    removed += 1;
+                                }
                             }
-                        }
-                        debug!(flushed = keys.len(), "Flushed");
+                            removed
+                        } else {
+                            // The range could not be mapped to buffered timestamps:
+                            // never interpret sequence numbers as timestamps.
+                            0
+                        };
+                        s.flushes = s.flushes.saturating_add(1);
+                        s.flushed_frames = s.flushed_frames.saturating_add(removed as u64);
+                        debug!(from_seq, until_seq, removed, mapped = mapped.len(), "Flushed");
+                        handler3.on_diagnostic(
+                            "info",
+                            &format!(
+                                "AirPlay FLUSH：seq {from_seq}..{until_seq}，匹配到 {} 个已收包，删除 {removed} 帧缓冲",
+                                mapped.len()
+                            ),
+                        );
+                        cvar.notify_all();
                     }
                     PlayoutCommand::Stop => {
                         s.stopped = true;
@@ -720,6 +806,8 @@ async fn receive_loop<R: tokio::io::AsyncRead + Unpin>(
     let mut decrypt_failures: u64 = 0;
     let mut decode_failures: u64 = 0;
     let mut silent_decodes: u64 = 0;
+    let mut pushed_frames: u64 = 0;
+    let mut pushed_samples: u64 = 0;
     let mut first_decrypt_warn = RateLimitedWarn::new(Duration::from_secs(60));
     let mut first_decode_warn = RateLimitedWarn::new(Duration::from_secs(60));
     let mut first_silent_warn = RateLimitedWarn::new(Duration::from_secs(60));
@@ -745,6 +833,7 @@ async fn receive_loop<R: tokio::io::AsyncRead + Unpin>(
             continue;
         }
 
+        let seq = u16::from_be_bytes([packet[2], packet[3]]);
         let timestamp = u32::from_be_bytes([packet[4], packet[5], packet[6], packet[7]]);
         let ssrc_val = u32::from_be_bytes([packet[8], packet[9], packet[10], packet[11]]);
         let ssrc = AudioSsrc::from_u32(ssrc_val);
@@ -884,7 +973,7 @@ async fn receive_loop<R: tokio::io::AsyncRead + Unpin>(
             handler.on_diagnostic(
                 "info",
                 &format!(
-                    "AirPlay 缓冲音频诊断：收包 {packets}、解密失败 {decrypt_failures}、解码失败 {decode_failures}、解码静音 {silent_decodes}、首帧 {} 个采样",
+                    "AirPlay 缓冲音频诊断：收包 {packets}、解码 {pushed_frames} 帧 / {pushed_samples} 采样、解密失败 {decrypt_failures}、解码失败 {decode_failures}、解码静音 {silent_decodes}、首帧 {} 个采样",
                     samples.len()
                 ),
             );
@@ -912,6 +1001,12 @@ async fn receive_loop<R: tokio::io::AsyncRead + Unpin>(
             s.anchor_valid = false;
             s.anchor_source = AnchorSource::None;
         }
+        pushed_frames = pushed_frames.saturating_add(1);
+        pushed_samples = pushed_samples.saturating_add(samples.len() as u64);
+        s.seq_history.push_back((seq, timestamp_ext));
+        while s.seq_history.len() > MAX_SEQ_HISTORY {
+            s.seq_history.pop_front();
+        }
         push_buffered(&mut s, timestamp_ext, samples);
         anchor_first_resumed_packet(&mut s, timestamp_ext);
         refresh_rtcp_anchor(&mut s, ptp_clock, &source_config.time_announce, now_ns());
@@ -930,33 +1025,19 @@ fn delivery_loop(
 ) {
     let (lock, cvar) = &*state;
     let mut session: Option<Box<dyn crate::raop::AudioSession>> = None;
+    let mut delivered_samples: u64 = 0;
+    let mut delivered_frames: u64 = 0;
+    let mut last_diagnostic = now_ns();
 
     loop {
         let mut s = lock.lock().unwrap();
-
-        while !s.stopped && (s.rate == 0 || !s.anchor_valid || s.buffer.is_empty()) {
-            if s.stopped {
-                break;
-            }
-            // Wake periodically so an RTCP time announce that arrives while we
-            // are stalled can still establish the fallback anchor.
-            let (guard, _) = cvar
-                .wait_timeout(s, Duration::from_millis(20))
-                .expect("playout state mutex");
-            s = guard;
-            if s.stopped {
-                break;
-            }
-            if s.rate != 0 && !s.anchor_valid {
-                refresh_rtcp_anchor(&mut s, &ptp_clock, &time_announce, now_ns());
-            }
-        }
         if s.stopped {
             break;
         }
 
-        // Lazy init or reinit session on format change
-        if session.is_none() || s.format_changed {
+        // Lazy init or reinit session on format change. In direct-feed mode the
+        // first decoded packet may arrive before any anchor exists.
+        if (session.is_none() || s.format_changed) && s.source_format.is_some() {
             s.format_changed = false;
             let format = AudioFormat {
                 codec: AudioCodec::Pcm,
@@ -973,19 +1054,78 @@ fn delivery_loop(
             session = Some(handler.audio_init(format));
         }
 
-        let target_rtp = playout_target_rtp(&s, now_ns());
-        let ready = target_rtp
-            .map(|target_rtp| take_ready(&mut s, target_rtp))
-            .unwrap_or_default();
+        let ready: Vec<(u64, Vec<f32>)> = if s.direct_feed {
+            if s.rate == 0 {
+                // Paused: drop buffered audio instead of playing it later.
+                let dropped = take_all(&mut s).len();
+                if dropped != 0 {
+                    debug!(dropped, "Direct feed dropped frames while paused");
+                }
+                let (guard, _) = cvar
+                    .wait_timeout(s, Duration::from_millis(20))
+                    .expect("playout state mutex");
+                s = guard;
+                continue;
+            }
+            if s.buffer.is_empty() || session.is_none() {
+                let (guard, _) = cvar
+                    .wait_timeout(s, Duration::from_millis(10))
+                    .expect("playout state mutex");
+                s = guard;
+                continue;
+            }
+            take_all(&mut s)
+        } else {
+            if s.rate == 0 || !s.anchor_valid || s.buffer.is_empty() {
+                let (guard, _) = cvar
+                    .wait_timeout(s, Duration::from_millis(20))
+                    .expect("playout state mutex");
+                s = guard;
+                if !s.stopped && s.rate != 0 && !s.anchor_valid {
+                    refresh_rtcp_anchor(&mut s, &ptp_clock, &time_announce, now_ns());
+                }
+                continue;
+            }
+            let target_rtp = playout_target_rtp(&s, now_ns());
+            target_rtp
+                .map(|target_rtp| take_ready(&mut s, target_rtp))
+                .unwrap_or_default()
+        };
+        let buffered_frames = s.buffered_f32 / usize::from(s.channels.max(1));
+        let rate = s.rate;
+        let flushes = s.flushes;
+        let flushed_frames = s.flushed_frames;
+        let direct_feed = s.direct_feed;
         drop(s);
 
         if let Some(ref mut sess) = session {
             for (_, frame) in &ready {
+                delivered_samples = delivered_samples.saturating_add(frame.len() as u64);
+                delivered_frames = delivered_frames.saturating_add(1);
                 sess.audio_process(frame);
             }
         }
 
-        if ready.is_empty() {
+        // Rate-limited playout diagnostics: the next device log shows whether
+        // frames actually leave this loop (and how many flushes interfered).
+        if now_ns().saturating_sub(last_diagnostic) >= 5_000_000_000 {
+            last_diagnostic = now_ns();
+            handler.on_diagnostic(
+                "info",
+                &format!(
+                    "AirPlay 播放诊断：模式={}，已送出 {} 帧 / {} 采样，待播 {} 帧，rate={}，flush {} 次（共删 {} 帧）",
+                    if direct_feed { "direct" } else { "timed" },
+                    delivered_frames,
+                    delivered_samples,
+                    buffered_frames,
+                    rate,
+                    flushes,
+                    flushed_frames
+                ),
+            );
+        }
+
+        if ready.is_empty() && !direct_feed {
             std::thread::sleep(Duration::from_millis(5));
         }
     }
@@ -1003,7 +1143,7 @@ mod tests {
     use crate::net::ptp::PtpClock;
     use crate::raop::rtcp::TimeAnnounce;
     use crate::raop::{AudioFormat, AudioHandler, AudioSession, SourceAudioCodec};
-    use std::collections::BTreeMap;
+    use std::collections::{BTreeMap, VecDeque};
     use std::sync::{Arc, Condvar, Mutex};
     use tokio::io::AsyncWriteExt;
 
@@ -1024,7 +1164,51 @@ mod tests {
             max_buffered_f32: 48_000 * 2 * 20,
             stopped: false,
             format_changed: false,
+            direct_feed: false,
+            seq_history: VecDeque::new(),
+            flushes: 0,
+            flushed_frames: 0,
         }
+    }
+
+    #[test]
+    fn default_source_config_uses_sound_first_direct_feed() {
+        assert!(
+            BufferedSourceConfig::default().direct_feed,
+            "direct feed must be the default while timed playout starves on device"
+        );
+    }
+
+    #[test]
+    fn sequence_numbers_map_into_flush_ranges_with_wraparound() {
+        use super::seq_in_range;
+
+        assert!(seq_in_range(5, 3, 7));
+        assert!(!seq_in_range(8, 3, 7));
+        // Range wrapping past 65535.
+        assert!(seq_in_range(65_535, 65_534, 1));
+        assert!(seq_in_range(0, 65_534, 1));
+        assert!(!seq_in_range(2, 65_534, 1));
+    }
+
+    #[test]
+    fn take_all_returns_frames_in_timestamp_order_and_empties_the_buffer() {
+        use super::take_all;
+
+        let mut state = playout_state();
+        state.buffer.insert(300, vec![3.0]);
+        state.buffer.insert(100, vec![1.0]);
+        state.buffer.insert(200, vec![2.0]);
+        state.buffered_f32 = 3;
+
+        let frames = take_all(&mut state);
+
+        assert_eq!(
+            frames.iter().map(|(ts, _)| *ts).collect::<Vec<_>>(),
+            vec![100, 200, 300]
+        );
+        assert!(state.buffer.is_empty());
+        assert_eq!(state.buffered_f32, 0);
     }
 
     #[test]
