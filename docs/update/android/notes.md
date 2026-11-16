@@ -1,24 +1,24 @@
-## FusionPlay Android 1.4.1
+## FusionPlay Android 1.4.2
 
-### AirPlay 识别修复
+### 安装包大幅缩小
 
-- 修复 iPhone 把 FusionPlay 当成 TV/投屏目标的问题。根因不是 mDNS，而是连接时自述：`GET /info`、AirPlay 2 event channel 的 `updateInfo`、`/server-info` 仍固定返回 `AppleTV6,2` 和含 video/HLS 位的 features，覆盖了正确的音频广播。
-- 现在音源模式在 `/info`、`updateInfo`、`/server-info` 全部返回纯音频 features（不再含 video/photo/screen/HLS 位）和 `AirPort10,115` 模型，并且不广告 `displays`；iPhone 应只把它当音响，不再投视频。
+- 默认发布包改为 **arm64-v8a 单架构**：不再把 arm64 / armv7 / x86_64 三套 Flutter engine 与 Rust core 一起打包。实测 APK 从 **31.8 MB → 约 12.3 MB**（约 -61%）。
+- MiSans 字体子集化（保留 UI 文案 + GB2312 常用字 + ASCII，约 2.1 MB）；移除未使用的 HLS 依赖并限制资源语言。
+- **兼容性说明**：默认包仅支持 64 位 Android 设备。32 位设备需使用 `flutter/tool/build_universal.ps1 -Abis armeabi-v7a` 单独构建；不会走当前 arm64 在线更新。
 
-### AirPlay 2 播放稳定性
+### AirPlay 2 修复
 
-- 复核 AAC/ALAC、时间戳、重采样和 Oboe 回调后未发现解码/丢包根因；针对 ColorOS/OPPO 上 `LowLatency + Shared` 小硬件缓冲导致的 underrun，改为 Oboe 稳定模式，Android 本地缓冲 240→480 ms、预填充 120→240 ms（总延迟仍以协议 2 s 为主）。
-- 增加 underrun/重新预填充限频日志，下一次导出的 `airplay.jsonl` 可直接确认是否还有欠载。
+- 修正 AAC 解码对 raw AAC / ADTS 的处理（symphonia 直接吃 raw data block；带 ADTS 时先剥离），避免把声音解成静音。
+- 回退 1.4.1 的 Oboe/缓冲实验到 1.4.0 可出声配置（LowLatency、240/120ms），并增加“已开始输出 / 6 秒无解码 PCM / underrun”诊断，便于下一步真机定位。
+- AirPlay 音量改为接收端本地 gain：调节不再需要发送端支持 SetVolume，不再弹「当前设备不支持此远程控制命令」；`GET volume` 返回接收端当前音量，sender 与本地滑杆共享音量状态。
+- 音量滑杆拖动只跟手、松手只发一次；顶部错误提示改为玻璃 toast，7 秒自动消失，同一错误不会重置计时。
 
-### 歌词与界面
+### 其他
 
-- 不再按协议写死「AirPlay 2 不提供歌词」：改为实时判断，无歌词统一显示「音频流未提供歌词」，AirPlay 有歌词时正常渲染并显示歌词开关。
-- 布局顺序调整为封面 → 曲名 → 作者 → 歌词（曲名在作者上方）；360 高手机空态也保留作者行。
-- 修复每切一句歌词封面旋转：封面动画身份改为封面 source 的稳定指纹，同一封面遇到频繁 now-playing 更新不再 flip。
-- 顶部错误提示从白色 Material 改为深色玻璃 toast（例如妙播音量同步失败这类提示），与整体玻璃系统一致。
-- AirPlay 协议层未找到可验证的歌词字段；新增未知 DMAP 标签（仅标签名+长度，不含内容）诊断日志，下次可确认发送端是否使用厂商扩展歌词标签。
+- 保持 1.4.1 的 AirPlay 纯音频身份修复（`/info`、updateInfo、`/server-info` 均返回 AirPort10,115 / 无 video 位）。
+- 歌词布局、封面翻转、玻璃/设置界面等 1.4.1 改动保留。
 
 ### 安装
 
-- 版本 1.4.1 / versionCode 10401，固定 release 签名，可直接覆盖 1.4.0。
+- 版本 1.4.2 / versionCode 10402，固定 release 签名，可直接覆盖 1.4.1。
 - 1.3.4 及以上可在「设置 → 检查更新」直接升级。
