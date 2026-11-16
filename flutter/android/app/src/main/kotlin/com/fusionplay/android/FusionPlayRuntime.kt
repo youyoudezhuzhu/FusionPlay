@@ -478,13 +478,15 @@ class FusionPlayRuntime(
                 state.playback.streamActive &&
                 state.playback.protocol.equals("AirPlay", ignoreCase = true))
         if (airplayActive) {
-            // AirPlay volume belongs to the receiver: the core applies it to the
-            // local output gain and answers success even though the sender's
-            // MediaRemote channel exposes no SetVolume. Do not also change the
-            // Android media stream volume here, otherwise both attenuations
-            // multiply and the local slider becomes non-linear.
+            // Match the MiPlay path: AirPlay's receiver volume is the Android
+            // media stream volume, not a PCM gain. Keep the source at unity
+            // gain and move STREAM_MUSIC; the core command only mirrors the
+            // reported dB for GET_PARAMETER volume/UI state.
+            if (applyLocal && !FusionPlayMediaChannel.setSystemMediaVolumePercent(normalized)) {
+                viewModel.reportExternalLog("无法将被控端媒体音量调整到 $normalized%。", isError = true)
+            }
             runCatching { viewModel.sendVolume(normalized) }
-                .onFailure { reportError("AirPlay 接收端音量调整失败", it) }
+                .onFailure { reportError("AirPlay 接收端音量同步失败", it) }
             return
         }
         if (applyLocal && !FusionPlayMediaChannel.setSystemMediaVolumePercent(normalized)) {
@@ -544,6 +546,15 @@ class FusionPlayRuntime(
                                 desiredCore.dlnaEnabled,
                                 "applied",
                             )
+                            if (desiredCore.airPlayEnabled) {
+                                // Seed the AirPlay handler's reported volume from
+                                // the real Android media stream before a sender
+                                // connects, so GET /info initialVolume matches
+                                // STREAM_MUSIC instead of always 0 dB/100%.
+                                val systemPercent =
+                                    FusionPlayMediaChannel.currentSystemMediaVolumePercent()
+                                runCatching { viewModel.sendVolume(systemPercent) }
+                            }
                         },
                         onFailure = { error ->
                             logProtocolFailure("airplay", "receiver_configuration", error)
@@ -911,6 +922,20 @@ class FusionPlayRuntime(
                         activatePlaybackSource(source, projectSource = false)
                     } else {
                         mediaSourceArbiter.deactivate(source)
+                    }
+                }
+            }
+            is AppEvent.Volume -> if (
+                event.source == null || event.source.equals(CORE_SOURCE_AIRPLAY, ignoreCase = true)
+            ) {
+                // iPhone AirPlay 2 sends SET_PARAMETER volume here. Map it to
+                // the real Android media volume exactly like MiPlay.
+                event.percent?.let { percent ->
+                    if (!FusionPlayMediaChannel.setSystemMediaVolumePercent(percent)) {
+                        viewModel.reportExternalLog(
+                            "无法将 AirPlay 音量同步到本机 $percent%。",
+                            isError = true,
+                        )
                     }
                 }
             }

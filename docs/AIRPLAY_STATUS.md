@@ -6,9 +6,10 @@
 >
 > 基线：本轮 AirPlay 深入改造前的 **Android 1.3.5（commit `b42984c`）**。
 > 如果你所说的“原版”是更早的 1.2.3 开源版本，可以用文末的 git 命令查看更早差异。
-> 当前代码：`main`，最新 release `android-v1.4.6`（2026-11-16）。
-> **注意：1.4.5 已实测 AirPlay 音频正常播放；1.4.6 修复音量能力自述和进度条插值，
-> 但音量/进度两点尚未经过 iPhone 真机验证，不能宣称全部解决；请以 1.4.6 实机结果为准。**
+> 当前代码：`main`，最新 release `android-v1.4.7`（2026-11-16）。
+> **注意：1.4.5 已实测 AirPlay 音频正常播放；1.4.6 实测 iPhone 已发送
+> `SET_PARAMETER volume`，但把音量映射成了 PCM 增益；1.4.7 改为映射 Android
+> `STREAM_MUSIC`，并修复进度条/歌词提示。音量映射仍待 iPhone 真机验证。**
 
 ## 1. 一句话结论
 
@@ -279,6 +280,30 @@
      重新锚定，暂停停止；歌词高亮使用同一位置。
    - 这是 UI 插值，不改变 core 的进度事件/媒体会话时间线。
 
+### 5.6 1.4.6 → 1.4.7 音量/进度/歌词提示
+
+1.4.6 真机日志（`/tmp/fplogs8`，OPD2506，14:01 段）确认：
+
+- `/info` 的 `initialVolume`/`volumeControlType` 生效后，iPhone 开始持续发送
+  `SET_PARAMETER volume`（RTSP 诊断中 10/16 条），并产生 -1.87…-24.45 dB 的音量事件；
+- 但 1.4.6 将这些事件映射到 core 的 PCM gain，用户听到的是“音频源音量缩放”，
+  不是手机/平板系统媒体音量；
+- iPhone 初始仍显示 100%，因为 core 初始音量状态仍是 0 dB；虽然人耳上系统音量
+  可能不是 100，UI 没有拿到系统媒体音量。
+
+1.4.7 修复：
+
+1. **AirPlay 音量 → Android STREAM_MUSIC**：core 对 AirPlay 音量只记录状态，
+   PCM 保持 unity gain；Kotlin 把 `SET_PARAMETER volume` / UI 音量映射到
+   `FusionPlayMediaChannel.setSystemMediaVolumePercent`，与 MiPlay 一致。
+2. **启动时用系统媒体音量 seed core 音量**，使 `/info initialVolume` 不再是固定 0dB。
+3. **进度条**：1.4.6 的 250ms 本地插值保留；AirPlay 没有新 progress 事件时也推进。
+4. **歌词空态残留**：有歌词时不再把旧的居中空态（「音频流未提供歌词」）留在
+   `AnimatedSwitcher` 的 previous 栈中。
+
+1.4.7 仍需真机确认：iPhone 调音量是否改变系统媒体音量、初始百分比是否与系统一致、
+进度条是否持续、歌词空态是否消失。
+
 ## 6. 已知根因/未决问题
 ### 5.4 1.4.4 复盘（paced 仍未生效）
 
@@ -317,6 +342,30 @@
    - 修复：播放器 UI 用 250ms 本地时钟在两次事件之间按 1x 推进；新进度/seek
      重新锚定，暂停停止；歌词高亮使用同一位置。
    - 这是 UI 插值，不改变 core 的进度事件/媒体会话时间线。
+
+### 5.6 1.4.6 → 1.4.7 音量/进度/歌词提示
+
+1.4.6 真机日志（`/tmp/fplogs8`，OPD2506，14:01 段）确认：
+
+- `/info` 的 `initialVolume`/`volumeControlType` 生效后，iPhone 开始持续发送
+  `SET_PARAMETER volume`（RTSP 诊断中 10/16 条），并产生 -1.87…-24.45 dB 的音量事件；
+- 但 1.4.6 将这些事件映射到 core 的 PCM gain，用户听到的是“音频源音量缩放”，
+  不是手机/平板系统媒体音量；
+- iPhone 初始仍显示 100%，因为 core 初始音量状态仍是 0 dB；虽然人耳上系统音量
+  可能不是 100，UI 没有拿到系统媒体音量。
+
+1.4.7 修复：
+
+1. **AirPlay 音量 → Android STREAM_MUSIC**：core 对 AirPlay 音量只记录状态，
+   PCM 保持 unity gain；Kotlin 把 `SET_PARAMETER volume` / UI 音量映射到
+   `FusionPlayMediaChannel.setSystemMediaVolumePercent`，与 MiPlay 一致。
+2. **启动时用系统媒体音量 seed core 音量**，使 `/info initialVolume` 不再是固定 0dB。
+3. **进度条**：1.4.6 的 250ms 本地插值保留；AirPlay 没有新 progress 事件时也推进。
+4. **歌词空态残留**：有歌词时不再把旧的居中空态（「音频流未提供歌词」）留在
+   `AnimatedSwitcher` 的 previous 栈中。
+
+1.4.7 仍需真机确认：iPhone 调音量是否改变系统媒体音量、初始百分比是否与系统一致、
+进度条是否持续、歌词空态是否消失。
 
 ## 6. 已知根因/未决问题
 

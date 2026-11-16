@@ -1219,7 +1219,11 @@ impl ReceiverAudioHandler {
         } else {
             20.0 * gain.log10()
         };
-        self.gain_bits.store(gain.to_bits(), Ordering::Relaxed);
+        // AirPlay volume is mapped to Android's STREAM_MUSIC volume in the
+        // Kotlin host; the PCM source must stay at unity gain or the two
+        // attenuations multiply. Keep only the reported state for
+        // GET_PARAMETER volume / the UI.
+        self.gain_bits.store(1.0_f32.to_bits(), Ordering::Relaxed);
         self.volume_db_bits.store(db.to_bits(), Ordering::Relaxed);
         let Some(lease) = lease else {
             return;
@@ -1731,7 +1735,9 @@ impl AudioHandler for ReceiverAudioHandler {
             10.0_f32.powf(volume / 20.0).clamp(0.0, 1.0)
         };
         self.arbiter.run_if_current(lease, || {
-            self.gain_bits.store(gain.to_bits(), Ordering::Relaxed);
+            // See apply_local_volume_percent: Kotlin maps this AirPlay volume
+            // to the real Android media stream, so do not attenuate PCM here.
+            self.gain_bits.store(1.0_f32.to_bits(), Ordering::Relaxed);
             self.volume_db_bits
                 .store(volume.clamp(-144.0, 0.0).to_bits(), Ordering::Relaxed);
             self.events.emit(CoreEvent::Volume {
@@ -2531,8 +2537,8 @@ mod tests {
 
         let gain = f32::from_bits(handler.gain_bits.load(Ordering::Relaxed));
         assert!(
-            (gain - 0.30).abs() < 0.001,
-            "local gain must be 30%: {gain}"
+            (gain - 1.0).abs() < 0.001,
+            "PCM must stay at unity; Android STREAM_MUSIC carries the volume: {gain}"
         );
         let db = f32::from_bits(handler.volume_db_bits.load(Ordering::Relaxed));
         assert!(
@@ -2565,7 +2571,7 @@ mod tests {
             .send_remote_command(RemoteCommand::SetVolume(0))
             .expect("mute must succeed locally");
         let gain = f32::from_bits(handler.gain_bits.load(Ordering::Relaxed));
-        assert_eq!(gain, 0.0);
+        assert_eq!(gain, 1.0, "mute is handled by Android STREAM_MUSIC");
         let db = f32::from_bits(handler.volume_db_bits.load(Ordering::Relaxed));
         assert_eq!(db, -144.0);
     }
@@ -2592,7 +2598,10 @@ mod tests {
             "AP1 DACP senders that support SetVolume must still be mirrored"
         );
         let gain = f32::from_bits(handler.gain_bits.load(Ordering::Relaxed));
-        assert!((gain - 0.55).abs() < 0.001);
+        assert!(
+            (gain - 1.0).abs() < 0.001,
+            "remote mirroring must not attenuate PCM"
+        );
     }
 
     #[test]
@@ -2610,6 +2619,11 @@ mod tests {
         assert!(
             (handler.volume() + 6.0).abs() < 0.001,
             "GET_PARAMETER volume must report it"
+        );
+        let gain = f32::from_bits(handler.gain_bits.load(Ordering::Relaxed));
+        assert!(
+            (gain - 1.0).abs() < 0.001,
+            "sender volume is mapped to Android STREAM_MUSIC, not a PCM gain"
         );
     }
 

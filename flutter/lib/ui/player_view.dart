@@ -491,7 +491,11 @@ class _PlayerViewState extends State<PlayerView> {
                   switchOutCurve: Curves.easeInCubic,
                   layoutBuilder: (current, previous) => Stack(
                     fit: StackFit.expand,
-                    children: [...previous, ?current],
+                    // While the lyrics layout is visible, never keep the old
+                    // centered body (which carries the "no lyrics" hint) in
+                    // the stack; AirPlay lyrics could otherwise appear next to
+                    // a stale "音频流未提供歌词" message.
+                    children: [if (!showLyrics) ...previous, ?current],
                   ),
                   transitionBuilder: (child, animation) {
                     if (reduceMotion) return child;
