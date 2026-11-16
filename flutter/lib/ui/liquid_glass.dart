@@ -315,6 +315,60 @@ class _GlassPaint extends CustomPainter {
       canvas.drawRRect(rrect, Paint()..shader = gradient.createShader(rect));
     }
 
+    // 1b. Optical body shading: a soft top-left lift and bottom-right
+    // absorption give the pane a thickness gradient before the rim is drawn.
+    canvas.drawRRect(
+      rrect,
+      Paint()
+        ..shader = LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [
+            Colors.white.withValues(alpha: .085 * strength),
+            Colors.white.withValues(alpha: .012 * strength),
+            Colors.black.withValues(alpha: .10 * absorption),
+          ],
+          stops: const [0.0, .48, 1.0],
+        ).createShader(rect),
+    );
+
+    // 1c. Edge lens band. This is the high-quality fallback for real
+    // screen-space displacement: a thin, bright inner band whose width and
+    // opacity follow the glass thickness, like the compressed edge of a lens.
+    final lensBand = Paint()
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = (2.0 + 0.10 * (spec.blur - 14).clamp(0.0, 18.0)).clamp(
+        1.6,
+        4.0,
+      )
+      ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 1.4)
+      ..shader = LinearGradient(
+        begin: Alignment.topLeft,
+        end: Alignment.bottomRight,
+        colors: [
+          Colors.white.withValues(alpha: .19 * strength),
+          Colors.white.withValues(alpha: .035 * strength),
+          Colors.white.withValues(alpha: .12 * strength),
+        ],
+        stops: const [0.0, .58, 1.0],
+      ).createShader(rect);
+    canvas.drawRRect(rrect.deflate(2.2), lensBand);
+
+    // 1d. A faint refracted caustic just inside the bottom edge.
+    final caustic = Paint()
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 1.0
+      ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 2.4)
+      ..shader = LinearGradient(
+        begin: Alignment.topCenter,
+        end: Alignment.bottomCenter,
+        colors: [
+          Colors.transparent,
+          Colors.white.withValues(alpha: .08 * strength),
+        ],
+      ).createShader(rect);
+    canvas.drawRRect(rrect.deflate(4.0), caustic);
+
     // 2. Dynamic specular highlight: follows the pointer; brightens on press.
     final state = sheen.value;
     final pointer = state.pointer;

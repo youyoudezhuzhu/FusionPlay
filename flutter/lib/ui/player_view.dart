@@ -570,6 +570,7 @@ class _PlayerViewState extends State<PlayerView> {
         final compactChrome = outer.maxHeight < 430;
         final reduceMotion = _reduceMotion;
         final showLyrics = _showLyricsLayout;
+        final inlinePlayerControls = landscape && showLyrics;
         final body = showLyrics
             ? (landscape ? _landscapeBody() : _portraitBody())
             : _centeredBody(landscape: landscape);
@@ -620,7 +621,7 @@ class _PlayerViewState extends State<PlayerView> {
                 ),
               ),
             ),
-            _dock(compact: compactChrome),
+            if (!inlinePlayerControls) _dock(compact: compactChrome),
           ],
         );
       },
@@ -633,6 +634,10 @@ class _PlayerViewState extends State<PlayerView> {
 
   Widget _topBar({required bool landscape, required bool compact}) {
     final protocol = playbackProtocolLabel(widget.state.playback.protocol);
+    final quality = widget.state.playback.qualityText?.trim();
+    final qualityLabel = (quality == null || quality.isEmpty)
+        ? null
+        : quality.split('·').last.trim();
     final reduceMotion = _reduceMotion;
     final entrance = reduceMotion
         ? Duration.zero
@@ -662,7 +667,11 @@ class _PlayerViewState extends State<PlayerView> {
                 spacing: 10,
                 runSpacing: 6,
                 crossAxisAlignment: WrapCrossAlignment.center,
-                children: [if (protocol != null) _chip(protocol)],
+                children: [
+                  if (protocol != null) _chip(protocol),
+                  if (qualityLabel != null && qualityLabel.isNotEmpty)
+                    _chip(qualityLabel),
+                ],
               ),
             ),
           ),
@@ -892,93 +901,147 @@ class _PlayerViewState extends State<PlayerView> {
   // Main content
   // ------------------------------------------------------------------
 
-  Widget _landscapeBody() => Padding(
-    padding: const EdgeInsets.fromLTRB(30, 4, 24, 10),
-    child: LayoutBuilder(
-      builder: (context, content) {
-        final playback = widget.state.playback;
-        final (title, artist) = _displayMetadata(playback);
-        final lyricsChip = _lyricsStatusLabel(playback);
-        final dense = content.maxHeight < 260;
-        final ultra = content.maxHeight < 170;
-        final leftWidth = (content.maxWidth * .34)
-            .clamp(170.0, 360.0)
-            .toDouble();
-        final artwork = math
-            .min(leftWidth, content.maxHeight * (dense ? .62 : .78))
-            .clamp(ultra ? 40.0 : (dense ? 56.0 : 96.0), 360.0)
-            .toDouble();
-        final rightWidth = content.maxWidth - artwork - (dense ? 18 : 32);
-        final activeFont = (rightWidth * .042).clamp(20.0, 34.0).toDouble();
-        final titleSize = (artwork / 11.5).clamp(
-          ultra ? 15.0 : (dense ? 18.0 : 22.0),
-          32.0,
-        );
-        final showArtist = artist != null && artist.isNotEmpty && !ultra;
-        return Row(
-          key: const ValueKey('player-layout-horizontal'),
-          crossAxisAlignment: CrossAxisAlignment.center,
-          children: [
-            _breathingArtwork(size: artwork, child: _artworkCard(artwork)),
-            SizedBox(width: dense ? 18 : 32),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  Text(
-                    title,
-                    maxLines: dense ? 1 : 2,
-                    overflow: TextOverflow.ellipsis,
-                    textAlign: TextAlign.start,
-                    style: TextStyle(
-                      fontSize: titleSize,
-                      height: 1.2,
-                      color: Colors.white,
-                      fontWeight: FusionTypography.semiBoldFontWeight,
-                      fontVariations: FusionTypography.semiBold,
-                      shadows: const [
-                        Shadow(blurRadius: 20, color: Color(0x66000000)),
-                      ],
-                    ),
+  Widget _landscapeBody() {
+    return Padding(
+      key: const ValueKey('player-layout-horizontal'),
+      padding: const EdgeInsets.fromLTRB(22, 2, 22, 16),
+      child: LayoutBuilder(
+        builder: (context, content) {
+          final tight = content.maxHeight < 360;
+          final veryTight = content.maxHeight < 280;
+          final leftWidth = content.maxWidth * (tight ? .42 : .43);
+          final rightWidth = content.maxWidth - leftWidth - (tight ? 18 : 28);
+          final lyricsFont = (rightWidth * .035).clamp(22.0, 36.0).toDouble();
+          return Row(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              SizedBox(
+                width: leftWidth,
+                child: RepaintBoundary(
+                  child: _appleMusicPlayerColumn(
+                    tight: tight,
+                    veryTight: veryTight,
+                    availableHeight: content.maxHeight,
+                    availableWidth: content.maxWidth * (tight ? .42 : .43),
                   ),
-                  if (showArtist) ...[
-                    SizedBox(height: dense ? 2 : 5),
-                    Text(
-                      artist,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      textAlign: TextAlign.start,
-                      style: TextStyle(
-                        fontSize: dense ? 13 : 16,
-                        color: Colors.white.withValues(alpha: .68),
-                        fontWeight: FusionTypography.regularFontWeight,
-                        fontVariations: FusionTypography.regular,
-                      ),
-                    ),
-                  ],
-                  if (!dense && lyricsChip != null) ...[
-                    const SizedBox(height: 8),
-                    Align(
-                      alignment: Alignment.centerLeft,
-                      child: _chip(lyricsChip),
-                    ),
-                  ],
-                  SizedBox(height: dense ? 4 : 10),
-                  Expanded(
-                    child: _lyricsColumn(
-                      activeFontSize: activeFont,
-                      inactiveFontSize: activeFont * .68,
-                    ),
-                  ),
-                ],
+                ),
               ),
+              SizedBox(width: tight ? 18 : 28),
+              Expanded(
+                child: _lyricsGlassPanel(
+                  activeFontSize: lyricsFont,
+                  inactiveFontSize: lyricsFont * .64,
+                ),
+              ),
+            ],
+          );
+        },
+      ),
+    );
+  }
+
+  Widget _appleMusicPlayerColumn({
+    required bool tight,
+    required bool veryTight,
+    required double availableHeight,
+    required double availableWidth,
+  }) {
+    final playback = widget.state.playback;
+    final (title, artist) = _displayMetadata(playback);
+    final lyricsChip = _lyricsStatusLabel(playback);
+    final titleSize = veryTight ? 18.0 : (tight ? 22.0 : 28.0);
+    final artistSize = veryTight ? 12.0 : (tight ? 14.0 : 16.0);
+    final coverSize = math
+        .min(
+          MediaQuery.sizeOf(context).width * .24,
+          MediaQuery.sizeOf(context).height *
+              (veryTight ? .30 : (tight ? .34 : .42)),
+        )
+        .clamp(74.0, 360.0)
+        .toDouble();
+    final column = Column(
+      key: const ValueKey('apple-music-player-column'),
+      mainAxisAlignment: MainAxisAlignment.center,
+      children: [
+        _breathingArtwork(
+          size: coverSize,
+          child: _artworkCard(coverSize, radius: tight ? 18 : 24),
+        ),
+        SizedBox(height: veryTight ? 8 : (tight ? 12 : 18)),
+        Text(
+          title,
+          maxLines: veryTight ? 1 : 2,
+          overflow: TextOverflow.ellipsis,
+          textAlign: TextAlign.center,
+          style: TextStyle(
+            fontSize: titleSize,
+            height: 1.15,
+            color: Colors.white,
+            fontWeight: FusionTypography.semiBoldFontWeight,
+            fontVariations: FusionTypography.semiBold,
+            shadows: const [Shadow(blurRadius: 22, color: Color(0x66000000))],
+          ),
+        ),
+        if (artist != null && artist.isNotEmpty) ...[
+          SizedBox(height: veryTight ? 1 : 4),
+          Text(
+            artist,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            textAlign: TextAlign.center,
+            style: TextStyle(
+              fontSize: artistSize,
+              color: Colors.white.withValues(alpha: .70),
+              fontWeight: FusionTypography.regularFontWeight,
+              fontVariations: FusionTypography.regular,
             ),
-          ],
-        );
-      },
-    ),
-  );
+          ),
+        ],
+        if (!tight && lyricsChip != null) ...[
+          SizedBox(height: 8),
+          _chip(lyricsChip),
+        ],
+        SizedBox(height: veryTight ? 4 : (tight ? 7 : 14)),
+        _progressRow(compact: tight),
+        SizedBox(height: veryTight ? 3 : (tight ? 6 : 10)),
+        _transport(compact: tight),
+        SizedBox(height: veryTight ? 2 : (tight ? 5 : 10)),
+        _volumeControls(compact: tight),
+      ],
+    );
+    // On 620x320/800x360 the natural control column is a few pixels taller
+    // than the body. Scaling the whole column (rather than clipping controls)
+    // keeps every button reachable and avoids a yellow overflow stripe.
+    // Never clip transport controls: scale the whole player column down when
+    // the available landscape height cannot fit the natural stack.
+    return FittedBox(
+      fit: BoxFit.scaleDown,
+      alignment: Alignment.center,
+      child: SizedBox(width: availableWidth, child: column),
+    );
+  }
+
+  Widget _lyricsGlassPanel({
+    required double activeFontSize,
+    required double inactiveFontSize,
+  }) {
+    return RepaintBoundary(
+      child: LiquidGlass(
+        key: const ValueKey('player-lyrics-glass'),
+        level: GlassLevel.card,
+        borderRadius: 28,
+        blurSigma: 22,
+        tint: const Color(0x2E0B0D11),
+        forceFallback: widget.forceGlassFallback,
+        padding: const EdgeInsets.fromLTRB(20, 18, 20, 16),
+        child: _lyricsColumn(
+          activeFontSize: activeFontSize,
+          inactiveFontSize: inactiveFontSize,
+          alignCenter: false,
+        ),
+      ),
+    );
+  }
 
   Widget _portraitBody() => LayoutBuilder(
     builder: (context, content) {
@@ -1066,9 +1129,9 @@ class _PlayerViewState extends State<PlayerView> {
     );
   }
 
-  Widget _artworkCard(double size) => DecoratedBox(
+  Widget _artworkCard(double size, {double radius = 26}) => DecoratedBox(
     decoration: BoxDecoration(
-      borderRadius: BorderRadius.circular(26),
+      borderRadius: BorderRadius.circular(radius),
       boxShadow: [
         BoxShadow(
           color: Colors.black.withValues(alpha: .42),
@@ -1079,7 +1142,7 @@ class _PlayerViewState extends State<PlayerView> {
       ],
     ),
     child: ClipRRect(
-      borderRadius: BorderRadius.circular(26),
+      borderRadius: BorderRadius.circular(radius),
       child: ArtworkCard(
         source: widget.artworkSource,
         size: size,
@@ -1279,6 +1342,88 @@ class _PlayerViewState extends State<PlayerView> {
       return '静态歌词';
     }
     return null;
+  }
+
+  // ------------------------------------------------------------------
+  // Shared transport pieces
+  // ------------------------------------------------------------------
+
+  Widget _progressRow({required bool compact}) {
+    final playback = widget.state.playback;
+    final duration = _durationMs;
+    final position = _visiblePositionMs;
+    final clampedPosition = position.clamp(
+      0,
+      duration == 0 ? playback.positionMs : duration,
+    );
+    final progress = duration > 0 ? clampedPosition / duration : 0.0;
+    final reduceMotion = _reduceMotion;
+    return Row(
+      key: const ValueKey('player-progress-row'),
+      children: [
+        _timeLabel(
+          _hasPlayback ? _formatDuration(clampedPosition) : '0:00',
+          compact: compact,
+        ),
+        SizedBox(width: compact ? 6 : 10),
+        Expanded(
+          child: TweenAnimationBuilder<double>(
+            tween: Tween(end: progress),
+            duration: reduceMotion
+                ? Duration.zero
+                : const Duration(milliseconds: 220),
+            curve: Curves.easeOutCubic,
+            builder: (context, animatedProgress, _) => RoundedProgressBar(
+              key: const ValueKey('player-progress-bar'),
+              value: animatedProgress,
+              enabled: duration > 0,
+              seekEnabled: _seekable,
+              showThumb: false,
+              focusNode: _progressFocus,
+              upFocusNode: _menuVisible ? _menuFocus : null,
+              downFocusNode: _playVisible ? _playPauseFocus : null,
+              focusBorderColor: Colors.white,
+              activeColor: Colors.white,
+              inactiveColor: Colors.white.withValues(alpha: .24),
+              onChangeStart: (_) => setState(() => seeking = true),
+              onChanged: (value) => setState(() {
+                seeking = true;
+                seekPositionMs = duration * value;
+              }),
+              onChangeEnd: (value) {
+                final target = (duration * value).round();
+                setState(() {
+                  seeking = false;
+                  seekPositionMs = target.toDouble();
+                  pendingSeekTargetMs = target;
+                  _progressAnchorMs = target;
+                  _progressAnchorAt = DateTime.now();
+                  _displayedPositionMs = target;
+                });
+                pendingSeekTimer?.cancel();
+                pendingSeekTimer = Timer(
+                  const Duration(milliseconds: 3000),
+                  () {
+                    if (!mounted || pendingSeekTargetMs != target) return;
+                    setState(() {
+                      pendingSeekTargetMs = null;
+                      seekPositionMs = widget.state.playback.positionMs
+                          .toDouble();
+                    });
+                  },
+                );
+                widget.onSeek(target);
+              },
+            ),
+          ),
+        ),
+        SizedBox(width: compact ? 6 : 10),
+        _timeLabel(
+          _hasPlayback ? _formatDuration(duration) : '0:00',
+          compact: compact,
+        ),
+      ],
+    );
   }
 
   // ------------------------------------------------------------------

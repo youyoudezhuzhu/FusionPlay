@@ -1,32 +1,39 @@
-## FusionPlay Android 1.5.1
+## FusionPlay Android 1.6.0
 
-### 妙播（MiPlay）暂停状态修复
+### 播放页视觉重构：Apple Music 风格横屏 + Liquid Glass
 
-另一 Agent 报告的 `docs/MIPLAY_PAUSE_ACK_NO_UI_UPDATE.md` 问题已修：
+这次是 UI 重构，不是播放功能重写；所有协议、歌词、播放控制、焦点和菜单能力保留。
 
-- PushMi legacy 发送端暂停时，FusionPlay 回了 PAUSE_ACK，但 active 媒体源没有登记/已随控制 socket 关闭而清空，导致 UI 仍显示播放、进度继续。
-- 处理：
-  - legacy 明文 `wfd://`/`rtsp://` OPEN 不再被 `SAFETY_INFO` 分支吞掉；OPEN 正确登记媒体路由。
-  - 保留最近媒体源（10 分钟 TTL），控制 socket 关闭后仍能用其 PlaybackGate 暂停/恢复。
-  - PAUSE/RESUME/SET_MEDIA_STATE 依次按 active → recent → 唯一媒体路由兜底；ACK 仍先回。
-  - 增加 `media_route_activated` / `playback_command_resolution` 定向日志。
-- 预期：PushMi 开始推送后，FusionPlay 点暂停 → UI 显示暂停、进度停住；恢复/手机侧暂停也能同步。
-- 仍需 PushMi 2.6.20a10 真机确认。
+**有歌词**
 
-### AirPlay 歌词
+- 横屏改为左右双栏：左侧封面、歌曲/作者、播放进度与时间、上一曲/播放/暂停/下一曲、音量与静音；右侧为 Liquid Glass 歌词面板。
+- 右侧继续使用现有 `LyricsView`：同步歌词、逐字高亮、静态歌词、手动滚动/返回当前行、AirPlay 标题歌词流均保留。
+- 歌词显示/隐藏、切歌重置、加载中骨架状态保留；加载中不再闪屏或反复翻转封面。
+- 顶部保留协议与音质信息、歌词开关、更多菜单。
 
-保持 1.5.0 的“标题持续变化即歌词”识别（网易云 title 是歌词行、artist 是歌曲名/作者）：
-- 连续 3 个不同 title 判定为歌词；
-- 左封面/右歌词、300ms fade+scale 动画、移除空态；
-- 哔哩哔哩等 title 稳定的发送端不误判。
+**无歌词 / 隐藏歌词**
 
-### 其他
+- 不再渲染空白歌词列；使用放大的封面居中布局，播放/进度/音量/静音完整保留。
+- 发送端未提供歌词的提示保留为次要说明，不占据页面中心。
 
-- 音量映射保持 1.4.8 的妙播同款系统媒体音量曲线。
-- 错误气泡 3 秒自动消失。
-- APK 约 12.4MB，arm64-v8a。
+**Liquid Glass**
+
+- 统一 `LiquidGlass` token 与降级路径；新增边缘 lens band、底部 caustic、顶部镜面高光与厚度渐变。
+- 主要应用于歌词面板、播放/上一曲/下一曲、音量、歌词开关和菜单按钮；不做整页玻璃。
+- 真实屏幕空间折射 shader 仍**未启用**（Android Impeller 白帧/反馈历史问题），当前是高质量降级实现，不把普通透明卡片说成真实折射。
+
+**适配**
+
+- 覆盖 800×360、960×540、1280×800 等横屏尺寸；短屏左栏整体按比例缩放，不裁切控制。
+- 遥控器/键盘方向键焦点、返回、菜单与现有设置页样式继续使用原有逻辑。
+
+**验证**
+
+- Flutter 播放器布局/歌词/加载/AirPlay 标题歌词/焦点/音量测试已更新；详情见 `docs/PLAYER_REDESIGN.md`。
+- 调试截图：`docs/player-redesign/`。
+- 尚未在真实 Android 设备上逐帧测 60 FPS；大型歌词玻璃面板是主要 GPU 成本。
 
 ### 安装
 
-- 版本 1.5.1 / versionCode 10501，可直接覆盖 1.5.0。
+- 版本 1.6.0 / versionCode 10600，可直接覆盖 1.5.1。
 - 1.3.4+ 可在「设置 → 检查更新」升级。

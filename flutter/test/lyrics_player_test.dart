@@ -179,10 +179,10 @@ void main() {
       find.byKey(const ValueKey('player-lyrics-view')),
     );
 
-    // 标题在作者上方，歌词在标题/作者之后的下方区域。
+    // Apple Music 横屏：左侧封面/标题/作者，右侧歌词列。
     expect(title.top, lessThan(artist.top));
-    expect(artist.bottom, lessThanOrEqualTo(lyrics.top + 1));
     expect(cover.left, lessThan(title.left));
+    expect(lyrics.left, greaterThan(artist.right));
     expect(tester.takeException(), isNull);
   });
 
@@ -437,9 +437,9 @@ void main() {
     expect(find.byKey(const ValueKey('player-lyrics-view')), findsNothing);
     expect(find.text('音频流未提供歌词'), findsOneWidget);
     expect(find.textContaining('不提供歌词'), findsNothing);
-    // 顶部保留音频来源（协议）胶囊，但不再显示音质胶囊。
+    // 顶部保留音频来源（协议）与音质信息，避免重构后丢失已有元数据。
     expect(find.text('AirPlay 2'), findsWidgets);
-    expect(find.text('AAC / 44.1 kHz / 16-bit / 2 ch'), findsNothing);
+    expect(find.text('AAC / 44.1 kHz / 16-bit / 2 ch'), findsOneWidget);
     // 没有歌词时不出现歌词开关。
     expect(
       find.byKey(const ValueKey('playback-lyrics-toggle-button')),
@@ -750,5 +750,24 @@ void main() {
     expect(find.text('音频流未提供歌词'), findsNothing);
     expect(find.text('第一句歌词'), findsOneWidget);
     expect(find.text('晴天'), findsOneWidget);
+  });
+  testWidgets('歌词加载中保持稳定布局，到达后自然切换双栏', (tester) async {
+    await _pumpPlayer(
+      tester,
+      _state(lyricsLoading: true),
+      size: const Size(800, 360),
+    );
+    expect(find.byKey(const ValueKey('player-lyrics-view')), findsOneWidget);
+    expect(find.text('音频流未提供歌词'), findsNothing);
+    expect(tester.takeException(), isNull);
+
+    await tester.pumpWidget(
+      _playerHost(_state(lyricsLoading: false, lyrics: _lyrics())),
+    );
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 350));
+    expect(find.byKey(const ValueKey('player-lyrics-view')), findsOneWidget);
+    expect(find.text('第一句'), findsWidgets);
+    expect(tester.takeException(), isNull);
   });
 }
