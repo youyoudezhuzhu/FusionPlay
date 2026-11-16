@@ -179,7 +179,7 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('错误 toast 7 秒自动消失，同一错误不重置计时', (tester) async {
+  testWidgets('错误 toast 3 秒自动消失，同一错误不重置计时', (tester) async {
     final hostKey = GlobalKey<_ErrorToastHostState>();
     Widget host() => MaterialApp(
       theme: fusionTheme(),
@@ -194,13 +194,13 @@ void main() {
     await tester.pump();
     expect(find.byKey(const ValueKey('error-toast')), findsOneWidget);
 
-    await tester.pump(const Duration(seconds: 5));
+    await tester.pump(const Duration(milliseconds: 1800));
     // 同一错误持续存在时重建（AirPlay 状态频繁更新）不应重启计时。
     await tester.pumpWidget(host());
     await tester.pump();
     expect(find.byKey(const ValueKey('error-toast')), findsOneWidget);
 
-    await tester.pump(const Duration(milliseconds: 2200));
+    await tester.pump(const Duration(milliseconds: 1400));
     await tester.pump();
     expect(find.byKey(const ValueKey('error-toast')), findsNothing);
   });
@@ -221,7 +221,7 @@ void main() {
     await tester.pump();
     expect(find.byKey(const ValueKey('error-toast')), findsOneWidget);
 
-    await tester.pump(const Duration(seconds: 7));
+    await tester.pump(const Duration(seconds: 3));
     await tester.pump();
     expect(find.byKey(const ValueKey('error-toast')), findsNothing);
   });

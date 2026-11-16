@@ -1,34 +1,24 @@
-## FusionPlay Android 1.4.8
+## FusionPlay Android 1.4.9
 
-### AirPlay 音量曲线对齐妙播
+### 调整
 
-- 1.4.7 已确认 iPhone 调音量能改变 FusionPlay 所在设备的系统媒体音量，但映射比例不对：
-  之前用 `10^(dB/20)` 的线性幅度百分比，iPhone 中段音量会被压得很低。
-- 1.4.8 改为 **AirPlay 音量 dB 的线性曲线**：AirPlay 的 0 dB…-30 dB 映射到系统媒体
-  音量的 100%…0%，与妙播直接下发 0–100 百分比的曲线对齐；PCM 仍保持 unity gain，
-  不缩放音频源。
-- 换算：`percent = (db + 30) / 30 * 100`，`db = -30 + percent * 0.3`；0% 仍视为静音
-  （-144 dB）。
-- 仍需真机确认低/中/高段听起来与妙播一致。
+- 顶部错误提示气泡停留时间从 **7 秒缩短到 3 秒**，手动关闭仍然有效；同一错误持续上报不会重置计时。
+- 新增 AP2 now-playing 键名诊断：如果 AirPlay 通过 event channel 的
+  `updateMRNowPlayingInfo` 发送歌词字段，日志会打印**键名**（不打印内容），
+  用于确认歌词是否真的随 AirPlay 下发。
+- 音量映射保持 1.4.8 的妙播同款 0–100% 系统媒体音量曲线；PCM 源保持原音量。
+- 音频、进度条逻辑不变。
 
-### AirPlay 歌词：协议限制说明
+### 关于 AirPlay 歌词
 
-- AirPlay 2 **标准元数据不包含歌词字段**。本机实际收到的 now-playing 只有
-  title/artist/album/artwork/progress；日志中的未知 DMAP 标签只有
-  `mper`、`ascp`、`caps`，没有 `asly` 或其他歌词标签。
-- iPhone 上能显示歌词，是发送端 App 自己的界面；它不会通过 AirPlay 元数据把歌词
-  发给接收端。因此 FusionPlay 的 AirPlay 页面只能显示封面/标题/作者，无法凭空得到歌词。
-- 当前 UI 规则：**只有实际收到歌词时**才显示“左封面、右歌词”的双栏；没有歌词数据时
-  显示居中封面 + 「音频流未提供歌词」。这不是布局 bug，是当前 AirPlay 流确实没有
-  歌词 payload。
-- 如果希望在 AirPlay 下也显示歌词，需要额外接入歌词数据源（例如按标题/艺术家查询
-  在线歌词或本地 .lrc），这不属于 AirPlay 2 标准能力，需要单独确认是否要做。
-
-### 其他
-
-- 音频链路、进度条、音量系统映射保持 1.4.7；APK 约 12.4MB，arm64-v8a。
+当前 1.4.8 真机日志中 AirPlay 元数据仍只有 title/artist/album/artwork/progress，
+未知 DMAP 标签只有 `mper`、`ascp`、`caps`。AirPlay 2 标准元数据没有歌词字段；
+iPhone App 内显示的歌词不会自动通过 AirPlay 发给接收端。因此 FusionPlay 只有在
+实际收到 lyrics payload 时才显示“左封面/右歌词”；没有数据时显示居中空态。
+1.4.9 的诊断会帮助确认 event channel 是否携带厂商歌词键；若确实没有，需要接入
+在线歌词或本地 .lrc 数据源才能显示歌词。
 
 ### 安装
 
-- 版本 1.4.8 / versionCode 10408，可直接覆盖 1.4.7。
-- 1.3.4+ 可在「设置 → 检查更新」升级。
+- 版本 1.4.9 / versionCode 10409，可直接覆盖 1.4.8。
+- APK 约 12.4MB，arm64-v8a；1.3.4+ 可在「设置 → 检查更新」升级。

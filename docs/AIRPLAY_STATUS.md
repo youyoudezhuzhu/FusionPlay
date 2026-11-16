@@ -6,11 +6,11 @@
 >
 > 基线：本轮 AirPlay 深入改造前的 **Android 1.3.5（commit `b42984c`）**。
 > 如果你所说的“原版”是更早的 1.2.3 开源版本，可以用文末的 git 命令查看更早差异。
-> 当前代码：`main`，最新 release `android-v1.4.8`（2026-11-16）。
+> 当前代码：`main`，最新 release `android-v1.4.9`（2026-11-16）。
 > **注意：1.4.5 已实测 AirPlay 音频正常播放；1.4.6 实测 iPhone 已发送
-> `SET_PARAMETER volume`；1.4.7 把它映射到 Android `STREAM_MUSIC`；1.4.8 按
-> AirPlay dB 的线性曲线校准映射。音量曲线仍待真机听感确认。AirPlay 2 标准元数据
-> 没有歌词字段，当前日志也没有收到歌词标签。**
+> `SET_PARAMETER volume`；1.4.7 映射到 Android `STREAM_MUSIC`；1.4.8 按 AirPlay dB
+> 线性曲线校准。1.4.9 将错误气泡缩短到 3 秒，并增加 now-playing 键名诊断。
+> AirPlay 2 标准元数据没有歌词字段，当前日志也没有收到歌词标签。**
 
 ## 1. 一句话结论
 

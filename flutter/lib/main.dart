@@ -149,7 +149,7 @@ class _FusionPlayHomeState extends State<FusionPlayHome> {
   /// Top error toasts auto-dismiss after this long. The timer must not be
   /// restarted while the same error keeps being reported (AirPlay volume sync
   /// failures used to repeat on every state update, leaving the toast forever).
-  static const errorToastDuration = Duration(seconds: 7);
+  static const errorToastDuration = Duration(seconds: 3);
 
   bool get _isAndroid => widget.isAndroid ?? Platform.isAndroid;
 

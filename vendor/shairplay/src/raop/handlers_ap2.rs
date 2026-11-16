@@ -1357,8 +1357,31 @@ pub(crate) fn handle_command(
     request: &HttpRequest,
     _response: &mut HttpResponse,
 ) -> Option<Vec<u8>> {
-    if let (Some(data), Some(remote)) = (request.data(), conn.ap2_remote_control.as_ref()) {
-        apply_media_remote_command_update(data, remote, conn.shared.handler.as_ref());
+    if let Some(data) = request.data() {
+        if let (Some(remote), Ok(plist_val)) =
+            (conn.ap2_remote_control.as_ref(), plist::from_bytes::<plist::Value>(data))
+        {
+            // Diagnostic only: AirPlay 2 now-playing can arrive on this channel
+            // instead of DMAP. Log the key names once so a device log can prove
+            // whether the sender ever includes a lyrics field. Values are never
+            // logged.
+            if let Some(dict) = plist_val.as_dictionary()
+                && dict.get("type").and_then(|v| v.as_string()) == Some("updateMRNowPlayingInfo")
+                && let Some(value) = dict.get("value").and_then(|v| v.as_dictionary())
+            {
+                use std::sync::atomic::{AtomicBool, Ordering};
+                static LOGGED: AtomicBool = AtomicBool::new(false);
+                if !LOGGED.swap(true, Ordering::Relaxed) {
+                    let mut keys: Vec<&str> = value.keys().map(String::as_str).collect();
+                    keys.sort_unstable();
+                    conn.shared.handler.on_diagnostic(
+                        "info",
+                        &format!("AP2 now-playing keys（仅键名）：{}", keys.join(",")),
+                    );
+                }
+            }
+            apply_media_remote_command_update(data, remote, conn.shared.handler.as_ref());
+        }
     }
     None
 }
