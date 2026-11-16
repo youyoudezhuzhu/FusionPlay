@@ -6,10 +6,9 @@
 >
 > 基线：本轮 AirPlay 深入改造前的 **Android 1.3.5（commit `b42984c`）**。
 > 如果你所说的“原版”是更早的 1.2.3 开源版本，可以用文末的 git 命令查看更早差异。
-> 当前代码：`main`，最新 release `android-v1.4.3`（2026-11-16）。
-> **注意：1.4.3 的 direct-feed 仍有节奏缺陷；paced direct + 480/240ms 缓冲的修复已提交到 main
-> （main 分支），但尚未构建 release、尚未经过 iPhone 真机验证，不能宣称 AirPlay 2
-> 已彻底解决。**
+> 当前代码：`main`，最新 release `android-v1.4.4`（2026-11-16）。
+> **注意：1.4.4 已包含 paced direct + 480/240ms 缓冲，但尚未经过 iPhone 真机验证，
+> 不能宣称 AirPlay 2 已彻底解决；请以 1.4.4 实机日志为准。**
 
 ## 1. 一句话结论
 
@@ -183,9 +182,8 @@
 | 1.4.2 | `c105434` | AAC ADTS/raw、接收端音量、Oboe 回退、诊断、12.4MB | PCM 解码成功但本地缓冲只有首帧/0ms |
 | 1.4.3 | `2ac80cb` | direct-feed 绕过 anchor、FLUSH seq 映射、诊断 | PCM 流动、输出开始，但**无节奏 direct-feed 导致溢出/欠载** |
 
-当前 `main` 已包含 **paced direct-feed** 修复：把 direct-feed
-改成按本地 RTP 锚点 1x 投递，并把 Android 缓冲调到 480/240ms。该修复只经过
-单元测试，尚未构建 release、尚未真机验证。
+1.4.4 已包含 **paced direct-feed** 修复：把 direct-feed 改成按本地 RTP 锚点
+1x 投递，并把 Android 缓冲调到 480/240ms。该修复只经过单元测试，尚未真机验证。
 
 ## 5. 当前真机现象（1.4.3，2026-11-16 多 App 对比）
 
@@ -386,6 +384,6 @@ git diff 58129cc..HEAD -- vendor/shairplay/src src/AirPlayReceiver.Core/src/audi
 - APK：`FusionPlay-Android-1.4.3.apk`，约 12.4MB，arm64-v8a
 - 更新清单：`updates/android/stable.json` / GitHub Pages
 - 1.4.3 包含旧的 direct-feed，节奏问题未修完。
-- 当前 main 已提交 paced direct + 480/240ms 缓冲，但**尚未构建 APK、未经过 iPhone
-  真机验证**；下一版应先构建测试包，用网易云音乐和哔哩哔哩各连续测试 10 分钟，
+- 1.4.4 已包含 paced direct + 480/240ms 缓冲，但**尚未经过 iPhone 真机验证**；
+  请用网易云音乐和哔哩哔哩各连续测试 10 分钟，
   重点看 underrun、缓冲是否稳定、网易云是否仍 2 秒断流，再谈音量/歌词。
