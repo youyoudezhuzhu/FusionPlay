@@ -15,6 +15,12 @@ import 'remote_focus.dart';
 import 'rounded_progress_bar.dart';
 import 'vector_icon.dart';
 
+class _AirPlayTitleCapture {
+  const _AirPlayTitleCapture(this.text);
+
+  final String text;
+}
+
 /// Advance an AirPlay progress anchor by wall-clock elapsed time.
 ///
 /// AirPlay now-playing updates are sparse, so the UI must interpolate between
@@ -125,6 +131,14 @@ class _PlayerViewState extends State<PlayerView> {
   int _displayedPositionMs = 0;
   int _lastStatePositionMs = 0;
   bool _lastPlaying = false;
+  // NetEase (and some other AirPlay senders) put the current lyric line in the
+  // now-playing *title* field and the song/composer in artist. Detect a rapidly
+  // changing AirPlay title and treat the captured titles as lyrics.
+  final List<_AirPlayTitleCapture> _airPlayTitleCaptures = [];
+  bool _airPlayTitleLyrics = false;
+  String? _lastAirPlayTitle;
+  String? _lastAirPlayArtist;
+  String? _lastAirPlayAlbum;
   ArtworkFlipDirection artworkFlipDirection = ArtworkFlipDirection.right;
   bool artworkFlipDirectionPending = false;
   Timer? artworkFlipDirectionTimer;
@@ -166,12 +180,95 @@ class _PlayerViewState extends State<PlayerView> {
       LyricsAvailability.supported;
 
   bool _hasDisplayableLyricsFor(PlaybackSnapshot playback) {
+    if (_isAirPlayProtocol(playback) && _airPlayTitleLyrics) return true;
     final lyrics = playback.lyrics;
     return playback.lyricsLoading || (lyrics != null && lyrics.hasLyrics);
   }
 
   bool get _hasDisplayableLyrics =>
       _hasDisplayableLyricsFor(widget.state.playback);
+
+  bool _isAirPlayProtocol(PlaybackSnapshot playback) =>
+      (playback.protocol ?? '').toLowerCase().contains('airplay');
+
+  void _observeAirPlayTitle(PlaybackSnapshot playback) {
+    if (!_isAirPlayProtocol(playback)) {
+      _airPlayTitleCaptures.clear();
+      _airPlayTitleLyrics = false;
+      _lastAirPlayTitle = null;
+      _lastAirPlayArtist = null;
+      _lastAirPlayAlbum = null;
+      return;
+    }
+    final artist = playback.artist?.trim();
+    final album = playback.album?.trim();
+    if (artist != _lastAirPlayArtist || album != _lastAirPlayAlbum) {
+      // New track: restart the title/lyrics history.
+      _airPlayTitleCaptures.clear();
+      _airPlayTitleLyrics = false;
+      _lastAirPlayArtist = artist;
+      _lastAirPlayAlbum = album;
+      _lastAirPlayTitle = null;
+    }
+    final title = playback.title?.trim();
+    if (title == null || title.isEmpty || title == _lastAirPlayTitle) return;
+    _lastAirPlayTitle = title;
+    if (_airPlayTitleCaptures.isEmpty ||
+        _airPlayTitleCaptures.last.text != title) {
+      _airPlayTitleCaptures.add(_AirPlayTitleCapture(title));
+      if (_airPlayTitleCaptures.length > 400) {
+        _airPlayTitleCaptures.removeAt(0);
+      }
+    }
+    // Three distinct changes is enough to distinguish a lyric line stream from
+    // a normal static title. The first one may be the song name.
+    if (_airPlayTitleCaptures.length >= 3) {
+      _airPlayTitleLyrics = true;
+    }
+  }
+
+  LyricsDocument? _effectiveLyricsFor(PlaybackSnapshot playback) {
+    if (_isAirPlayProtocol(playback) && _airPlayTitleLyrics) {
+      return LyricsDocument(
+        origin: 'airplay_title',
+        synced: false,
+        lines: _airPlayTitleCaptures
+            .map((capture) => LyricLine(text: capture.text))
+            .toList(growable: false),
+      );
+    }
+    return playback.lyrics;
+  }
+
+  (String, String?) _displayMetadata(PlaybackSnapshot playback) {
+    if (!_isAirPlayProtocol(playback) || !_airPlayTitleLyrics) {
+      final title = playback.title?.trim();
+      final artist = playback.artist?.trim();
+      return (
+        title != null && title.isNotEmpty ? title : '暂无音乐',
+        artist != null && artist.isNotEmpty ? artist : null,
+      );
+    }
+    // In AirPlay title-as-lyrics mode the title is a lyric line and artist is
+    // normally "song name - composer". Prefer the song name for line one and
+    // keep the remaining composer text as line two.
+    final artist = playback.artist?.trim();
+    if (artist == null || artist.isEmpty) {
+      final album = playback.album?.trim();
+      return (album != null && album.isNotEmpty ? album : 'AirPlay', null);
+    }
+    for (final separator in const [' - ', ' – ', ' — ', ' / ', '｜', '|', '·']) {
+      final index = artist.indexOf(separator);
+      if (index > 0 && index < artist.length - separator.length) {
+        final title = artist.substring(0, index).trim();
+        final rest = artist.substring(index + separator.length).trim();
+        if (title.isNotEmpty) {
+          return (title, rest.isEmpty ? null : rest);
+        }
+      }
+    }
+    return (artist, null);
+  }
 
   bool get _lyricsToggleVisible => _lyricsSupported && _hasDisplayableLyrics;
 
@@ -213,6 +310,7 @@ class _PlayerViewState extends State<PlayerView> {
     _displayedPositionMs = _lastStatePositionMs;
     _progressAnchorMs = _lastStatePositionMs;
     _lastPlaying = widget.state.playback.isPlaying;
+    _observeAirPlayTitle(widget.state.playback);
     _progressTicker = Timer.periodic(
       const Duration(milliseconds: 250),
       (_) => _tickProgress(),
@@ -240,6 +338,7 @@ class _PlayerViewState extends State<PlayerView> {
       _volumeOptimisticTimer = null;
       _optimisticVolume = null;
     }
+    _observeAirPlayTitle(widget.state.playback);
     final nextTrackKey = _trackKeyOf(widget.state.playback);
     final previousHadLyrics = _hasDisplayableLyricsFor(
       oldWidget.state.playback,
@@ -798,10 +897,7 @@ class _PlayerViewState extends State<PlayerView> {
     child: LayoutBuilder(
       builder: (context, content) {
         final playback = widget.state.playback;
-        final title = playback.title?.trim().isNotEmpty == true
-            ? playback.title!.trim()
-            : '暂无音乐';
-        final artist = playback.artist?.trim();
+        final (title, artist) = _displayMetadata(playback);
         final lyricsChip = _lyricsStatusLabel(playback);
         final dense = content.maxHeight < 260;
         final ultra = content.maxHeight < 170;
@@ -919,10 +1015,7 @@ class _PlayerViewState extends State<PlayerView> {
     bool dense = false,
   }) {
     final playback = widget.state.playback;
-    final title = playback.title?.trim().isNotEmpty == true
-        ? playback.title!.trim()
-        : '暂无音乐';
-    final artist = playback.artist?.trim();
+    final (title, artist) = _displayMetadata(playback);
     final lyricsChip = _lyricsStatusLabel(playback);
     final titleSize = (artwork / 11.5).clamp(
       dense ? 17.0 : (compact ? 20.0 : 24.0),
@@ -1015,10 +1108,7 @@ class _PlayerViewState extends State<PlayerView> {
   /// hid the lyrics. It never shows a "waiting/loading" empty state.
   Widget _centeredBody({required bool landscape}) {
     final playback = widget.state.playback;
-    final title = playback.title?.trim().isNotEmpty == true
-        ? playback.title!.trim()
-        : '暂无音乐';
-    final artist = playback.artist?.trim();
+    final (title, artist) = _displayMetadata(playback);
     final hiddenByUser = _lyricsSupported && _hasDisplayableLyrics;
     final hint = hiddenByUser ? null : _centeredHint(playback);
     return LayoutBuilder(
@@ -1160,7 +1250,7 @@ class _PlayerViewState extends State<PlayerView> {
     );
     return LyricsView(
       key: const ValueKey('player-lyrics-view'),
-      lyrics: playback.lyrics,
+      lyrics: _effectiveLyricsFor(playback),
       loading: playback.lyricsLoading,
       isPlaying: playback.isPlaying,
       positionMs: _visiblePositionMs,
@@ -1182,7 +1272,7 @@ class _PlayerViewState extends State<PlayerView> {
   String? _lyricsStatusLabel(PlaybackSnapshot playback) {
     // Availability is decided from the payload, not the protocol: AirPlay can
     // carry lyrics from senders that support it.
-    final lyrics = playback.lyrics;
+    final lyrics = _effectiveLyricsFor(playback);
     if (lyrics != null && lyrics.hasLyrics) {
       if (lyrics.hasWordTiming) return '逐字歌词';
       if (lyrics.isSynced) return '同步歌词';

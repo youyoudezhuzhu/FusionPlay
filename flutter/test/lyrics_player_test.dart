@@ -723,4 +723,32 @@ void main() {
     await tester.pump();
     expect(tester.takeException(), isNull);
   });
+  testWidgets('AirPlay 标题持续变化时按歌词双栏显示并移除空态', (tester) async {
+    AppState airPlay(String title) => _stateFromMap({
+      'playback': {
+        'protocol': 'airplay',
+        'title': title,
+        'artist': '晴天 - 周杰伦',
+        'album': '叶惠美',
+        'isPlaying': true,
+        'streamActive': true,
+        'positionMs': 5000,
+        'durationMs': 180000,
+      },
+    });
+
+    await _pumpPlayer(tester, airPlay('Track'));
+    await tester.pumpWidget(_playerHost(airPlay('第一句歌词')));
+    await tester.pump();
+    await tester.pumpWidget(_playerHost(airPlay('第二句歌词')));
+    await tester.pump();
+    await tester.pumpWidget(_playerHost(airPlay('第三句歌词')));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 350));
+
+    expect(find.byKey(const ValueKey('player-lyrics-view')), findsOneWidget);
+    expect(find.text('音频流未提供歌词'), findsNothing);
+    expect(find.text('第一句歌词'), findsOneWidget);
+    expect(find.text('晴天'), findsOneWidget);
+  });
 }
