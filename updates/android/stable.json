@@ -2,14 +2,14 @@
   "schema_version": 1,
   "channel": "stable",
   "published": true,
-  "version_name": "1.6.0",
-  "version_code": 10600,
-  "sha256": "4c2aa8cc1db28a2d093836d856296e902fe7f60c583a212b6c50e9a8c945d9aa",
+  "version_name": "1.6.1",
+  "version_code": 10601,
+  "sha256": "16f3370fa26a28298d1ce97c1daf9835753a0a742a6e9aecc002e9de358bc766",
   "signer_sha256": "4836fb96c2ef76fd81ac385455f1b0154af77fadae1b45bbb752b192499dc12f",
-  "apk_url": "https://youyoudezhuzhu.github.io/FusionPlay/update/android/dl/latest.apk?v=10600",
-  "apk_url_alt": "https://github.com/youyoudezhuzhu/FusionPlay/releases/download/android-v1.6.0/FusionPlay-Android-1.6.0.apk",
-  "apk_size": 12450006,
-  "source_commit": "3e0390eea5d1a45ee0bfaf4b9ba40a79cb91e170",
-  "notes": "## FusionPlay Android 1.6.0\n\n### 播放页视觉重构：Apple Music 风格横屏 + Liquid Glass\n\n这次是 UI 重构，不是播放功能重写；所有协议、歌词、播放控制、焦点和菜单能力保留。\n\n**有歌词**\n\n- 横屏改为左右双栏：左侧封面、歌曲/作者、播放进度与时间、上一曲/播放/暂停/下一曲、音量与静音；右侧为 Liquid Glass 歌词面板。\n- 右侧继续使用现有 `LyricsView`：同步歌词、逐字高亮、静态歌词、手动滚动/返回当前行、AirPlay 标题歌词流均保留。\n- 歌词显示/隐藏、切歌重置、加载中骨架状态保留；加载中不再闪屏或反复翻转封面。\n- 顶部保留协议与音质信息、歌词开关、更多菜单。\n\n**无歌词 / 隐藏歌词**\n\n- 不再渲染空白歌词列；使用放大的封面居中布局，播放/进度/音量/静音完整保留。\n- 发送端未提供歌词的提示保留为次要说明，不占据页面中心。\n\n**Liquid Glass**\n\n- 统一 `LiquidGlass` token 与降级路径；新增边缘 lens band、底部 caustic、顶部镜面高光与厚度渐变。\n- 主要应用于歌词面板、播放/上一曲/下一曲、音量、歌词开关和菜单按钮；不做整页玻璃。\n- 真实屏幕空间折射 shader 仍**未启用**（Android Impeller 白帧/反馈历史问题），当前是高质量降级实现，不把普通透明卡片说成真实折射。\n\n**适配**\n\n- 覆盖 800×360、960×540、1280×800 等横屏尺寸；短屏左栏整体按比例缩放，不裁切控制。\n- 遥控器/键盘方向键焦点、返回、菜单与现有设置页样式继续使用原有逻辑。\n\n**验证**\n\n- Flutter 播放器布局/歌词/加载/AirPlay 标题歌词/焦点/音量测试已更新；详情见 `docs/PLAYER_REDESIGN.md`。\n- 调试截图：`docs/player-redesign/`。\n- 尚未在真实 Android 设备上逐帧测 60 FPS；大型歌词玻璃面板是主要 GPU 成本。\n\n### 安装\n\n- 版本 1.6.0 / versionCode 10600，可直接覆盖 1.5.1。\n- 1.3.4+ 可在「设置 → 检查更新」升级。",
-  "published_at": "2026-11-16T17:01:30Z"
+  "apk_url": "https://youyoudezhuzhu.github.io/FusionPlay/update/android/dl/latest.apk?v=10601",
+  "apk_url_alt": "https://github.com/youyoudezhuzhu/FusionPlay/releases/download/android-v1.6.1/FusionPlay-Android-1.6.1.apk",
+  "apk_size": 12451177,
+  "source_commit": "7464bd2f70fb8a7ca5c1b34465157f0dad1898ce",
+  "notes": "## FusionPlay Android 1.6.1\n\n### 无歌词/空态也改为新播放页布局\n\n1.6.0 只在「有歌词」时启用 Apple Music 双栏，无歌词/未播放时仍是旧的居中布局，\n看起来可能“和以前一样”。1.6.1 修正：\n\n- 横屏无歌词/空态不再使用旧的整宽底部 dock：改为**大封面 + 右侧歌曲/作者/进度/上一曲/播放/下一曲/音量/静音**。\n- 不再渲染空白歌词列；无歌词提示保留为次要一行。\n- 有歌词/无歌词共用同一套内联控制列，切换时不再从“左栏控制”跳成“底部 dock”。\n- 保留有歌词双栏、加载骨架、AirPlay 标题歌词、焦点/菜单/能力判断。\n- 顶部协议与音质 chip 保留。\n\n如果仍看到旧界面，请到「设置 → 关于」确认版本为 **1.6.1 / 10601**；更新后需完全退出重开。\n\n### 安装\n\n- 版本 1.6.1 / versionCode 10601，可直接覆盖 1.6.0。\n- 1.3.4+ 可在「设置 → 检查更新」升级。",
+  "published_at": "2026-11-16T23:32:51Z"
 }
