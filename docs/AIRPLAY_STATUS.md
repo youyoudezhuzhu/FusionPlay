@@ -7,6 +7,9 @@
 > 基线：本轮 AirPlay 深入改造前的 **Android 1.3.5（commit `b42984c`）**。
 > 如果你所说的“原版”是更早的 1.2.3 开源版本，可以用文末的 git 命令查看更早差异。
 > 当前代码：`main`，最新 release `android-v1.4.3`（2026-11-16）。
+> **注意：1.4.3 的 direct-feed 仍有节奏缺陷；paced direct + 480/240ms 缓冲的修复已提交到 main
+> （main 分支），但尚未构建 release、尚未经过 iPhone 真机验证，不能宣称 AirPlay 2
+> 已彻底解决。**
 
 ## 1. 一句话结论
 
@@ -180,9 +183,9 @@
 | 1.4.2 | `c105434` | AAC ADTS/raw、接收端音量、Oboe 回退、诊断、12.4MB | PCM 解码成功但本地缓冲只有首帧/0ms |
 | 1.4.3 | `2ac80cb` | direct-feed 绕过 anchor、FLUSH seq 映射、诊断 | PCM 流动、输出开始，但**无节奏 direct-feed 导致溢出/欠载** |
 
-当前 `main` 可能还包含尚未提交的 **paced direct-feed** 修复（把 direct-feed
-改成按 RTP 时间戳 1x 投递）；如果文档提交时该修复尚未进 main，请以最新
-`git log` / working tree 为准。
+当前 `main` 已包含 **paced direct-feed** 修复：把 direct-feed
+改成按本地 RTP 锚点 1x 投递，并把 Android 缓冲调到 480/240ms。该修复只经过
+单元测试，尚未构建 release、尚未真机验证。
 
 ## 5. 当前真机现象（1.4.3，2026-11-16 多 App 对比）
 
@@ -241,13 +244,16 @@
 ## 6. 已知根因/未决问题
 ## 6. 已知根因/未决问题
 
-1. **direct-feed 无节奏（当前最高优先级）**
+1. **direct-feed 无节奏（已实现修复，待真机验证）**
    - 1.4.3 `take_all` 一次性清空 playout buffer 送 core，导致 AudioBuffer
      溢出/欠载。
-   - 预期修复：direct 模式保存本地 RTP 锚点（首帧 timestamp + 本地 now），
-     按 `target = anchor_rtp + elapsed * rtp_clock_rate` 用 `take_ready` 1x 投递；
-     PAUSE 清空并重置锚点，RECORD 重新锚定。
-   - 修复后 push 速率应约为 48k 采样/秒/声道，underrun 接近 0。
+   - 修复：direct 模式改为 **paced direct**：保存本地 RTP 锚点（最早帧 timestamp +
+     本地 now - 40ms），按 `target = anchor_rtp + elapsed * rtp_clock_rate` 用
+     `take_ready(target)` 1x 投递；忽略发送端不可用的绝对 anchor；PAUSE 清空并
+     重置锚点，RECORD 重新锚定；FLUSH 删除帧后重锚；积压超过 2s 时裁掉最旧帧。
+   - 本地 Android 缓冲同时从 240/120ms 调到 **480/240ms**（Oboe 保持 LowLatency）。
+   - 单元测试已覆盖 1x、2s/5s burst、backlog 上界、sender anchor 忽略、seek 回退、
+     FLUSH 序列号；**尚无修复后的真机 underrun 数据**，不能把“预期”写成“已解决”。
 
 2. **iPhone 音量固定 100% / 反向音量控制**
    - AirPlay 2 接收端音量是 receiver-side；FusionPlay 的 gain 只影响本地输出。
@@ -283,6 +289,25 @@
      无声，1.4.2 已回退到 LowLatency + 240/120。
    - 这些不是当前 1.4.3 的主要问题。
 
+## 6.1 PCM 计数口径（重要）
+
+代码里的 `pcm_received` / `delivered_samples` 统计的是 **f32 交织采样总数**
+（stereo 时每帧 2 个 f32），不是每声道帧数，也不是字节数。换算：
+
+- 每声道帧数 = 交织采样数 / 声道数（Android 输出固定 2）；
+- 音频秒数 = 每声道帧数 / 48000。
+
+所以 1.4.3 网易云段：
+
+```
+3,243,358 交织采样 / 2 = 1,621,679 帧/声道
+1,621,679 / 48,000 ≈ 33.8 秒音频
+```
+
+在约 2 秒墙钟内送入 33.8 秒音频 ≈ **17x 实时**。如果误把 3,243,358 当“每声道
+48000 帧”，会算成 67.6 秒，所以文档和日志已改为显式同时记录“交织采样 / 帧/声道 /
+约多少秒音频”。B 站段的计数也按同一口径理解。
+
 ## 7. 关键文件索引
 
 - 身份/发现：`vendor/shairplay/src/net/features.rs`、`net/mdns.rs`、
@@ -298,6 +323,29 @@
 - Android 原生：`flutter/android/app/src/main/kotlin/com/fusionplay/android/FusionPlayRuntime.kt`、
   `.../backend/FusionPlayDiagnosticLogger.kt`
 - 历史补丁说明：`vendor/shairplay/LOCAL_PATCHES.md`、`docs/AIRPLAY_AUDIO_ONLY.md`
+
+## 7.1 自动化测试与修复前后对比
+
+### 自动化测试（本次提交时）
+
+- vendor `CI=1 cargo test --features hls --lib`：**232 passed**（含 paced direct 新增测试）；
+- core `cargo test --lib --target x86_64-unknown-linux-gnu`：**124 passed**；
+- 之前同一提交前跑过 vendor ap2 225 / hls 232 / video 226、core 124；
+  `cargo build --features hls` 无 warning。
+- 未做 30 分钟真机/虚拟长跑；paced direct 的 1x 模型有单元测试，长稳测试仍待补。
+
+### 修复前后对比（前=1.4.3 实测；后=代码/单测预期，未真机）
+
+| 项目 | 1.4.3（修复前） | paced direct + 480/240ms（修复后） |
+|---|---|---|
+| direct 投递 | `take_all`，收到即全送 | `take_ready`，按本地 RTP 锚点 1x |
+| 网易云初始 burst | 2 秒内 3.24M 交织采样（约 33.8s 音频），约 17x | 积压最多保留 2s，按 1x 播放；单元测试 1s 约 47 个包 |
+| Android 缓冲 | 120ms 预填充 / 240ms 容量 | 240ms 预填充 / 480ms 容量 |
+| 网易云 | 约 2 秒破音后无声；underrun 2，缓冲 0 | **预期**连续出声；未真机验证 |
+| 哔哩哔哩 | 约 1 分钟 49 次 underrun，偶发破音 | **预期** underrun 接近 0、缓冲更稳；未真机验证 |
+| 延迟 | 约 2.0–2.2s | 约 2.2–2.5s（+240ms 本地缓冲） |
+
+**结论边界：以上“修复后”是代码逻辑与单元测试的预期，不是 iPhone 实测结果。**
 
 ## 8. 给审查者的建议问题
 
@@ -337,5 +385,7 @@ git diff 58129cc..HEAD -- vendor/shairplay/src src/AirPlayReceiver.Core/src/audi
 - 最新 release：`android-v1.4.3`
 - APK：`FusionPlay-Android-1.4.3.apk`，约 12.4MB，arm64-v8a
 - 更新清单：`updates/android/stable.json` / GitHub Pages
-- 1.4.3 包含上述 direct-feed，但节奏问题仍未修完；下一版应先做 paced direct-feed
-  并在真机上确认连续出声，再谈音量/歌词等次要问题。
+- 1.4.3 包含旧的 direct-feed，节奏问题未修完。
+- 当前 main 已提交 paced direct + 480/240ms 缓冲，但**尚未构建 APK、未经过 iPhone
+  真机验证**；下一版应先构建测试包，用网易云音乐和哔哩哔哩各连续测试 10 分钟，
+  重点看 underrun、缓冲是否稳定、网易云是否仍 2 秒断流，再谈音量/歌词。

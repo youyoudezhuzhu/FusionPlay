@@ -201,3 +201,42 @@ MediaRemote 不是公开的 AirPlay 2 API。本实现参考了 2026 年 2 月公
 - 定时 playout 代码保留（`BufferedSourceConfig::direct_feed = false`），待真机验证后
   可恢复；若恢复，需要为无 PTP 场景改用相对 RTP 锚定（把 anchor_local 前移到
   缓冲头），否则仍会饥饿。
+
+## 2026-11 Android 1.4.3 后续：paced direct + 更大本地缓冲
+
+1.4.3 实机日志（`/tmp/fplogs5`，OPPO PKJ110）暴露 direct-feed 的节奏问题：
+`take_all` 把发送端瞬时到达的帧全部塞进 240 ms 的本地队列 —— 网易云音乐
+（首个 ~1 MB 预缓冲约 30 s 音频在 2 s 内到达）瞬间溢出：11:30:49 两秒内
+`已收 PCM 3.24M 采样 / push 1455`，随后缓冲 0、underrun，只剩破音；哔哩哔哩
+发送端大致 1x，能持续播放但 ColorOS 回调抖动下 underrun 快速增长（1 分钟 49 次）。
+
+修复：
+
+- **paced direct（本地节奏直投）**：不再 `take_all`。direct 模式用纯本地锚点
+  （`direct_anchor_rtp = 最早缓冲帧时间戳`，`direct_anchor_local_ns = now - 40ms`），
+  之后 `target = anchor_rtp + elapsed*rtp_clock_rate`，用 `take_ready(target)` 按 1x
+  投递。发送端 `SETRATEANCHORTIME` 的绝对 anchor 一律忽略（没有共享时钟），
+  `rate` 只用于暂停/恢复；暂停清空缓冲并重置锚点，RECORD/恢复重新锚定最早帧；
+  RTP timeline rebase、新 stream、FLUSH 删除帧、seek 回退都会重置锚点。
+- **延迟上界**：direct 模式若发送端一次送来超过 2 s 的积压，按 RTP 时间戳删掉最旧的
+  帧、只保留最近 2 s（`trim_direct_backlog`），避免延迟无限增长；40 ms 提前量
+  让本地队列有一点调度余量。
+- **Android 本地缓冲调大**：`OUTPUT_BACKLOG_MILLISECONDS = 480`、
+  `OUTPUT_PREFILL_MILLISECONDS = 240`，Oboe 仍为 `LowLatency`（不用 `None`）。
+  稳态本地延迟 +240 ms（总计约 2.2–2.5 s，仍由 AirPlay 协议 2 s 主导），用于吸收
+  ColorOS 回调抖动、消除 B 站段的 underrun/破音。
+- **诊断**：播放诊断行现在包含模式（direct-paced/timed）、已送出帧/采样、
+  最近一个窗口的采样率（应 ≈ 输出采样率×声道 ≈ 96000 f32/s）、待播帧、锚点与本地
+  偏移、flush/删除帧、backlog 丢弃帧数；Android 输出心跳含已收 PCM/push/clear/
+  锁失败/underrun。
+- 测试：`paced_direct_feed_releases_frames_at_one_x`（2 s 预缓冲首轮只放 due 帧，
+  1 s 只放约 47 帧）、`direct_anchor_ignores_the_senders_absolute_anchor`、
+  `direct_anchor_resets_when_earliest_frame_moves_backwards`、
+  `direct_backlog_is_bounded_to_two_seconds`。
+- 关于网易云“2 秒后无声”：日志中 `playback_state false/true` 来自发送端
+  `SETRATEANCHORTIME` 的 rate 更新（真实 sender PAUSE/RECORD），并有真实
+  `FLUSHBUFFERED` 与 stream restart，不是我们把 FLUSH 误当 PAUSE。其 2 s 后停止
+  与本机 240 ms 缓冲被 30 s burst 溢出同时发生；paced direct + 2 s backlog 上界
+  后可继续按 1x 播放。若 sender 在填满其 1 MB 预缓冲后仍需反馈才继续，下一步应
+  发送 RTCP RR/或调小 SETUP 回复中的 `audioBufferSize`（当前 0x100000），再用日志
+  确认 sender 是否继续按 1x 发包。

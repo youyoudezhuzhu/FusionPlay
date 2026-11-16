@@ -51,6 +51,11 @@ const TIMELINE_REBASE_SECONDS: u32 = 30;
 /// timestamps. A flush normally covers the last few seconds (≈100 packets).
 const MAX_SEQ_HISTORY: usize = 4_096;
 
+/// Small scheduling lead for paced direct feed. The sender's pre-buffer is
+/// usually ~2 s, so releasing frames 40 ms "early" gives the local output queue
+/// a little tolerance without changing the 1x long-term rate.
+const DIRECT_FEED_LEAD_MILLIS: u64 = 40;
+
 #[derive(Debug, Clone)]
 /// Output configuration passed from the server builder.
 pub(crate) struct OutputConfig {
@@ -173,7 +178,6 @@ impl TimestampExtender {
     pub(crate) fn extend(&mut self, raw: u32, max_backward_frames: u32) -> u64 {
         self.extend_tracking(raw, max_backward_frames).0
     }
-
 }
 
 /// Which source established the current playout anchor.
@@ -214,6 +218,13 @@ struct PlayoutState {
     /// Diagnostics: FLUSH commands applied and frames they removed.
     flushes: u64,
     flushed_frames: u64,
+    /// Local (sender-clock-free) playout anchor for paced direct feed: first
+    /// buffered frame timestamp and the local instant it was anchored.
+    direct_anchor_rtp: u64,
+    direct_anchor_local_ns: u64,
+    direct_anchor_valid: bool,
+    /// Diagnostics: frames discarded by the direct-feed backlog bound.
+    direct_dropped_frames: u64,
 }
 
 /// Decoder chosen for the stream's SSRC. Apple can switch AAC↔ALAC mid-stream.
@@ -232,9 +243,7 @@ impl BufferedDecoder {
             // bit depth is preferred (it is what the sender negotiated).
             let bit_depth = config
                 .alac_format
-                .filter(|format| {
-                    format.sample_rate == sample_rate && format.channels == channels
-                })
+                .filter(|format| format.sample_rate == sample_rate && format.channels == channels)
                 .map(|format| format.bit_depth)
                 .unwrap_or(bit_depth);
             let frame_length = config
@@ -242,12 +251,7 @@ impl BufferedDecoder {
                 .unwrap_or(DEFAULT_ALAC_FRAME_LENGTH)
                 .clamp(1, crate::codec::alac::MAX_ALAC_SAMPLES_PER_FRAME);
             let mut decoder = AlacDecoder::new(i32::from(bit_depth), i32::from(channels));
-            decoder.set_info(&alac_specific_config(
-                sample_rate,
-                bit_depth,
-                channels,
-                frame_length,
-            ));
+            decoder.set_info(&alac_specific_config(sample_rate, bit_depth, channels, frame_length));
             if !decoder.is_configured() {
                 return Err(format!(
                     "ALAC decoder configuration rejected (sample_rate={sample_rate}, bit_depth={bit_depth}, channels={channels}, frame_length={frame_length})"
@@ -372,9 +376,7 @@ fn set_rate_anchor(
         return (AnchorMapping::LocalFallback, 0);
     }
 
-    let max_backward = state
-        .rtp_clock_rate
-        .saturating_mul(TIMELINE_REBASE_SECONDS);
+    let max_backward = state.rtp_clock_rate.saturating_mul(TIMELINE_REBASE_SECONDS);
     let timeline_rebased = if anchor_rtp != 0 {
         let (anchor_ext, rebased) = state.timestamps.extend_tracking(anchor_rtp, max_backward);
         state.anchor_rtp = anchor_ext;
@@ -472,9 +474,7 @@ fn refresh_rtcp_anchor(
         };
         announce
     };
-    if !announce.is_ptp
-        || local_now_ns.saturating_sub(announce.received_at_ns) > TIME_ANNOUNCE_MAX_AGE_NS
-    {
+    if !announce.is_ptp || local_now_ns.saturating_sub(announce.received_at_ns) > TIME_ANNOUNCE_MAX_AGE_NS {
         return false;
     }
     let Some(anchor_local_ns) = ptp_clock
@@ -484,9 +484,7 @@ fn refresh_rtcp_anchor(
         return false;
     };
 
-    let max_backward = state
-        .rtp_clock_rate
-        .saturating_mul(TIMELINE_REBASE_SECONDS);
+    let max_backward = state.rtp_clock_rate.saturating_mul(TIMELINE_REBASE_SECONDS);
     state.anchor_rtp = state.timestamps.extend(announce.play_at_rtp, max_backward);
     state.anchor_local_ns = anchor_local_ns;
     state.anchor_valid = true;
@@ -514,12 +512,7 @@ fn push_buffered(state: &mut PlayoutState, timestamp: u64, samples: Vec<f32>) {
 }
 
 fn take_ready(state: &mut PlayoutState, target_rtp: u64) -> Vec<(u64, Vec<f32>)> {
-    let ready: Vec<u64> = state
-        .buffer
-        .keys()
-        .filter(|&&ts| ts <= target_rtp)
-        .copied()
-        .collect();
+    let ready: Vec<u64> = state.buffer.keys().filter(|&&ts| ts <= target_rtp).copied().collect();
     let mut frames = Vec::with_capacity(ready.len());
     for timestamp in ready {
         if let Some(data) = state.buffer.remove(&timestamp) {
@@ -542,6 +535,62 @@ fn take_all(state: &mut PlayoutState) -> Vec<(u64, Vec<f32>)> {
         }
     }
     frames
+}
+
+/// Anchor paced direct feed to the earliest buffered frame.
+///
+/// The sender's `SETRATEANCHORTIME` anchor is network/PTP time, which this
+/// receiver cannot map without a shared clock. Pacing from a purely local
+/// anchor (first buffered RTP timestamp + local `now`) keeps 1x delivery while
+/// ignoring the sender's unreliable absolute anchor.
+///
+/// Re-anchors when the stream starts, after pause, and when the earliest
+/// buffered frame moved backwards (seek/new track).
+fn ensure_direct_anchor(state: &mut PlayoutState, local_now_ns: u64) -> bool {
+    let Some(&earliest) = state.buffer.keys().next() else {
+        state.direct_anchor_valid = false;
+        return false;
+    };
+    if !state.direct_anchor_valid || earliest < state.direct_anchor_rtp {
+        let lead_ns = DIRECT_FEED_LEAD_MILLIS * 1_000_000;
+        state.direct_anchor_rtp = earliest;
+        state.direct_anchor_local_ns = local_now_ns.saturating_sub(lead_ns);
+        state.direct_anchor_valid = true;
+    }
+    true
+}
+
+/// RTP timestamp the paced direct feed may play up to at `local_now_ns`.
+fn direct_target_rtp(state: &PlayoutState, local_now_ns: u64) -> Option<u64> {
+    if !state.direct_anchor_valid || local_now_ns < state.direct_anchor_local_ns {
+        return None;
+    }
+    let elapsed_ns = local_now_ns - state.direct_anchor_local_ns;
+    let elapsed_frames = ((elapsed_ns as u128) * (state.rtp_clock_rate as u128) / 1_000_000_000) as u64;
+    Some(state.direct_anchor_rtp.saturating_add(elapsed_frames))
+}
+
+/// Bound direct-feed latency: when the sender delivered far more than real
+/// time (initial pre-buffer bursts), keep only the newest two seconds.
+fn trim_direct_backlog(state: &mut PlayoutState) -> usize {
+    let Some(&newest) = state.buffer.keys().next_back() else {
+        return 0;
+    };
+    let max_backlog_frames = u64::from(state.rtp_clock_rate) * 2;
+    let mut removed = 0;
+    loop {
+        let Some(&oldest) = state.buffer.keys().next() else {
+            break;
+        };
+        if newest.saturating_sub(oldest) <= max_backlog_frames {
+            break;
+        }
+        if let Some(data) = state.buffer.remove(&oldest) {
+            state.buffered_f32 = state.buffered_f32.saturating_sub(data.len());
+            removed += 1;
+        }
+    }
+    removed
 }
 
 /// TCP listener for buffered audio. Binds a port and spawns the processing pipeline.
@@ -589,6 +638,10 @@ impl BufferedAudioProcessor {
                 seq_history: VecDeque::new(),
                 flushes: 0,
                 flushed_frames: 0,
+                direct_anchor_rtp: 0,
+                direct_anchor_local_ns: 0,
+                direct_anchor_valid: false,
+                direct_dropped_frames: 0,
             }),
             Condvar::new(),
         ));
@@ -621,6 +674,22 @@ impl BufferedAudioProcessor {
                         rate,
                     } => {
                         let was_paused = s.rate == 0;
+                        if s.direct_feed {
+                            // Paced direct feed ignores the sender's absolute
+                            // anchor (no shared clock); only the rate matters.
+                            s.rate = rate;
+                            if rate == 0 {
+                                s.buffer.clear();
+                                s.buffered_f32 = 0;
+                                s.direct_anchor_valid = false;
+                                info!("Direct feed paused");
+                            } else if was_paused {
+                                s.direct_anchor_valid = false;
+                                info!("Direct feed resumed");
+                            }
+                            cvar.notify_all();
+                            continue;
+                        }
                         if rate == 0 {
                             s.rate = 0;
                             info!("Playout paused");
@@ -665,13 +734,28 @@ impl BufferedAudioProcessor {
                         // A plain RTSP PAUSE does not carry a new RTP anchor.
                         // Preserve the old one and, critically, keep the stream
                         // and decoder alive for the matching RECORD.
-                        pause_playout(&mut s);
-                        info!("Playout paused");
+                        if s.direct_feed {
+                            s.rate = 0;
+                            // Drop the paused period instead of playing it later.
+                            s.buffer.clear();
+                            s.buffered_f32 = 0;
+                            s.direct_anchor_valid = false;
+                            info!("Direct feed paused");
+                        } else {
+                            pause_playout(&mut s);
+                            info!("Playout paused");
+                        }
                         cvar.notify_all();
                     }
                     PlayoutCommand::Resume => {
-                        resume_playout(&mut s);
-                        info!("Playout resumed");
+                        if s.direct_feed {
+                            s.rate = 1;
+                            s.direct_anchor_valid = false;
+                            info!("Direct feed resumed");
+                        } else {
+                            resume_playout(&mut s);
+                            info!("Playout resumed");
+                        }
                         cvar.notify_all();
                     }
                     PlayoutCommand::Flush { from_seq, until_seq } => {
@@ -687,16 +771,12 @@ impl BufferedAudioProcessor {
                             .filter(|(seq, _)| seq_in_range(*seq, from_seq, until_seq))
                             .map(|(_, ts)| *ts)
                             .collect();
-                        let removed = if let (Some(min), Some(max)) =
-                            (mapped.iter().min(), mapped.iter().max())
-                        {
-                            let keys: Vec<u64> =
-                                s.buffer.range(*min..=*max).map(|(ts, _)| *ts).collect();
+                        let removed = if let (Some(min), Some(max)) = (mapped.iter().min(), mapped.iter().max()) {
+                            let keys: Vec<u64> = s.buffer.range(*min..=*max).map(|(ts, _)| *ts).collect();
                             let mut removed = 0usize;
                             for k in keys {
                                 if let Some(data) = s.buffer.remove(&k) {
-                                    s.buffered_f32 =
-                                        s.buffered_f32.saturating_sub(data.len());
+                                    s.buffered_f32 = s.buffered_f32.saturating_sub(data.len());
                                     removed += 1;
                                 }
                             }
@@ -708,6 +788,12 @@ impl BufferedAudioProcessor {
                         };
                         s.flushes = s.flushes.saturating_add(1);
                         s.flushed_frames = s.flushed_frames.saturating_add(removed as u64);
+                        if s.direct_feed && removed != 0 {
+                            // A seek/FLUSH may move the buffered range beyond the
+                            // paced anchor: re-anchor so playback follows the new
+                            // range instead of waiting for the target to catch up.
+                            s.direct_anchor_valid = false;
+                        }
                         debug!(from_seq, until_seq, removed, mapped = mapped.len(), "Flushed");
                         handler3.on_diagnostic(
                             "info",
@@ -844,10 +930,7 @@ async fn receive_loop<R: tokio::io::AsyncRead + Unpin>(
         // not be fed to the previous decoder (which produced garbage audio).
         if ssrc == AudioSsrc::None {
             if ssrc_val == 0 {
-                debug!(
-                    timestamp,
-                    "Skipping SSRC_NONE buffered-audio control packet"
-                );
+                debug!(timestamp, "Skipping SSRC_NONE buffered-audio control packet");
             } else if unknown_ssrc_warn.allow(now_ns()) {
                 warn!(
                     ssrc = format!("{ssrc_val:#010x}"),
@@ -912,6 +995,10 @@ async fn receive_loop<R: tokio::io::AsyncRead + Unpin>(
             s.max_buffered_f32 = target_sr as usize * target_ch as usize * MAX_BUFFERED_SECONDS;
             s.source_format = Some(source_format);
             s.format_changed |= format_changed;
+            if format_changed {
+                // New stream/format: pace direct feed from the new timeline.
+                s.direct_anchor_valid = false;
+            }
             cvar.notify_all();
         }
 
@@ -1000,6 +1087,7 @@ async fn receive_loop<R: tokio::io::AsyncRead + Unpin>(
             s.buffered_f32 = 0;
             s.anchor_valid = false;
             s.anchor_source = AnchorSource::None;
+            s.direct_anchor_valid = false;
         }
         pushed_frames = pushed_frames.saturating_add(1);
         pushed_samples = pushed_samples.saturating_add(samples.len() as u64);
@@ -1025,9 +1113,11 @@ fn delivery_loop(
 ) {
     let (lock, cvar) = &*state;
     let mut session: Option<Box<dyn crate::raop::AudioSession>> = None;
-    let mut delivered_samples: u64 = 0;
-    let mut delivered_frames: u64 = 0;
+    let mut delivered_interleaved_samples: u64 = 0;
+    let mut delivered_chunks: u64 = 0;
     let mut last_diagnostic = now_ns();
+    let mut last_diag_samples: u64 = 0;
+    let mut last_diag_ns = now_ns();
 
     loop {
         let mut s = lock.lock().unwrap();
@@ -1038,6 +1128,10 @@ fn delivery_loop(
         // Lazy init or reinit session on format change. In direct-feed mode the
         // first decoded packet may arrive before any anchor exists.
         if (session.is_none() || s.format_changed) && s.source_format.is_some() {
+            if s.format_changed {
+                // New stream/format: pace from the new timeline.
+                s.direct_anchor_valid = false;
+            }
             s.format_changed = false;
             let format = AudioFormat {
                 codec: AudioCodec::Pcm,
@@ -1056,8 +1150,9 @@ fn delivery_loop(
 
         let ready: Vec<(u64, Vec<f32>)> = if s.direct_feed {
             if s.rate == 0 {
-                // Paused: drop buffered audio instead of playing it later.
+                // Paused: drop buffered audio and re-anchor on resume.
                 let dropped = take_all(&mut s).len();
+                s.direct_anchor_valid = false;
                 if dropped != 0 {
                     debug!(dropped, "Direct feed dropped frames while paused");
                 }
@@ -1068,13 +1163,28 @@ fn delivery_loop(
                 continue;
             }
             if s.buffer.is_empty() || session.is_none() {
+                if s.buffer.is_empty() {
+                    s.direct_anchor_valid = false;
+                }
                 let (guard, _) = cvar
                     .wait_timeout(s, Duration::from_millis(10))
                     .expect("playout state mutex");
                 s = guard;
                 continue;
             }
-            take_all(&mut s)
+            // Paced direct feed: anchor to the earliest buffered frame locally
+            // (the sender's absolute SETRATEANCHORTIME anchor is unusable
+            // without PTP) and release frames at 1x from that anchor.
+            let now = now_ns();
+            ensure_direct_anchor(&mut s, now);
+            let dropped = trim_direct_backlog(&mut s);
+            if dropped != 0 {
+                s.direct_dropped_frames = s.direct_dropped_frames.saturating_add(dropped as u64);
+                debug!(dropped, "Direct feed trimmed backlog to bound latency");
+            }
+            direct_target_rtp(&s, now)
+                .map(|target| take_ready(&mut s, target))
+                .unwrap_or_default()
         } else {
             if s.rate == 0 || !s.anchor_valid || s.buffer.is_empty() {
                 let (guard, _) = cvar
@@ -1092,37 +1202,53 @@ fn delivery_loop(
                 .unwrap_or_default()
         };
         let buffered_frames = s.buffered_f32 / usize::from(s.channels.max(1));
+        let channels = usize::from(s.channels.max(1));
         let rate = s.rate;
         let flushes = s.flushes;
         let flushed_frames = s.flushed_frames;
         let direct_feed = s.direct_feed;
+        let anchor_rtp = s.direct_anchor_rtp;
+        let anchor_local_ns = s.direct_anchor_local_ns;
+        let direct_dropped = s.direct_dropped_frames;
         drop(s);
 
         if let Some(ref mut sess) = session {
             for (_, frame) in &ready {
-                delivered_samples = delivered_samples.saturating_add(frame.len() as u64);
-                delivered_frames = delivered_frames.saturating_add(1);
+                delivered_interleaved_samples = delivered_interleaved_samples.saturating_add(frame.len() as u64);
+                delivered_chunks = delivered_chunks.saturating_add(1);
                 sess.audio_process(frame);
             }
         }
 
         // Rate-limited playout diagnostics: the next device log shows whether
         // frames actually leave this loop (and how many flushes interfered).
-        if now_ns().saturating_sub(last_diagnostic) >= 5_000_000_000 {
-            last_diagnostic = now_ns();
+        let now = now_ns();
+        if now.saturating_sub(last_diagnostic) >= 5_000_000_000 {
+            let window_ns = now.saturating_sub(last_diag_ns).max(1);
+            let window_samples = delivered_interleaved_samples.saturating_sub(last_diag_samples);
+            let interleaved_per_second = (window_samples as u128 * 1_000_000_000 / window_ns as u128) as u64;
+            let pcm_frames = delivered_interleaved_samples / channels.max(1) as u64;
             handler.on_diagnostic(
                 "info",
                 &format!(
-                    "AirPlay 播放诊断：模式={}，已送出 {} 帧 / {} 采样，待播 {} 帧，rate={}，flush {} 次（共删 {} 帧）",
-                    if direct_feed { "direct" } else { "timed" },
-                    delivered_frames,
-                    delivered_samples,
+                    "AirPlay 播放诊断：模式={}，已送 {} 块 / {} 帧（{} 交织采样，最近 {} f32/s，待播 {} 帧），锚点 {}（本地偏移 {} ms），rate={}，flush {} 次（共删 {} 块），backlog 丢弃 {} 块",
+                    if direct_feed { "direct-paced" } else { "timed" },
+                    delivered_chunks,
+                    pcm_frames,
+                    delivered_interleaved_samples,
+                    interleaved_per_second,
                     buffered_frames,
+                    anchor_rtp,
+                    (now.saturating_sub(anchor_local_ns)) / 1_000_000,
                     rate,
                     flushes,
-                    flushed_frames
+                    flushed_frames,
+                    direct_dropped
                 ),
             );
+            last_diagnostic = now;
+            last_diag_ns = now;
+            last_diag_samples = delivered_interleaved_samples;
         }
 
         if ready.is_empty() && !direct_feed {
@@ -1136,8 +1262,9 @@ fn delivery_loop(
 mod tests {
     use super::{
         AnchorMapping, AnchorSource, BufferedDecoder, BufferedSourceConfig, DEFAULT_ALAC_FRAME_LENGTH, OutputConfig,
-        PlayoutState, TimestampExtender, anchor_first_resumed_packet, pause_playout, playout_target_rtp,
-        receive_loop, refresh_rtcp_anchor, resume_playout, set_rate_anchor,
+        PlayoutState, TimestampExtender, anchor_first_resumed_packet, direct_target_rtp, ensure_direct_anchor,
+        pause_playout, playout_target_rtp, receive_loop, refresh_rtcp_anchor, resume_playout, set_rate_anchor,
+        take_ready, trim_direct_backlog,
     };
     use crate::codec::aac::AudioSsrc;
     use crate::net::ptp::PtpClock;
@@ -1168,6 +1295,10 @@ mod tests {
             seq_history: VecDeque::new(),
             flushes: 0,
             flushed_frames: 0,
+            direct_anchor_rtp: 0,
+            direct_anchor_local_ns: 0,
+            direct_anchor_valid: false,
+            direct_dropped_frames: 0,
         }
     }
 
@@ -1177,6 +1308,118 @@ mod tests {
             BufferedSourceConfig::default().direct_feed,
             "direct feed must be the default while timed playout starves on device"
         );
+    }
+
+    /// Fill the playout buffer with `seconds` worth of 48 kHz frames, each
+    /// packet holding 1024 source frames.
+    fn prebuffer_seconds(state: &mut PlayoutState, seconds: u32) {
+        let packet_frames = 1024u64;
+        let packets = u64::from(state.rtp_clock_rate) * u64::from(seconds) / packet_frames;
+        for index in 0..packets {
+            let timestamp = index * packet_frames;
+            // 1024 stereo frames per packet.
+            state.buffer.insert(timestamp, vec![0.1; 2 * 1024]);
+            state.buffered_f32 += 2 * 1024;
+        }
+    }
+
+    /// Paced direct feed must release frames at 1x from a local anchor instead
+    /// of dumping the whole pre-buffer (1.4.3 device behaviour) or stalling.
+    #[test]
+    fn paced_direct_feed_releases_frames_at_one_x() {
+        let mut state = playout_state();
+        state.direct_feed = true;
+        state.rtp_clock_rate = 48_000;
+        prebuffer_seconds(&mut state, 2);
+
+        let start_ns = 1_000_000_000;
+        assert!(ensure_direct_anchor(&mut state, start_ns));
+        assert_eq!(state.direct_anchor_rtp, 0, "anchor at the earliest frame");
+
+        // t = 0: only the frames inside the small 40 ms scheduling lead are
+        // due, never the whole 2 s pre-buffer.
+        let target = direct_target_rtp(&state, start_ns).unwrap();
+        assert!(
+            target <= 48_000 * 40 / 1_000,
+            "first target must stay inside the 40 ms lead, got {target}"
+        );
+        assert!(target > 0, "the lead should release a couple of frames");
+        let delivered = take_ready(&mut state, target).len();
+        assert!(
+            (1..=3).contains(&delivered),
+            "first round may only release the lead frames, got {delivered}"
+        );
+
+        // Advance 1 s of wall time in 5 ms steps; expect ~47 frames (48 kHz /
+        // 1024), never the whole buffer.
+        let mut total = delivered;
+        for step in 1..=200u64 {
+            let now = start_ns + step * 5_000_000;
+            let target = direct_target_rtp(&state, now).unwrap();
+            total += take_ready(&mut state, target).len();
+        }
+        assert!(
+            (44..=50).contains(&total),
+            "1 s at 1x should release ~47 frames, got {total}"
+        );
+        assert!(!state.buffer.is_empty(), "pre-buffer must not be flushed at once");
+    }
+
+    #[test]
+    fn direct_anchor_ignores_the_senders_absolute_anchor() {
+        let mut state = playout_state();
+        state.direct_feed = true;
+        state.anchor_rtp = 9_999_999;
+        state.anchor_valid = true;
+        state.buffer.insert(5_000, vec![0.5; 4]);
+        state.buffered_f32 = 4;
+
+        let now = 1_000_000_000;
+        assert!(ensure_direct_anchor(&mut state, now));
+        let target = direct_target_rtp(&state, now).unwrap();
+        assert_eq!(state.direct_anchor_rtp, 5_000);
+        // Only the 40 ms local lead is present; the sender's 9_999_999 anchor
+        // must not shift the target.
+        assert_eq!(
+            target.saturating_sub(state.direct_anchor_rtp),
+            48_000 * 40 / 1_000,
+            "sender anchor must not shift the local target"
+        );
+    }
+
+    #[test]
+    fn direct_anchor_resets_when_earliest_frame_moves_backwards() {
+        let mut state = playout_state();
+        state.direct_feed = true;
+        state.buffer.insert(10_000, vec![0.5; 4]);
+        state.buffered_f32 = 4;
+        assert!(ensure_direct_anchor(&mut state, 111));
+        assert_eq!(state.direct_anchor_rtp, 10_000);
+
+        // Seek: a frame older than the anchor arrives.
+        state.buffer.insert(2_000, vec![0.5; 4]);
+        state.buffered_f32 += 4;
+        assert!(ensure_direct_anchor(&mut state, 222));
+        assert_eq!(state.direct_anchor_rtp, 2_000);
+        assert_eq!(state.direct_anchor_local_ns, 222u64.saturating_sub(40 * 1_000_000));
+    }
+
+    #[test]
+    fn direct_backlog_is_bounded_to_two_seconds() {
+        let mut state = playout_state();
+        state.direct_feed = true;
+        prebuffer_seconds(&mut state, 5);
+        let newest = *state.buffer.keys().next_back().unwrap();
+
+        let removed = trim_direct_backlog(&mut state);
+
+        assert!(removed > 0);
+        let oldest = *state.buffer.keys().next().unwrap();
+        assert!(
+            newest.saturating_sub(oldest) <= 48_000 * 2,
+            "backlog must shrink to at most two seconds"
+        );
+        assert_eq!(state.buffer.keys().next_back().copied(), Some(newest));
     }
 
     #[test]
@@ -1248,7 +1491,8 @@ mod tests {
         let local_to_master_offset = 90_000_000_000;
         clock.update(0x1122, local_now, local_to_master_offset, local_now);
 
-        let (mapping, discarded) = set_rate_anchor(&mut state, &clock, 240_000, 100_500_000_000, 0x1122, 0, 1, local_now);
+        let (mapping, discarded) =
+            set_rate_anchor(&mut state, &clock, 240_000, 100_500_000_000, 0x1122, 0, 1, local_now);
 
         assert_eq!(mapping, AnchorMapping::Ptp);
         assert_eq!(discarded, 0);
@@ -1320,8 +1564,15 @@ mod tests {
         // Advance in ~1/4-cycle steps so a few calls cross the 2^32 boundary
         // twice; each step is a plausible forward delta (reordering-safe).
         let steps = [
-            0u32, 0x4000_0000, 0x8000_0000, 0xC000_0000, 0x0000_0000, 0x4000_0000, 0x8000_0000,
-            0xC000_0000, 0x0000_0000,
+            0u32,
+            0x4000_0000,
+            0x8000_0000,
+            0xC000_0000,
+            0x0000_0000,
+            0x4000_0000,
+            0x8000_0000,
+            0xC000_0000,
+            0x0000_0000,
         ];
         assert_eq!(extender.extend(steps[0], 1_000_000), 0);
         let mut expected = 0u64;
@@ -1345,12 +1596,8 @@ mod tests {
         state.anchor_rtp = 0x8000_0000;
         state.anchor_local_ns = 10_000_000_000;
         state.anchor_valid = true;
-        state
-            .buffer
-            .insert(0x8000_1000, vec![0.0; 8]);
-        state
-            .buffer
-            .insert(0x8000_0F00, vec![0.0; 8]);
+        state.buffer.insert(0x8000_1000, vec![0.0; 8]);
+        state.buffer.insert(0x8000_0F00, vec![0.0; 8]);
         state.buffered_f32 = 16;
 
         // 100 ms later: the playout target is past both frames.
@@ -1395,8 +1642,16 @@ mod tests {
         state.anchor_valid = false;
         state.anchor_source = AnchorSource::None;
         state.rate = 0;
-        let (mapping, _) =
-            set_rate_anchor(&mut state, &clock, 240_000, 100_500_000_000, 0x9999, 0x1122, 1, local_now);
+        let (mapping, _) = set_rate_anchor(
+            &mut state,
+            &clock,
+            240_000,
+            100_500_000_000,
+            0x9999,
+            0x1122,
+            1,
+            local_now,
+        );
         assert_eq!(mapping, AnchorMapping::Ptp);
         assert_eq!(state.anchor_local_ns, 10_500_000_000);
 
@@ -1405,8 +1660,7 @@ mod tests {
         state.anchor_valid = false;
         state.anchor_source = AnchorSource::None;
         state.rate = 0;
-        let (mapping, _) =
-            set_rate_anchor(&mut state, &clock, 240_000, 100_500_000_000, 0x9999, 0, 1, local_now);
+        let (mapping, _) = set_rate_anchor(&mut state, &clock, 240_000, 100_500_000_000, 0x9999, 0, 1, local_now);
         assert_eq!(mapping, AnchorMapping::LocalFallback);
     }
 
@@ -1667,16 +1921,7 @@ mod tests {
             let _ = writer.shutdown().await;
         });
         let handler: Arc<dyn AudioHandler> = Arc::new(NoopHandler);
-        receive_loop(
-            reader,
-            &shk,
-            output_config,
-            &config,
-            &PtpClock::new(),
-            state,
-            &handler,
-        )
-        .await;
+        receive_loop(reader, &shk, output_config, &config, &PtpClock::new(), state, &handler).await;
     }
 
     fn test_state(rate: u32) -> Arc<(Mutex<PlayoutState>, Condvar)> {
@@ -1696,7 +1941,12 @@ mod tests {
     #[tokio::test]
     async fn decodes_buffered_alac_44k_16bit_stereo() {
         let shk = [7u8; 32];
-        let frames = [(0x0102u16, 0x1111u16), (0x7FFFu16, 0x8000u16), (0u16, 0xFFFFu16), (0x1234, 0x5678)];
+        let frames = [
+            (0x0102u16, 0x1111u16),
+            (0x7FFFu16, 0x8000u16),
+            (0u16, 0xFFFFu16),
+            (0x1234, 0x5678),
+        ];
         let payload = alac_stereo_frame_16(&frames);
         let packet = audio_packet(&shk, 1_000, AudioSsrc::Alac44100S16Stereo as u32, &payload);
         let config = BufferedSourceConfig {
@@ -1836,7 +2086,12 @@ mod tests {
     #[tokio::test]
     async fn unknown_ssrc_and_ssrc_none_packets_are_skipped_without_feeding_the_decoder() {
         let shk = [7u8; 32];
-        let frames = [(0x1111u16, 0x2222u16), (0x3333, 0x4444), (0x5555, 0x6666), (0x7777, 0x8888)];
+        let frames = [
+            (0x1111u16, 0x2222u16),
+            (0x3333, 0x4444),
+            (0x5555, 0x6666),
+            (0x7777, 0x8888),
+        ];
         let valid_payload = alac_stereo_frame_16(&frames);
         // A first packet with an unrecognized SSRC whose payload *would* decode
         // if it were fed to an ALAC decoder, then an SSRC_NONE control packet,

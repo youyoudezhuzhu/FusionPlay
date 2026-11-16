@@ -82,11 +82,12 @@ pub trait PcmOutput: Send + Sync {
 const OUTPUT_BACKLOG_MILLISECONDS: usize = 80;
 /// Android can briefly delay even a high-priority Oboe callback while the
 /// system changes routes, restores an AudioTrack, or schedules heavy UI work.
-/// 1.4.0 was the last release that produced audible AirPlay output on ColorOS
-/// with a 240 ms cushion; 1.4.1's 480 ms / 240 ms cushion (with a larger
-/// prefill) never primed on the same device, so keep the known-good values.
+/// 1.4.3 device logs (ColorOS, sender-paced Bilibili stream) showed frequent
+/// underruns with a 120/240 ms cushion while the AirPlay 2 protocol buffer is
+/// ~2 s, so spend 240 ms more locally: still far below the protocol latency and
+/// enough to absorb ColorOS callback jitter.
 #[cfg(target_os = "android")]
-const OUTPUT_BACKLOG_MILLISECONDS: usize = 240;
+const OUTPUT_BACKLOG_MILLISECONDS: usize = 480;
 /// Amount of decoded PCM collected before the platform output starts draining.
 ///
 /// AirPlay realtime audio arrives in short network packets. Starting from the
@@ -98,7 +99,7 @@ const OUTPUT_PREFILL_MILLISECONDS: usize = 40;
 /// A larger one-time/recovery fill prevents a short scheduling delay at the
 /// start of a connection from becoming a repeating fill/drain cycle.
 #[cfg(target_os = "android")]
-const OUTPUT_PREFILL_MILLISECONDS: usize = 120;
+const OUTPUT_PREFILL_MILLISECONDS: usize = 240;
 
 struct AudioBuffer {
     samples: VecDeque<f32>,
@@ -547,7 +548,10 @@ pub fn start_audio_external(
 ) -> Result<AudioRuntime> {
     const EXTERNAL_RATE: u32 = 48_000;
     const EXTERNAL_CHANNELS: u16 = 2;
-    let buffer = Arc::new(Mutex::new(AudioBuffer::new(EXTERNAL_RATE, EXTERNAL_CHANNELS)));
+    let buffer = Arc::new(Mutex::new(AudioBuffer::new(
+        EXTERNAL_RATE,
+        EXTERNAL_CHANNELS,
+    )));
     let gain_bits = Arc::new(AtomicU32::new(1.0_f32.to_bits()));
     let volume_db_bits = Arc::new(AtomicU32::new(0.0_f32.to_bits()));
     let pcm_received = Arc::new(AtomicU64::new(0));
@@ -607,7 +611,10 @@ pub fn start_audio_external(
 
     Ok(AudioRuntime {
         handler,
-        _stream: OutputHandle::External { stop, handle: Some(pump) },
+        _stream: OutputHandle::External {
+            stop,
+            handle: Some(pump),
+        },
         device_name: "统一音频引擎（fnOS）".to_owned(),
         device_id: "fusionplay-unified".to_owned(),
         sample_rate: EXTERNAL_RATE,
@@ -655,6 +662,7 @@ pub fn start_audio(
                 output_gain,
                 output_events,
                 sample_rate,
+                channels,
                 Arc::clone(&pcm_received_monitor),
                 Arc::clone(&lock_failures_monitor),
             );
@@ -733,6 +741,7 @@ fn manage_android_audio_output(
     gain_bits: Arc<AtomicU32>,
     events: Arc<EventSink>,
     sample_rate: u32,
+    channels: u16,
     pcm_received: Arc<AtomicU64>,
     buffer_lock_failures: Arc<AtomicU64>,
 ) {
@@ -762,7 +771,10 @@ fn manage_android_audio_output(
             Err(mpsc::RecvTimeoutError::Timeout) => {
                 // Rate-limited observability: report only when an underrun or
                 // a prefill restart actually happened since the last report.
-                let stats = buffer.lock().map(|buffer| buffer.stats()).unwrap_or_default();
+                let stats = buffer
+                    .lock()
+                    .map(|buffer| buffer.stats())
+                    .unwrap_or_default();
                 if stats.primed && !announced_start {
                     announced_start = true;
                     let message = format!(
@@ -780,9 +792,14 @@ fn manage_android_audio_output(
                 // producer or the consumer is the bottleneck.
                 if last_heartbeat.elapsed() >= std::time::Duration::from_secs(10) {
                     last_heartbeat = std::time::Instant::now();
+                    let interleaved_samples = pcm_received.load(Ordering::Relaxed);
+                    let pcm_frames = interleaved_samples / u64::from(channels.max(1));
+                    let audio_seconds = pcm_frames as f64 / sample_rate.max(1) as f64;
                     let message = format!(
-                        "Android 输出诊断：已收 PCM {} 采样，push {} 次，clear {} 次，锁失败 {} 次，underrun {}，预填充 {}，当前缓冲 {:.0} ms / 容量 {:.0} ms",
-                        pcm_received.load(Ordering::Relaxed),
+                        "Android 输出诊断：已收 PCM 交织采样 {}（{} 帧/声道，约 {:.1} 秒音频），push {} 次，clear {} 次，锁失败 {} 次，underrun {}，预填充 {}，当前缓冲 {:.0} ms / 容量 {:.0} ms",
+                        interleaved_samples,
+                        pcm_frames,
+                        audio_seconds,
                         stats.pushes,
                         stats.clears,
                         buffer_lock_failures.load(Ordering::Relaxed),
@@ -853,7 +870,10 @@ fn manage_android_audio_output(
                     });
                     break;
                 }
-                last_stats = buffer.lock().map(|buffer| buffer.stats()).unwrap_or_default();
+                last_stats = buffer
+                    .lock()
+                    .map(|buffer| buffer.stats())
+                    .unwrap_or_default();
             }
         }
     }
@@ -905,7 +925,9 @@ pub struct ReceiverAudioHandler {
     /// sender by `GET_PARAMETER volume` and updated by both the sender's
     /// `SET_PARAMETER volume` and the local UI volume.
     volume_db_bits: Arc<AtomicU32>,
-    /// Cumulative decoded PCM samples handed to the local output queue.
+    /// Cumulative decoded PCM **interleaved f32 samples** handed to the local
+    /// output queue. Frames/seconds are derived by dividing by channels and
+    /// the output sample rate; this is not a per-channel frame count.
     pcm_received: Arc<AtomicU64>,
     /// Times the output queue mutex could not be taken in `audio_process`.
     buffer_lock_failures: Arc<AtomicU64>,
@@ -1469,7 +1491,6 @@ fn progress_milliseconds(start: u32, current: u32, end: u32, timebase: u32) -> O
     ))
 }
 
-
 /// Report previously unseen DMAP tags (four-character tag + payload length)
 /// through the event log, once per tag per process.
 ///
@@ -1911,7 +1932,8 @@ struct ReceiverAudioSession {
     pcm_samples: Arc<AtomicU64>,
     /// Human-readable stream format for diagnostics.
     stream_label: String,
-    /// Cumulative decoded PCM samples handed to the output queue (all streams).
+    /// Cumulative decoded PCM **interleaved f32 samples** handed to the output
+    /// queue (all streams). Divide by output channels for per-channel frames.
     pcm_received: Arc<AtomicU64>,
     /// Times the output queue mutex could not be taken.
     buffer_lock_failures: Arc<AtomicU64>,
@@ -1922,13 +1944,13 @@ impl ReceiverAudioSession {
         if samples == 0 {
             return;
         }
-        let previous = self
-            .pcm_samples
-            .fetch_add(samples as u64, Ordering::AcqRel);
+        let previous = self.pcm_samples.fetch_add(samples as u64, Ordering::AcqRel);
         if previous == 0 {
             let message = format!(
-                "AirPlay 音频数据已开始输出：{}（首块 {} 个采样）",
-                self.stream_label, samples
+                "AirPlay 音频数据已开始输出：{}（首块 {} 个交织采样，约 {} 帧/声道）",
+                self.stream_label,
+                samples,
+                samples / self.output_channels.max(1)
             );
             self.events.emit(CoreEvent::Log {
                 level: "info",
@@ -2259,7 +2281,10 @@ mod tests {
             .filter(|message| message.contains("未知 DMAP 标签"))
             .collect();
         assert_eq!(messages.len(), 1, "unknown tag reported exactly once");
-        assert!(messages[0].contains("zzdiag(64)"), "tag+length must be logged");
+        assert!(
+            messages[0].contains("zzdiag(64)"),
+            "tag+length must be logged"
+        );
         assert!(
             !messages[0].contains("payload"),
             "no metadata content may be logged"
@@ -2478,7 +2503,10 @@ mod tests {
             .expect("UI volume must apply locally without a remote");
 
         let gain = f32::from_bits(handler.gain_bits.load(Ordering::Relaxed));
-        assert!((gain - 0.30).abs() < 0.001, "local gain must be 30%: {gain}");
+        assert!(
+            (gain - 0.30).abs() < 0.001,
+            "local gain must be 30%: {gain}"
+        );
         let db = f32::from_bits(handler.volume_db_bits.load(Ordering::Relaxed));
         assert!(
             (db - 20.0 * 0.30_f32.log10()).abs() < 0.002,
@@ -2548,8 +2576,14 @@ mod tests {
         handler.on_volume(-6.0);
 
         let db = f32::from_bits(handler.volume_db_bits.load(Ordering::Relaxed));
-        assert!((db + 6.0).abs() < 0.001, "sender volume must be remembered: {db}");
-        assert!((handler.volume() + 6.0).abs() < 0.001, "GET_PARAMETER volume must report it");
+        assert!(
+            (db + 6.0).abs() < 0.001,
+            "sender volume must be remembered: {db}"
+        );
+        assert!(
+            (handler.volume() + 6.0).abs() < 0.001,
+            "GET_PARAMETER volume must report it"
+        );
     }
 
     #[test]
@@ -2563,7 +2597,11 @@ mod tests {
             .filter(|event| event["type"] == "log")
             .filter_map(|event| event["message"].as_str().map(ToOwned::to_owned))
             .collect();
-        assert!(messages.iter().any(|message| message.contains("AAC decode failed")));
+        assert!(
+            messages
+                .iter()
+                .any(|message| message.contains("AAC decode failed"))
+        );
     }
 
     #[test]
