@@ -782,6 +782,11 @@ fn setup_stream_realtime(
     Some(())
 }
 
+/// Buffered-audio lead advertised to the sender, in compressed bytes.
+///
+/// ~2 s of AAC at 128–256 kbps (32–64 KB). See `setup_stream_buffered`.
+const BUFFERED_AUDIO_BUFFER_SIZE_BYTES: u64 = 0x1_0000;
+
 #[cfg(feature = "ap2")]
 /// Stream type 103 — buffered audio over TCP with a timed playout buffer.
 fn setup_stream_buffered(
@@ -814,6 +819,7 @@ fn setup_stream_buffered(
     tracing::info!(audio_port, "Buffered audio TCP port opened");
 
     let handler = conn.shared.handler.clone();
+    let diagnostic_handler = handler.clone();
     let output_config = crate::raop::buffered_audio::OutputConfig {
         sample_rate: conn.shared.output_sample_rate,
         max_channels: conn.shared.output_max_channels,
@@ -866,7 +872,22 @@ fn setup_stream_buffered(
     );
 
     stream_resp.insert("dataPort".into(), plist::Value::Integer(audio_port.into()));
-    stream_resp.insert("audioBufferSize".into(), plist::Value::Integer(0x10_0000_i64.into())); // 1 MB
+    // `audioBufferSize` tells the sender how much decoded-audio lead it may
+    // keep buffered. shairport-sync defaults to 8 MB, which lets senders dump
+    // minutes of audio ahead of real time; 1.4.3/1.4.4 logs show NetEase
+    // filling ~1 MB (~30 s of AAC) in a few seconds. 64 KB is roughly 2 s of
+    // compressed AAC, so the sender paces itself near real time while the
+    // receiver's local 240/480 ms cushion absorbs jitter.
+    stream_resp.insert(
+        "audioBufferSize".into(),
+        plist::Value::Integer(BUFFERED_AUDIO_BUFFER_SIZE_BYTES.into()),
+    );
+    diagnostic_handler.on_diagnostic(
+        "info",
+        &format!(
+            "AP2 SETUP(103)：dataPort={audio_port}，audioBufferSize={BUFFERED_AUDIO_BUFFER_SIZE_BYTES} 字节（约 2 s AAC，实验值）"
+        ),
+    );
     Some(())
 }
 
@@ -1178,9 +1199,24 @@ pub(crate) fn handle_flush_buffered(
             .and_then(|d| d.get("flushUntilSeq"))
             .and_then(|v| v.as_unsigned_integer())
             .unwrap_or(0) as u32;
-        tracing::debug!(from_seq, until_seq, "FLUSHBUFFERED");
+        // Apple also sends the authoritative RTP timestamps alongside the
+        // 23-bit sequence numbers; use them when present.
+        let from_ts = dict
+            .and_then(|d| d.get("flushFromTS"))
+            .and_then(|v| v.as_unsigned_integer())
+            .unwrap_or(0) as u32;
+        let until_ts = dict
+            .and_then(|d| d.get("flushUntilTS"))
+            .and_then(|v| v.as_unsigned_integer())
+            .unwrap_or(0) as u32;
+        tracing::debug!(from_seq, until_seq, from_ts, until_ts, "FLUSHBUFFERED");
         if let Some(cmd) = &conn.playout_cmd {
-            let _ = cmd.send(crate::raop::buffered_audio::PlayoutCommand::Flush { from_seq, until_seq });
+            let _ = cmd.send(crate::raop::buffered_audio::PlayoutCommand::Flush {
+                from_seq,
+                until_seq,
+                from_ts,
+                until_ts,
+            });
         }
     }
     None

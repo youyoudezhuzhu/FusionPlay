@@ -62,6 +62,22 @@ pub(crate) struct RaopConnection {
     pub(crate) eiv: Option<[u8; 16]>,
     #[cfg(feature = "hls")]
     pub(crate) hls_state: std::sync::Arc<std::sync::Mutex<crate::raop::hls::HlsState>>,
+    /// RTSP request counters exposed through rate-limited diagnostics so device
+    /// logs show the sender's actual request sequence (SETUP/RECORD/FLUSH/…).
+    pub(crate) rtsp_diag: RtspDiagnostics,
+}
+
+/// Per-connection RTSP request statistics (diagnostics only).
+#[derive(Debug, Default)]
+pub(crate) struct RtspDiagnostics {
+    /// Total requests seen on this connection.
+    pub(crate) total: u64,
+    /// Counts since the last diagnostic emission.
+    pub(crate) window: std::collections::BTreeMap<String, u64>,
+    /// Local timestamp of the last emission.
+    pub(crate) last_emit_ns: u64,
+    /// Description of the most recent request/response.
+    pub(crate) last: String,
 }
 
 /// Returns the connection's local IP address.
@@ -642,6 +658,7 @@ pub(crate) mod tests {
             eiv: None,
             #[cfg(feature = "hls")]
             hls_state: Arc::clone(&shared.hls_state),
+            rtsp_diag: Default::default(),
             shared,
         }
     }

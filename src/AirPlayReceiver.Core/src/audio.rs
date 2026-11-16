@@ -114,6 +114,8 @@ struct AudioBuffer {
     prefill_waits: u64,
     /// Number of successful producer pushes.
     pushes: u64,
+    /// Number of samples actually consumed by the output callback.
+    pops: u64,
     /// Number of times the queue was cleared (new stream / flush / restart).
     clears: u64,
     #[cfg_attr(not(any(target_os = "android", test)), allow(dead_code))]
@@ -134,6 +136,8 @@ struct AudioBufferStats {
     /// Producer pushes / queue clears since startup.
     pushes: u64,
     clears: u64,
+    /// Samples consumed by the output callback since startup.
+    pops: u64,
 }
 
 impl AudioBuffer {
@@ -166,6 +170,7 @@ impl AudioBuffer {
             underruns: 0,
             prefill_waits: 0,
             pushes: 0,
+            pops: 0,
             clears: 0,
             channels,
         }
@@ -206,7 +211,10 @@ impl AudioBuffer {
             self.waiting_for_prefill = false;
         }
         match self.samples.pop_front() {
-            Some(sample) => sample,
+            Some(sample) => {
+                self.pops = self.pops.saturating_add(1);
+                sample
+            }
             None => {
                 // Ran dry while audible: the next output resumes only after the
                 // full prefill cushion has been rebuilt.
@@ -235,6 +243,7 @@ impl AudioBuffer {
             primed: self.primed,
             pushes: self.pushes,
             clears: self.clears,
+            pops: self.pops,
         }
     }
 }
@@ -765,6 +774,9 @@ fn manage_android_audio_output(
     let mut last_stats = AudioBufferStats::default();
     let mut announced_start = false;
     let mut last_heartbeat = std::time::Instant::now();
+    let mut prev_pcm_samples: u64 = 0;
+    let mut prev_pushes: u64 = 0;
+    let mut prev_pops: u64 = 0;
     loop {
         let command = match receiver.recv_timeout(Duration::from_secs(2)) {
             Ok(command) => command,
@@ -791,16 +803,31 @@ fn manage_android_audio_output(
                 // local queue (push count / total samples) and whether the
                 // producer or the consumer is the bottleneck.
                 if last_heartbeat.elapsed() >= std::time::Duration::from_secs(10) {
+                    let elapsed = last_heartbeat.elapsed().as_secs_f64().max(0.001);
                     last_heartbeat = std::time::Instant::now();
                     let interleaved_samples = pcm_received.load(Ordering::Relaxed);
                     let pcm_frames = interleaved_samples / u64::from(channels.max(1));
                     let audio_seconds = pcm_frames as f64 / sample_rate.max(1) as f64;
+                    // Per-second rates distinguish "producer starved", "consumer
+                    // too fast" and "bursty delivery" in the next device log.
+                    let pcm_rate = interleaved_samples.saturating_sub(prev_pcm_samples) as f64 / elapsed;
+                    let push_rate = stats.pushes.saturating_sub(prev_pushes) as f64 / elapsed;
+                    let pop_rate = stats.pops.saturating_sub(prev_pops) as f64 / elapsed;
+                    prev_pcm_samples = interleaved_samples;
+                    prev_pushes = stats.pushes;
+                    prev_pops = stats.pops;
+                    let expected_rate = f64::from(sample_rate) * f64::from(channels.max(1));
                     let message = format!(
-                        "Android 输出诊断：已收 PCM 交织采样 {}（{} 帧/声道，约 {:.1} 秒音频），push {} 次，clear {} 次，锁失败 {} 次，underrun {}，预填充 {}，当前缓冲 {:.0} ms / 容量 {:.0} ms",
+                        "Android 输出诊断：已收 PCM 交织采样 {}（{} 帧/声道，约 {:.1} 秒音频，最近 {:.0}/s，期望≈{:.0}/s），push {} 次（{:.1}/s），pop {} 采样（{:.0}/s），clear {} 次，锁失败 {} 次，underrun {}，预填充 {}，当前缓冲 {:.0} ms / 容量 {:.0} ms",
                         interleaved_samples,
                         pcm_frames,
                         audio_seconds,
+                        pcm_rate,
+                        expected_rate,
                         stats.pushes,
+                        push_rate,
+                        stats.pops,
+                        pop_rate,
                         stats.clears,
                         buffer_lock_failures.load(Ordering::Relaxed),
                         stats.underruns,

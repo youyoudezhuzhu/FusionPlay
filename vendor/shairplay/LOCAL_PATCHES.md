@@ -240,3 +240,33 @@ MediaRemote 不是公开的 AirPlay 2 API。本实现参考了 2026 年 2 月公
   后可继续按 1x 播放。若 sender 在填满其 1 MB 预缓冲后仍需反馈才继续，下一步应
   发送 RTCP RR/或调小 SETUP 回复中的 `audioBufferSize`（当前 0x100000），再用日志
   确认 sender 是否继续按 1x 发包。
+
+## 2026-11 Android 1.4.4 复盘：paced direct 仍不可听
+
+1.4.4 实机日志（`/tmp/fplogs7`，OPPO PKJ110）显示 paced direct 已运行
+（`模式=direct-paced`，窗口采样率 96–128k f32/s），但用户仍听不到正常声音：
+- 12:22:17 输出开始，12:22:19 心跳已收 497088 交织采样（≈5.2 s 音频，2.4 s 内），
+  underrun 1、缓冲 0；
+- 12:22:22 播放诊断：待播 96967 帧，`backlog 丢弃 1417 块`（≈35 s 音频被裁掉），
+  锚点本地偏移 4825 ms；
+- 随后 sender 频繁 PAUSE / FLUSHBUFFERED / stream 重建（12:22:25/27/28/29/54、12:23:13），
+  `clear` 次数持续增长，用户听到的仍是断续/无声。
+- 根因分析：
+  1. 1.4.3 引入的 direct 模式在“发送端一次性预缓冲远大于实时”（网易云约 35 s/5 s）
+     时，`trim_direct_backlog` 只删旧帧、**没有把 paced 锚点前移**，target 仍停在旧帧
+     位置，导致长时间没有 due 帧（本轮已修：`paced_direct_ready` 检测 lead > 5 s 时
+     快进到最新 2 s 并重锚）。
+  2. `audioBufferSize=0x100000`（1 MB，约 30–35 s AAC）让发送端按“1 MB lead”灌数据，
+     网易云因此先灌满再停发；shairport-sync 默认是 8 MB（并非 1 MB），说明该字段是
+     发送端缓冲 lead 的提示值。低风险实验：改为 64 KB（≈2 s AAC），让发送端接近
+     实时节奏；日志新增 SETUP 诊断行。
+  3. FLUSHBUFFERED 处理错误：旧代码把 `flushFromSeq/flushUntilSeq` 当 RTP 时间戳低
+     32 位比较；Apple 实际发送 23-bit 序列号 + `flushFromTS/flushUntilTS`（shairport
+     解析 4 个字段并把 seq & 0x7FFFFF）。现在优先用 TS（可扩展到 64-bit 时间线），
+     无 TS 才用 23-bit seq→timestamp 映射，无法映射则忽略。
+  4. RTSP 方向缺少诊断：新增每连接请求统计（SETUP/RECORD/FLUSHBUFFERED/
+     SETRATEANCHORTIME/feedback/TEARDOWN 等计数 + 最后请求 CSeq/状态），每 5 s 写入
+     core 日志；可确认 sender 是否真的主动 PAUSE/停止。
+  5. Android 输出增加 pop 速率诊断：心跳同时给出已收 PCM/s、push/s、pop/s（期望
+     pop≈采样率×声道≈96000 f32/s）、underrun、缓冲，用于区分“consumer 过快/过快消费”
+     与“producer 突发”。

@@ -56,6 +56,10 @@ const MAX_SEQ_HISTORY: usize = 4_096;
 /// a little tolerance without changing the 1x long-term rate.
 const DIRECT_FEED_LEAD_MILLIS: u64 = 40;
 
+/// Lead (in source-clock seconds) above which a sender burst is fast-forwarded
+/// instead of played out from the oldest buffered frame.
+const DIRECT_FAST_FORWARD_LEAD_SECONDS: u64 = 5;
+
 #[derive(Debug, Clone)]
 /// Output configuration passed from the server builder.
 pub(crate) struct OutputConfig {
@@ -117,11 +121,20 @@ pub enum PlayoutCommand {
     /// Resume the existing stream, re-anchoring to the earliest buffered frame.
     Resume,
     /// Flush buffered frames in the given RTP timestamp range.
+    ///
+    /// Apple's FLUSHBUFFERED body carries both 23-bit sequence numbers and RTP
+    /// timestamps (`flushFromTS`/`flushUntilTS`). The timestamps are the
+    /// authoritative boundary; the sequence numbers are only a fallback when
+    /// the sender omitted the timestamps.
     Flush {
-        /// First timestamp to flush.
+        /// 23-bit RTP sequence number to flush from (0 = unbounded).
         from_seq: u32,
-        /// Last timestamp to flush.
+        /// 23-bit RTP sequence number to flush until (0 = unbounded).
         until_seq: u32,
+        /// RTP timestamp to flush from (0 = not provided).
+        from_ts: u32,
+        /// RTP timestamp to flush until (0 = not provided).
+        until_ts: u32,
     },
     /// Stop playback and tear down.
     Stop,
@@ -213,8 +226,8 @@ struct PlayoutState {
     format_changed: bool,
     /// See [`BufferedSourceConfig::direct_feed`].
     direct_feed: bool,
-    /// sequence number → extended RTP timestamp of packets seen recently.
-    seq_history: VecDeque<(u16, u64)>,
+    /// 23-bit RTP sequence number → extended RTP timestamp of packets seen recently.
+    seq_history: VecDeque<(u32, u64)>,
     /// Diagnostics: FLUSH commands applied and frames they removed.
     flushes: u64,
     flushed_frames: u64,
@@ -331,14 +344,11 @@ fn resume_playout(state: &mut PlayoutState) {
     }
 }
 
-/// Whether a 16-bit RTP sequence number falls inside `from..=until`, handling
-/// wraparound.
-fn seq_in_range(seq: u16, from: u16, until: u16) -> bool {
-    if from <= until {
-        seq >= from && seq <= until
-    } else {
-        seq >= from || seq <= until
-    }
+/// Whether a 23-bit RTP sequence number falls inside `from..=until`, handling
+/// wraparound of Apple's 23-bit buffered-audio sequence space.
+fn seq_in_range(seq: u32, from: u32, until: u32) -> bool {
+    const MASK: u32 = 0x7F_FFFF;
+    (seq.wrapping_sub(from) & MASK) <= (until.wrapping_sub(from) & MASK)
 }
 
 fn anchor_first_resumed_packet(state: &mut PlayoutState, timestamp: u64) {
@@ -593,6 +603,44 @@ fn trim_direct_backlog(state: &mut PlayoutState) -> usize {
     removed
 }
 
+/// Frames due now for paced direct feed, fast-forwarding through sender bursts.
+///
+/// A sender may fill the advertised buffer in a fraction of real time (NetEase
+/// 1.4.3/1.4.4 logs: ~35 s of AAC in ~5 s). Keeping the paced target anchored to
+/// the *oldest* frame would then stall playback for the whole burst, so when the
+/// buffered lead exceeds `FAST_FORWARD_LEAD_SECONDS` we keep the newest two
+/// seconds and re-anchor there.
+fn paced_direct_ready(state: &mut PlayoutState, local_now_ns: u64) -> Vec<(u64, Vec<f32>)> {
+    if state.buffer.is_empty() {
+        state.direct_anchor_valid = false;
+        return Vec::new();
+    }
+    ensure_direct_anchor(state, local_now_ns);
+
+    if let Some(&newest) = state.buffer.keys().next_back() {
+        let target = direct_target_rtp(state, local_now_ns).unwrap_or(newest);
+        let lead_frames = newest.saturating_sub(target);
+        let fast_forward_limit =
+            u64::from(state.rtp_clock_rate) * DIRECT_FAST_FORWARD_LEAD_SECONDS;
+        if lead_frames > fast_forward_limit {
+            let removed = trim_direct_backlog(state);
+            state.direct_dropped_frames = state.direct_dropped_frames.saturating_add(removed as u64);
+            if let Some(&earliest) = state.buffer.keys().next()
+                && earliest > target
+            {
+                let lead_ns = DIRECT_FEED_LEAD_MILLIS * 1_000_000;
+                state.direct_anchor_rtp = earliest;
+                state.direct_anchor_local_ns = local_now_ns.saturating_sub(lead_ns);
+            }
+        }
+    }
+
+    let Some(target) = direct_target_rtp(state, local_now_ns) else {
+        return Vec::new();
+    };
+    take_ready(state, target)
+}
+
 /// TCP listener for buffered audio. Binds a port and spawns the processing pipeline.
 pub(crate) struct BufferedAudioProcessor {
     /// TCP listener waiting for the iPhone to connect.
@@ -758,33 +806,70 @@ impl BufferedAudioProcessor {
                         }
                         cvar.notify_all();
                     }
-                    PlayoutCommand::Flush { from_seq, until_seq } => {
-                        // FLUSHBUFFERED carries RTP **sequence numbers**, while the
-                        // playout buffer is keyed by RTP timestamps. Map the range
-                        // through the packet history; comparing raw values used to
-                        // delete whole buffers or nothing at all.
-                        let from_seq = from_seq as u16;
-                        let until_seq = until_seq as u16;
-                        let mapped: Vec<u64> = s
-                            .seq_history
-                            .iter()
-                            .filter(|(seq, _)| seq_in_range(*seq, from_seq, until_seq))
-                            .map(|(_, ts)| *ts)
-                            .collect();
-                        let removed = if let (Some(min), Some(max)) = (mapped.iter().min(), mapped.iter().max()) {
-                            let keys: Vec<u64> = s.buffer.range(*min..=*max).map(|(ts, _)| *ts).collect();
+                    PlayoutCommand::Flush {
+                        from_seq,
+                        until_seq,
+                        from_ts,
+                        until_ts,
+                    } => {
+                        // Apple's FLUSHBUFFERED carries 23-bit sequence numbers *and*
+                        // RTP timestamps. Prefer the timestamps (extended onto our
+                        // wrap-aware timeline); sequence numbers are only a fallback.
+                        let max_backward =
+                            s.rtp_clock_rate.saturating_mul(TIMELINE_REBASE_SECONDS);
+                        let ts_bounds = (until_ts != 0).then(|| {
+                            let until_ext = s.timestamps.extend(until_ts, max_backward);
+                            let from_ext = (from_ts != 0)
+                                .then(|| s.timestamps.extend(from_ts, max_backward));
+                            (from_ext, until_ext)
+                        });
+                        let matched: usize;
+                        let removed = if let Some((from_ext, until_ext)) = ts_bounds {
+                            let keys: Vec<u64> = s
+                                .buffer
+                                .range(..=until_ext)
+                                .map(|(ts, _)| *ts)
+                                .filter(|ts| from_ext.is_none_or(|from| *ts >= from))
+                                .collect();
+                            matched = keys.len();
                             let mut removed = 0usize;
                             for k in keys {
                                 if let Some(data) = s.buffer.remove(&k) {
-                                    s.buffered_f32 = s.buffered_f32.saturating_sub(data.len());
+                                    s.buffered_f32 =
+                                        s.buffered_f32.saturating_sub(data.len());
                                     removed += 1;
                                 }
                             }
                             removed
                         } else {
-                            // The range could not be mapped to buffered timestamps:
-                            // never interpret sequence numbers as timestamps.
-                            0
+                            let from_seq = from_seq & 0x7F_FFFF;
+                            let until_seq = until_seq & 0x7F_FFFF;
+                            let mapped: Vec<u64> = s
+                                .seq_history
+                                .iter()
+                                .filter(|(seq, _)| seq_in_range(*seq, from_seq, until_seq))
+                                .map(|(_, ts)| *ts)
+                                .collect();
+                            matched = mapped.len();
+                            if let (Some(min), Some(max)) =
+                                (mapped.iter().min(), mapped.iter().max())
+                            {
+                                let keys: Vec<u64> =
+                                    s.buffer.range(*min..=*max).map(|(ts, _)| *ts).collect();
+                                let mut removed = 0usize;
+                                for k in keys {
+                                    if let Some(data) = s.buffer.remove(&k) {
+                                        s.buffered_f32 =
+                                            s.buffered_f32.saturating_sub(data.len());
+                                        removed += 1;
+                                    }
+                                }
+                                removed
+                            } else {
+                                // Unmappable flush: never treat raw sequence values as
+                                // timestamps (the 1.4.x bug).
+                                0
+                            }
                         };
                         s.flushes = s.flushes.saturating_add(1);
                         s.flushed_frames = s.flushed_frames.saturating_add(removed as u64);
@@ -794,12 +879,13 @@ impl BufferedAudioProcessor {
                             // range instead of waiting for the target to catch up.
                             s.direct_anchor_valid = false;
                         }
-                        debug!(from_seq, until_seq, removed, mapped = mapped.len(), "Flushed");
+                        debug!(
+                            from_seq, until_seq, from_ts, until_ts, removed, matched, "Flushed"
+                        );
                         handler3.on_diagnostic(
                             "info",
                             &format!(
-                                "AirPlay FLUSH：seq {from_seq}..{until_seq}，匹配到 {} 个已收包，删除 {removed} 帧缓冲",
-                                mapped.len()
+                                "AirPlay FLUSH：seq {from_seq}..{until_seq}、ts {from_ts}..{until_ts}，映射/命中 {matched} 帧，删除 {removed} 帧缓冲"
                             ),
                         );
                         cvar.notify_all();
@@ -919,7 +1005,9 @@ async fn receive_loop<R: tokio::io::AsyncRead + Unpin>(
             continue;
         }
 
-        let seq = u16::from_be_bytes([packet[2], packet[3]]);
+        // Apple's buffered-audio RTP header stores a flag byte followed by a
+        // 23-bit sequence number; the low 16 bits alone are not enough.
+        let seq = u32::from_be_bytes([packet[0], packet[1], packet[2], packet[3]]) & 0x7F_FFFF;
         let timestamp = u32::from_be_bytes([packet[4], packet[5], packet[6], packet[7]]);
         let ssrc_val = u32::from_be_bytes([packet[8], packet[9], packet[10], packet[11]]);
         let ssrc = AudioSsrc::from_u32(ssrc_val);
@@ -1172,19 +1260,8 @@ fn delivery_loop(
                 s = guard;
                 continue;
             }
-            // Paced direct feed: anchor to the earliest buffered frame locally
-            // (the sender's absolute SETRATEANCHORTIME anchor is unusable
-            // without PTP) and release frames at 1x from that anchor.
-            let now = now_ns();
-            ensure_direct_anchor(&mut s, now);
-            let dropped = trim_direct_backlog(&mut s);
-            if dropped != 0 {
-                s.direct_dropped_frames = s.direct_dropped_frames.saturating_add(dropped as u64);
-                debug!(dropped, "Direct feed trimmed backlog to bound latency");
-            }
-            direct_target_rtp(&s, now)
-                .map(|target| take_ready(&mut s, target))
-                .unwrap_or_default()
+            // Paced direct feed: local 1x anchor plus burst fast-forwarding.
+            paced_direct_ready(&mut s, now_ns())
         } else {
             if s.rate == 0 || !s.anchor_valid || s.buffer.is_empty() {
                 let (guard, _) = cvar
@@ -1263,8 +1340,8 @@ mod tests {
     use super::{
         AnchorMapping, AnchorSource, BufferedDecoder, BufferedSourceConfig, DEFAULT_ALAC_FRAME_LENGTH, OutputConfig,
         PlayoutState, TimestampExtender, anchor_first_resumed_packet, direct_target_rtp, ensure_direct_anchor,
-        pause_playout, playout_target_rtp, receive_loop, refresh_rtcp_anchor, resume_playout, set_rate_anchor,
-        take_ready, trim_direct_backlog,
+        paced_direct_ready, pause_playout, playout_target_rtp, receive_loop, refresh_rtcp_anchor,
+        resume_playout, set_rate_anchor, take_ready, trim_direct_backlog,
     };
     use crate::codec::aac::AudioSsrc;
     use crate::net::ptp::PtpClock;
@@ -1402,6 +1479,54 @@ mod tests {
         assert!(ensure_direct_anchor(&mut state, 222));
         assert_eq!(state.direct_anchor_rtp, 2_000);
         assert_eq!(state.direct_anchor_local_ns, 222u64.saturating_sub(40 * 1_000_000));
+    }
+
+    /// A ~35 s sender burst must be fast-forwarded to the newest ~2 s instead of
+    /// stalling the paced target behind it (1.4.4 device symptom).
+    #[test]
+    fn paced_direct_fast_forwards_a_large_sender_burst() {
+        let mut state = playout_state();
+        state.direct_feed = true;
+        prebuffer_seconds(&mut state, 35);
+
+        let start_ns = 1_000_000_000;
+        let first = paced_direct_ready(&mut state, start_ns);
+        // Fast-forward discards the stale burst and re-anchors to the newest
+        // ~2 s; only the 40 ms lead is released immediately.
+        assert!(
+            (1..=3).contains(&first.len()),
+            "immediate release must stay inside the lead, got {} frames",
+            first.len()
+        );
+        assert!(
+            state.direct_dropped_frames > 1_000,
+            "the ~33 s stale burst must be dropped, got {}",
+            state.direct_dropped_frames
+        );
+        assert!(
+            !state.buffer.is_empty(),
+            "the newest ~2 s must remain buffered"
+        );
+
+        // After fast-forwarding, delivery continues at 1x: ~47 frames in 1 s.
+        let mut delivered = first.len();
+        for step in 1..=200u64 {
+            let now = start_ns + step * 5_000_000; // 5 ms steps → 1 s
+            delivered += paced_direct_ready(&mut state, now).len();
+        }
+        assert!(
+            (44..=52).contains(&delivered),
+            "1x after fast-forward should release ~47 frames in 1 s, total {delivered}"
+        );
+    }
+
+    #[test]
+    fn paced_direct_without_frames_invalidates_the_anchor() {
+        let mut state = playout_state();
+        state.direct_feed = true;
+        state.direct_anchor_valid = true;
+        assert!(paced_direct_ready(&mut state, 5_000).is_empty());
+        assert!(!state.direct_anchor_valid);
     }
 
     #[test]

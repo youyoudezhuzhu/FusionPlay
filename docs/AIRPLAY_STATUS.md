@@ -6,9 +6,10 @@
 >
 > 基线：本轮 AirPlay 深入改造前的 **Android 1.3.5（commit `b42984c`）**。
 > 如果你所说的“原版”是更早的 1.2.3 开源版本，可以用文末的 git 命令查看更早差异。
-> 当前代码：`main`，最新 release `android-v1.4.4`（2026-11-16）。
-> **注意：1.4.4 已包含 paced direct + 480/240ms 缓冲，但尚未经过 iPhone 真机验证，
-> 不能宣称 AirPlay 2 已彻底解决；请以 1.4.4 实机日志为准。**
+> 当前代码：`main`，最新 release `android-v1.4.5`（2026-11-16）。
+> **注意：1.4.4 已实测仍“约 2 秒破音后无声”，未解决；1.4.5 修复了 burst 后锚点
+> 未前移的 bug，并做 64KB audioBufferSize 实验，但尚未经过 iPhone 真机验证，
+> 不能宣称 AirPlay 2 已彻底解决；请以 1.4.5 实机日志为准。**
 
 ## 1. 一句话结论
 
@@ -182,8 +183,10 @@
 | 1.4.2 | `c105434` | AAC ADTS/raw、接收端音量、Oboe 回退、诊断、12.4MB | PCM 解码成功但本地缓冲只有首帧/0ms |
 | 1.4.3 | `2ac80cb` | direct-feed 绕过 anchor、FLUSH seq 映射、诊断 | PCM 流动、输出开始，但**无节奏 direct-feed 导致溢出/欠载** |
 
-1.4.4 已包含 **paced direct-feed** 修复：把 direct-feed 改成按本地 RTP 锚点
-1x 投递，并把 Android 缓冲调到 480/240ms。该修复只经过单元测试，尚未真机验证。
+1.4.5 已包含 **paced direct-feed** 修复：把 direct-feed 改成按本地 RTP 锚点
+1x 投递，并把 Android 缓冲调到 480/240ms；同时修复 burst 裁剪后锚点未前移的问题，
+并将 SETUP(103) 的 `audioBufferSize` 实验性改为 64KB。该修复只经过单元测试，
+尚未真机验证。
 
 ## 5. 当前真机现象（1.4.3，2026-11-16 多 App 对比）
 
@@ -239,7 +242,49 @@
   3. **sender 的 PAUSE / FLUSH / stream 重建** 在网易云段明显更多；需要区分“发送端真的暂停”与“我们误处理 FLUSH/RTSP”，目前日志只能确认发生了这些事件，不能证明是谁先发起。
 - 因此不能得出结论“哔哩哔哩能用，所以 AirPlay 已经没问题”；它只是发送节奏恰好接近 direct-feed 的假设。
 
+### 5.4 1.4.4 复盘（paced 仍未生效）
+
+1.4.4 日志（`/tmp/fplogs7`，OPPO PKJ110，12:22 段）显示 paced direct 已运行，但：
+
+```
+12:22:19 已收 497088 交织采样（5.2s 音频）/ 2.4s 墙钟，underrun 1，缓冲 0
+12:22:22 direct-paced，待播 96967 帧，锚点本地偏移 4825ms，backlog 丢弃 1417 块
+12:22:25 起 sender PAUSE / FLUSHBUFFERED / stream 重建
+```
+
+直接原因：网易云约 35s AAC 在约 5s 内到达，`trim_direct_backlog` 删掉了旧 burst，
+但 `direct_anchor_rtp` 仍指向已删除的旧帧，target 长期落后于缓冲头，没有 due 帧。
+所以 1.4.4 的“paced”逻辑在真机上等于停摆。
+
+1.4.5 修复：
+- `paced_direct_ready()`：当 `newest - target > 5s` 时快进，只保留最新 2s 并把本地
+  锚点前移到新缓冲头，之后恢复 1x；单测覆盖 35s burst。
+- `audioBufferSize` 1MB → 64KB（约 2s AAC，实验值），减少发送端一次性预发送。
+- FLUSH 优先使用 `flushFromTS/flushUntilTS`；无 TS 时用 23-bit 序列号映射。
+- RTSP 方向诊断 + AudioBuffer push/pop 速率，用于确认 sender 停发 vs 本地消费过快。
+
 ## 6. 已知根因/未决问题
+### 5.4 1.4.4 复盘（paced 仍未生效）
+
+1.4.4 日志（`/tmp/fplogs7`，OPPO PKJ110，12:22 段）显示 paced direct 已运行，但：
+
+```
+12:22:19 已收 497088 交织采样（5.2s 音频）/ 2.4s 墙钟，underrun 1，缓冲 0
+12:22:22 direct-paced，待播 96967 帧，锚点本地偏移 4825ms，backlog 丢弃 1417 块
+12:22:25 起 sender PAUSE / FLUSHBUFFERED / stream 重建
+```
+
+直接原因：网易云约 35s AAC 在约 5s 内到达，`trim_direct_backlog` 删掉了旧 burst，
+但 `direct_anchor_rtp` 仍指向已删除的旧帧，target 长期落后于缓冲头，没有 due 帧。
+所以 1.4.4 的“paced”逻辑在真机上等于停摆。
+
+1.4.5 修复：
+- `paced_direct_ready()`：当 `newest - target > 5s` 时快进，只保留最新 2s 并把本地
+  锚点前移到新缓冲头，之后恢复 1x；单测覆盖 35s burst。
+- `audioBufferSize` 1MB → 64KB（约 2s AAC，实验值），减少发送端一次性预发送。
+- FLUSH 优先使用 `flushFromTS/flushUntilTS`；无 TS 时用 23-bit 序列号映射。
+- RTSP 方向诊断 + AudioBuffer push/pop 速率，用于确认 sender 停发 vs 本地消费过快。
+
 ## 6. 已知根因/未决问题
 
 1. **direct-feed 无节奏（已实现修复，待真机验证）**
@@ -384,6 +429,6 @@ git diff 58129cc..HEAD -- vendor/shairplay/src src/AirPlayReceiver.Core/src/audi
 - APK：`FusionPlay-Android-1.4.3.apk`，约 12.4MB，arm64-v8a
 - 更新清单：`updates/android/stable.json` / GitHub Pages
 - 1.4.3 包含旧的 direct-feed，节奏问题未修完。
-- 1.4.4 已包含 paced direct + 480/240ms 缓冲，但**尚未经过 iPhone 真机验证**；
-  请用网易云音乐和哔哩哔哩各连续测试 10 分钟，
+- 1.4.5 已包含 burst 重锚 + paced direct + 480/240ms 缓冲 + 64KB audioBufferSize
+  实验，但**尚未经过 iPhone 真机验证**；请用网易云音乐和哔哩哔哩各连续测试 10 分钟，
   重点看 underrun、缓冲是否稳定、网易云是否仍 2 秒断流，再谈音量/歌词。

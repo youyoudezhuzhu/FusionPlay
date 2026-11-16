@@ -269,7 +269,66 @@ pub(crate) fn dispatch(conn: &mut RaopConnection, request: &HttpRequest) -> Http
         }
     };
     response.finish(response_data.as_deref());
+    record_rtsp_request(conn, method, url, cseq, &response);
     response
+}
+
+/// Human-readable request key for diagnostics (separates POST endpoints).
+fn rtsp_diagnostic_key(method: &str, url: &str) -> String {
+    let path = url.split('?').next().unwrap_or(url);
+    match method {
+        "POST" | "GET" => format!("{method} {path}"),
+        other => other.to_owned(),
+    }
+}
+
+/// Wall-clock nanoseconds used only for diagnostic rate limiting.
+fn diagnostic_now_ns() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos() as u64
+}
+
+/// Count one RTSP request and, at most every 5 s, report the request mix (the
+/// sender's real sequence: SETUP / RECORD / FLUSHBUFFERED / SETRATEANCHORTIME /
+/// feedback / TEARDOWN) to the exported core log.
+fn record_rtsp_request(
+    conn: &mut RaopConnection,
+    method: &str,
+    url: &str,
+    cseq: &str,
+    response: &HttpResponse,
+) {
+    let now = diagnostic_now_ns();
+    conn.rtsp_diag.total = conn.rtsp_diag.total.saturating_add(1);
+    let key = rtsp_diagnostic_key(method, url);
+    *conn.rtsp_diag.window.entry(key).or_default() += 1;
+    conn.rtsp_diag.last = format!(
+        "{method} {url} CSeq={cseq} → {}",
+        response.status_code()
+    );
+    if now.saturating_sub(conn.rtsp_diag.last_emit_ns) < 5_000_000_000 {
+        return;
+    }
+    conn.rtsp_diag.last_emit_ns = now;
+    let window = std::mem::take(&mut conn.rtsp_diag.window);
+    let mut parts: Vec<String> = window
+        .into_iter()
+        .map(|(key, count)| format!("{key}×{count}"))
+        .collect();
+    parts.sort();
+    let message = format!(
+        "RTSP 接收诊断：累计 {} 个请求；最近窗口：{}；最后：{}",
+        conn.rtsp_diag.total,
+        if parts.is_empty() {
+            "无".to_owned()
+        } else {
+            parts.join("，")
+        },
+        conn.rtsp_diag.last
+    );
+    conn.shared.handler.on_diagnostic("info", &message);
 }
 
 fn is_hls_http_endpoint(url: &str) -> bool {

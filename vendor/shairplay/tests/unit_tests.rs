@@ -613,6 +613,8 @@ mod playout_tests {
         let _ = PlayoutCommand::Flush {
             from_seq: 0,
             until_seq: 100,
+            from_ts: 0,
+            until_ts: 300_000,
         };
         let _ = PlayoutCommand::Stop;
     }

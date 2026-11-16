@@ -273,6 +273,7 @@ impl HttpdCallbacks for RaopShared {
             eiv: None,
             #[cfg(feature = "hls")]
             hls_state: Arc::clone(&self.hls_state),
+            rtsp_diag: Default::default(),
             close_handle,
             shared: self.clone(),
         };

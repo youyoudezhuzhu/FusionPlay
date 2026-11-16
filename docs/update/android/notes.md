@@ -1,27 +1,34 @@
-## FusionPlay Android 1.4.4
+## FusionPlay Android 1.4.5
 
-### AirPlay 2 播放调度修复（需要真机验证）
+### 1.4.4 复盘
 
-- 1.4.3 的 direct-feed 会把发送端提前送到的 PCM 一次性塞进 240ms 本地缓冲：
-  网易云音乐约 2 秒破音后无声，哔哩哔哩频繁 underrun/偶发破音。
-- 1.4.4 改为 **paced direct**：按本地 RTP 时间轴 1x 投递，只送“到时间”的帧，不再一次清空；
-  发送端一次预发送超过 2 秒时只保留最近 2 秒，避免延迟无限增长。
-- 暂停/恢复、FLUSH、seek、新 stream 都会正确维护/重置时间轴。
-- Android 本地缓冲从 120/240ms 调到 **240/480ms**，Oboe 保持 LowLatency；总延迟约 2.2–2.5s。
-- 日志现在明确区分“交织采样 / 帧/声道 / 音频秒数”，并保留 underrun、push、clear、待播帧、锚点偏移诊断。
+1.4.4 的 paced direct 已经在跑，但网易云仍“约 2 秒破音后无声”。日志确认：
+- 网易云约 35 秒 AAC 在约 5 秒内突发到达；
+- 旧实现 `trim_direct_backlog` 删除旧帧后，**播放锚点仍停在已删除的旧帧位置**，target 长期追不上缓冲头，于是没有 due 帧；
+- 所以 1.4.4 的节奏修复没有真正生效。
+
+### 1.4.5 修复
+
+- **burst 快进 + 重锚**：当缓冲最新帧领先 target 超过 5 秒时，丢弃旧 burst、只保留最新约 2 秒，并把本地锚点前移到新缓冲头；之后恢复 1x 投递。单元测试覆盖 35 秒突发。
+- **`audioBufferSize` 实验**：SETUP(103) 从 1MB 改为 **64KB（约 2 秒 AAC）**，让发送端不要一次灌几十秒；SETUP 诊断会打印实际值。若某发送端因此不工作，可回退到 1MB。
+- **FLUSHBUFFERED 正确解析**：优先使用 `flushFromTS/flushUntilTS`（RTP 时间戳），没有时再用 23-bit 序列号映射；RTP 序列号按前 4 字节 &0x7FFFFF 解析。
+- **RTSP 方向诊断**：每 5 秒记录 SETUP/RECORD/FLUSHBUFFERED/SETRATEANCHORTIME/feedback/TEARDOWN/SET_PARAMETER 计数与最后 CSeq/响应，用于判断网易云是 sender 主动暂停还是我们处理有误。
+- Android 心跳增加 push/s、pop/s、已收 PCM/s（期望约 96000 f32/s），便于区分发送端停发、投递突发、输出消费过快。
+- 未继续盲目加大缓冲，保持 480/240ms + LowLatency。
 
 ### 验证建议
 
-- 用 **网易云音乐** 和 **哔哩哔哩** 各连续播放 10 分钟，重点看是否连续出声、是否还有破音、是否还会 2 秒后断流。
-- 如果网易云仍 2 秒后停：请导出日志，重点看 paced 后的 underrun/最近采样率，以及 sender 是否在填满 1MB audioBufferSize 后停止发包；下一版再考虑 RTCP RR / 调小 audioBufferSize。
-- 音量问题（iPhone 显示 100%、反向控制）是独立的 AirPlay 2 音量语义问题，本轮未改；不要把音量问题和播放调度混在一起。
-
-### 其他
-
-- 保持 1.4.2/1.4.3 的 arm64 单架构、MiSans 子集、AAC/raw、FLUSH 语义修复；APK 约 12.4MB。
-- 本次只经过单元测试，尚未经过 iPhone 真机验证，请以实机结果为准。
+- 用网易云音乐和哔哩哔哩各连续播放 10 分钟。
+- 重点看：
+  - 是否连续出声、开头是否还破音；
+  - `AP2 SETUP(103)：audioBufferSize=65536`；
+  - `RTSP 接收诊断` 是否显示 sender 主动 PAUSE/TEARDOWN；
+  - `播放诊断` 的最近 f32/s 是否接近 96000，backlog 是否只在开始时丢弃一次；
+  - `Android 输出诊断` 的 push/s 与 pop/s 是否都约 96000。
+- 如果网易云仍 2 秒断流，请导出日志；下一步将根据 RTSP 诊断确认 sender flow-control，再考虑 RTCP RR/feedback 或回退 audioBufferSize。
+- 本次仍未经过 iPhone 真机验证，不能宣称已彻底解决。
 
 ### 安装
 
-- 版本 1.4.4 / versionCode 10404，固定 release 签名，可直接覆盖 1.4.3。
-- 1.3.4 及以上可在「设置 → 检查更新」直接升级。
+- 版本 1.4.5 / versionCode 10405，固定 release 签名，可直接覆盖 1.4.4。
+- APK 约 12.4MB，arm64-v8a；1.3.4+ 可在「设置 → 检查更新」升级。
