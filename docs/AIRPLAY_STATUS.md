@@ -6,10 +6,9 @@
 >
 > 基线：本轮 AirPlay 深入改造前的 **Android 1.3.5（commit `b42984c`）**。
 > 如果你所说的“原版”是更早的 1.2.3 开源版本，可以用文末的 git 命令查看更早差异。
-> 当前代码：`main`，最新 release `android-v1.4.5`（2026-11-16）。
-> **注意：1.4.4 已实测仍“约 2 秒破音后无声”，未解决；1.4.5 修复了 burst 后锚点
-> 未前移的 bug，并做 64KB audioBufferSize 实验，但尚未经过 iPhone 真机验证，
-> 不能宣称 AirPlay 2 已彻底解决；请以 1.4.5 实机日志为准。**
+> 当前代码：`main`，最新 release `android-v1.4.6`（2026-11-16）。
+> **注意：1.4.5 已实测 AirPlay 音频正常播放；1.4.6 修复音量能力自述和进度条插值，
+> 但音量/进度两点尚未经过 iPhone 真机验证，不能宣称全部解决；请以 1.4.6 实机结果为准。**
 
 ## 1. 一句话结论
 
@@ -263,6 +262,23 @@
 - FLUSH 优先使用 `flushFromTS/flushUntilTS`；无 TS 时用 23-bit 序列号映射。
 - RTSP 方向诊断 + AudioBuffer push/pop 速率，用于确认 sender 停发 vs 本地消费过快。
 
+### 5.5 1.4.6 音量/进度修复
+
+1.4.5 实测音频已正常，但遗留两个问题：
+
+1. **iPhone 显示接收端音量 100%，调音量不控制 FusionPlay**
+   - 根因：AP2 `/info` 只返回 features/model，没有 shairport-sync 的
+     `initialVolume` / `volumeControlType`；iOS 因此不把音量滑块路由到接收端，
+     也不会发 `SET_PARAMETER volume`。
+   - 修复：`/info` 增加 `initialVolume`（当前 dB）和 `volumeControlType=3`。
+     仍需真机确认 iOS 是否开始发送 `SET_PARAMETER volume`。
+2. **FusionPlay 进度条只在歌词变化时刷新**
+   - 根因：AirPlay now-playing/progress 事件稀疏，UI 直接使用 `positionMs`，
+     没有本地插值。
+   - 修复：播放器 UI 用 250ms 本地时钟在两次事件之间按 1x 推进；新进度/seek
+     重新锚定，暂停停止；歌词高亮使用同一位置。
+   - 这是 UI 插值，不改变 core 的进度事件/媒体会话时间线。
+
 ## 6. 已知根因/未决问题
 ### 5.4 1.4.4 复盘（paced 仍未生效）
 
@@ -284,6 +300,23 @@
 - `audioBufferSize` 1MB → 64KB（约 2s AAC，实验值），减少发送端一次性预发送。
 - FLUSH 优先使用 `flushFromTS/flushUntilTS`；无 TS 时用 23-bit 序列号映射。
 - RTSP 方向诊断 + AudioBuffer push/pop 速率，用于确认 sender 停发 vs 本地消费过快。
+
+### 5.5 1.4.6 音量/进度修复
+
+1.4.5 实测音频已正常，但遗留两个问题：
+
+1. **iPhone 显示接收端音量 100%，调音量不控制 FusionPlay**
+   - 根因：AP2 `/info` 只返回 features/model，没有 shairport-sync 的
+     `initialVolume` / `volumeControlType`；iOS 因此不把音量滑块路由到接收端，
+     也不会发 `SET_PARAMETER volume`。
+   - 修复：`/info` 增加 `initialVolume`（当前 dB）和 `volumeControlType=3`。
+     仍需真机确认 iOS 是否开始发送 `SET_PARAMETER volume`。
+2. **FusionPlay 进度条只在歌词变化时刷新**
+   - 根因：AirPlay now-playing/progress 事件稀疏，UI 直接使用 `positionMs`，
+     没有本地插值。
+   - 修复：播放器 UI 用 250ms 本地时钟在两次事件之间按 1x 推进；新进度/seek
+     重新锚定，暂停停止；歌词高亮使用同一位置。
+   - 这是 UI 插值，不改变 core 的进度事件/媒体会话时间线。
 
 ## 6. 已知根因/未决问题
 
@@ -429,6 +462,6 @@ git diff 58129cc..HEAD -- vendor/shairplay/src src/AirPlayReceiver.Core/src/audi
 - APK：`FusionPlay-Android-1.4.3.apk`，约 12.4MB，arm64-v8a
 - 更新清单：`updates/android/stable.json` / GitHub Pages
 - 1.4.3 包含旧的 direct-feed，节奏问题未修完。
-- 1.4.5 已包含 burst 重锚 + paced direct + 480/240ms 缓冲 + 64KB audioBufferSize
-  实验，但**尚未经过 iPhone 真机验证**；请用网易云音乐和哔哩哔哩各连续测试 10 分钟，
+- 1.4.5 已实测 AirPlay 音频正常播放；1.4.6 在此基础上补了 `/info` 音量能力和进度条
+  插值，但音量/进度仍**待 iPhone 真机验证**；请连续测试并导出日志，
   重点看 underrun、缓冲是否稳定、网易云是否仍 2 秒断流，再谈音量/歌词。

@@ -285,6 +285,16 @@ pub(crate) fn handle_info(
         plist::Value::String(config::AP2_PROTOVERS.into()),
     );
     dict.insert("sourceVersion".into(), plist::Value::String(config::AP2_SRCVERS.into()));
+    // AirPlay 2 senders use these two fields to render and route the receiver
+    // volume control. Without them iOS keeps showing 100%/local volume and never
+    // sends SET_PARAMETER volume to us (MiPlay/HomePod expose both).
+    // `initialVolume` is in AirPlay dB (0.0 = full scale, -144 = mute), matching
+    // the value returned by GET_PARAMETER volume.
+    dict.insert(
+        "initialVolume".into(),
+        plist::Value::Real(f64::from(conn.shared.handler.volume())),
+    );
+    dict.insert("volumeControlType".into(), plist::Value::Integer(3_i64.into()));
     dict.insert(
         "statusFlags".into(),
         plist::Value::Integer(
@@ -1607,6 +1617,15 @@ mod info_profile_tests {
         assert!(
             dict.get("displays").is_none(),
             "audio-only /info must not advertise a screen-mirroring display"
+        );
+        assert_eq!(
+            dict.get("volumeControlType").and_then(|value| value.as_unsigned_integer()),
+            Some(3),
+            "AP2 senders need volumeControlType to expose the receiver volume UI"
+        );
+        assert!(
+            dict.get("initialVolume").and_then(|value| value.as_real()).is_some(),
+            "AP2 senders read initialVolume from /info"
         );
     }
 

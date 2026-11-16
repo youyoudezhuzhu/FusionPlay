@@ -15,6 +15,22 @@ import 'remote_focus.dart';
 import 'rounded_progress_bar.dart';
 import 'vector_icon.dart';
 
+/// Advance an AirPlay progress anchor by wall-clock elapsed time.
+///
+/// AirPlay now-playing updates are sparse, so the UI must interpolate between
+/// them; this pure helper is covered by a unit test.
+int airPlayInterpolatedPositionMs({
+  required int anchorMs,
+  required Duration elapsed,
+  int? durationMs,
+}) {
+  var next = anchorMs + elapsed.inMilliseconds.clamp(0, 1 << 30);
+  if (durationMs != null && durationMs > 0) {
+    next = next.clamp(0, durationMs);
+  }
+  return next;
+}
+
 /// YAQMC-style player surface: full-bleed artwork background (owned by the
 /// host), top bar with source chips + liquid-glass action menu trigger, a large
 /// artwork/title column plus a large lyrics column, and a floating glass
@@ -101,6 +117,14 @@ class _PlayerViewState extends State<PlayerView> {
   double? seekPositionMs;
   int? pendingSeekTargetMs;
   Timer? pendingSeekTimer;
+  // AirPlay progress events are sparse (often only when now-playing/lyrics
+  // changes), so interpolate between them with the local monotonic wall clock.
+  Timer? _progressTicker;
+  int _progressAnchorMs = 0;
+  DateTime _progressAnchorAt = DateTime.now();
+  int _displayedPositionMs = 0;
+  int _lastStatePositionMs = 0;
+  bool _lastPlaying = false;
   ArtworkFlipDirection artworkFlipDirection = ArtworkFlipDirection.right;
   bool artworkFlipDirectionPending = false;
   Timer? artworkFlipDirectionTimer;
@@ -185,6 +209,14 @@ class _PlayerViewState extends State<PlayerView> {
   void initState() {
     super.initState();
     _lastTrackKey = _trackKeyOf(widget.state.playback);
+    _lastStatePositionMs = widget.state.playback.positionMs;
+    _displayedPositionMs = _lastStatePositionMs;
+    _progressAnchorMs = _lastStatePositionMs;
+    _lastPlaying = widget.state.playback.isPlaying;
+    _progressTicker = Timer.periodic(
+      const Duration(milliseconds: 250),
+      (_) => _tickProgress(),
+    );
     final identity = _artworkHistoryIdentity(widget);
     if (identity != null) {
       _artworkHistory.add(identity);
@@ -262,11 +294,62 @@ class _PlayerViewState extends State<PlayerView> {
         seekPositionMs = pending.toDouble();
       }
     }
+    final playing = widget.state.playback.isPlaying;
+    if (!playing || playing != _lastPlaying) {
+      _syncProgressAnchor(force: true);
+    } else {
+      _syncProgressAnchor();
+    }
+    _lastPlaying = playing;
+  }
+
+  bool get _isAirPlayPlayback =>
+      (widget.state.playback.protocol ?? '').toLowerCase().contains('airplay');
+
+  void _syncProgressAnchor({bool force = false}) {
+    final reported = widget.state.playback.positionMs;
+    if (force || reported != _lastStatePositionMs) {
+      _lastStatePositionMs = reported;
+      _progressAnchorMs = reported;
+      _progressAnchorAt = DateTime.now();
+      _displayedPositionMs = reported;
+    }
+  }
+
+  void _tickProgress() {
+    if (!mounted) return;
+    final playback = widget.state.playback;
+    if (!playback.isPlaying ||
+        !_isAirPlayPlayback ||
+        seeking ||
+        pendingSeekTargetMs != null) {
+      if (_displayedPositionMs != playback.positionMs) {
+        setState(() => _displayedPositionMs = playback.positionMs);
+      }
+      return;
+    }
+    final elapsed = DateTime.now().difference(_progressAnchorAt).inMilliseconds;
+    int next = _progressAnchorMs + math.max(0, elapsed).toInt();
+    final duration = playback.durationMs ?? 0;
+    if (duration > 0) next = next.clamp(0, duration).toInt();
+    if ((next - _displayedPositionMs).abs() >= 100) {
+      setState(() => _displayedPositionMs = next);
+    }
+  }
+
+  int get _visiblePositionMs {
+    if (seeking || pendingSeekTargetMs != null) {
+      return (seekPositionMs ?? widget.state.playback.positionMs).round();
+    }
+    return _isAirPlayPlayback
+        ? _displayedPositionMs
+        : widget.state.playback.positionMs;
   }
 
   @override
   void dispose() {
     pendingSeekTimer?.cancel();
+    _progressTicker?.cancel();
     artworkFlipDirectionTimer?.cancel();
     _volumeOptimisticTimer?.cancel();
     _fallbackProgressFocus.dispose();
@@ -1076,7 +1159,7 @@ class _PlayerViewState extends State<PlayerView> {
       lyrics: playback.lyrics,
       loading: playback.lyricsLoading,
       isPlaying: playback.isPlaying,
-      positionMs: playback.positionMs,
+      positionMs: _visiblePositionMs,
       durationMs: playback.durationMs,
       trackKey: _trackKeyOf(playback),
       foreground: Colors.white,
@@ -1111,7 +1194,7 @@ class _PlayerViewState extends State<PlayerView> {
   Widget _dock({required bool compact}) {
     final playback = widget.state.playback;
     final duration = _durationMs;
-    final position = seekPositionMs?.round() ?? playback.positionMs;
+    final position = _visiblePositionMs;
     final clampedPosition = position.clamp(
       0,
       duration == 0 ? playback.positionMs : duration,
@@ -1182,6 +1265,9 @@ class _PlayerViewState extends State<PlayerView> {
                               seeking = false;
                               seekPositionMs = target.toDouble();
                               pendingSeekTargetMs = target;
+                              _progressAnchorMs = target;
+                              _progressAnchorAt = DateTime.now();
+                              _displayedPositionMs = target;
                             });
                             pendingSeekTimer?.cancel();
                             pendingSeekTimer = Timer(
