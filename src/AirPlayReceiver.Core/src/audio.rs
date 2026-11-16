@@ -101,6 +101,32 @@ const OUTPUT_PREFILL_MILLISECONDS: usize = 40;
 #[cfg(target_os = "android")]
 const OUTPUT_PREFILL_MILLISECONDS: usize = 240;
 
+/// AirPlay 2 senders express receiver volume as dB from full scale. Their UI
+/// slider is effectively linear in dB over roughly [-30, 0]; MiPlay sends a
+/// 0-100 media-volume percentage. Map between them so AirPlay and MiPlay use
+/// the same Android STREAM_MUSIC curve instead of an amplitude-squared curve.
+const AIRPLAY_VOLUME_MIN_DB: f32 = -30.0;
+
+fn airplay_db_to_percent(db: f32) -> u8 {
+    if db <= -144.0 {
+        return 0;
+    }
+    let percent = ((db.clamp(AIRPLAY_VOLUME_MIN_DB, 0.0) - AIRPLAY_VOLUME_MIN_DB)
+        / -AIRPLAY_VOLUME_MIN_DB
+        * 100.0)
+        .round();
+    percent.clamp(0.0, 100.0) as u8
+}
+
+fn airplay_percent_to_db(percent: u8) -> f32 {
+    if percent == 0 {
+        -144.0
+    } else {
+        AIRPLAY_VOLUME_MIN_DB
+            + (f32::from(percent.min(100)) / 100.0) * -AIRPLAY_VOLUME_MIN_DB
+    }
+}
+
 struct AudioBuffer {
     samples: VecDeque<f32>,
     capacity: usize,
@@ -1213,12 +1239,7 @@ impl ReceiverAudioHandler {
     /// command made the local volume control unusable.
     pub fn apply_local_volume_percent(&self, percent: u8, lease: Option<MediaLease>) {
         let percent = percent.min(100);
-        let gain = f32::from(percent as u16) / 100.0;
-        let db = if percent == 0 {
-            -144.0
-        } else {
-            20.0 * gain.log10()
-        };
+        let db = airplay_percent_to_db(percent);
         // AirPlay volume is mapped to Android's STREAM_MUSIC volume in the
         // Kotlin host; the PCM source must stay at unity gain or the two
         // attenuations multiply. Keep only the reported state for
@@ -1729,11 +1750,7 @@ impl AudioHandler for ReceiverAudioHandler {
         let Some(lease) = self.arbiter.current_lease(MediaSource::AirPlayAudio) else {
             return;
         };
-        let gain = if volume <= -144.0 {
-            0.0
-        } else {
-            10.0_f32.powf(volume / 20.0).clamp(0.0, 1.0)
-        };
+        let percent = airplay_db_to_percent(volume);
         self.arbiter.run_if_current(lease, || {
             // See apply_local_volume_percent: Kotlin maps this AirPlay volume
             // to the real Android media stream, so do not attenuate PCM here.
@@ -1744,7 +1761,7 @@ impl AudioHandler for ReceiverAudioHandler {
                 source: "airplay",
                 epoch: lease.epoch(),
                 db: volume,
-                percent: (gain * 100.0).round() as u8,
+                percent,
             });
         });
     }
@@ -2542,8 +2559,8 @@ mod tests {
         );
         let db = f32::from_bits(handler.volume_db_bits.load(Ordering::Relaxed));
         assert!(
-            (db - 20.0 * 0.30_f32.log10()).abs() < 0.002,
-            "reported dB must match the 30% gain: {db}"
+            (db - (-21.0)).abs() < 0.002,
+            "30% maps to -21 dB on the linear-dB AirPlay curve: {db}"
         );
 
         let events = handler.events.captured_events();
@@ -2620,6 +2637,14 @@ mod tests {
             (handler.volume() + 6.0).abs() < 0.001,
             "GET_PARAMETER volume must report it"
         );
+        let event_percent = handler
+            .events
+            .captured_events()
+            .iter()
+            .rev()
+            .find(|event| event["type"] == "volume")
+            .and_then(|event| event["percent"].as_u64());
+        assert_eq!(event_percent, Some(80), "-6 dB must map to 80%");
         let gain = f32::from_bits(handler.gain_bits.load(Ordering::Relaxed));
         assert!(
             (gain - 1.0).abs() < 0.001,

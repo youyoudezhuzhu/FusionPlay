@@ -6,10 +6,11 @@
 >
 > 基线：本轮 AirPlay 深入改造前的 **Android 1.3.5（commit `b42984c`）**。
 > 如果你所说的“原版”是更早的 1.2.3 开源版本，可以用文末的 git 命令查看更早差异。
-> 当前代码：`main`，最新 release `android-v1.4.7`（2026-11-16）。
+> 当前代码：`main`，最新 release `android-v1.4.8`（2026-11-16）。
 > **注意：1.4.5 已实测 AirPlay 音频正常播放；1.4.6 实测 iPhone 已发送
-> `SET_PARAMETER volume`，但把音量映射成了 PCM 增益；1.4.7 改为映射 Android
-> `STREAM_MUSIC`，并修复进度条/歌词提示。音量映射仍待 iPhone 真机验证。**
+> `SET_PARAMETER volume`；1.4.7 把它映射到 Android `STREAM_MUSIC`；1.4.8 按
+> AirPlay dB 的线性曲线校准映射。音量曲线仍待真机听感确认。AirPlay 2 标准元数据
+> 没有歌词字段，当前日志也没有收到歌词标签。**
 
 ## 1. 一句话结论
 
@@ -304,6 +305,24 @@
 1.4.7 仍需真机确认：iPhone 调音量是否改变系统媒体音量、初始百分比是否与系统一致、
 进度条是否持续、歌词空态是否消失。
 
+### 5.7 1.4.8 音量曲线与歌词限制
+
+1.4.7 真机确认 AirPlay 音量已能改变系统媒体音量，但用户反馈映射比例不对。
+根因是 core 之前把 AirPlay dB 转成 `10^(dB/20)` 的线性幅度百分比，而 iPhone 的
+AirPlay 音量滑块在约 [-30 dB, 0 dB] 上更接近线性；MiPlay 则直接下发 0–100
+系统媒体音量百分比。1.4.8 改为：
+
+- `percent = (db + 30) / 30 * 100`（0% 仍映射静音）；
+- `db = -30 + percent * 0.3`；
+- PCM 仍 unity gain，音量只作用于 Android STREAM_MUSIC。
+
+歌词方面：1.4.8 真机日志（14:01/14:25 段）的未知 DMAP 标签仍只有
+`mper(8), ascp(0), caps(1)`，没有歌词标签。AirPlay 2 标准 now-playing 元数据
+只有 title/artist/album/artwork/progress，iPhone App 内歌词不会随 AirPlay 下发。
+因此 AirPlay 页面只有在**实际收到 lyrics payload**时才显示“左封面/右歌词”；
+没有 payload 时显示居中封面 + 空态文案，这属于协议限制，不是布局 bug。
+如需 AirPlay 下歌词，需要额外接入在线歌词/本地 .lrc 数据源。
+
 ## 6. 已知根因/未决问题
 ### 5.4 1.4.4 复盘（paced 仍未生效）
 
@@ -366,6 +385,24 @@
 
 1.4.7 仍需真机确认：iPhone 调音量是否改变系统媒体音量、初始百分比是否与系统一致、
 进度条是否持续、歌词空态是否消失。
+
+### 5.7 1.4.8 音量曲线与歌词限制
+
+1.4.7 真机确认 AirPlay 音量已能改变系统媒体音量，但用户反馈映射比例不对。
+根因是 core 之前把 AirPlay dB 转成 `10^(dB/20)` 的线性幅度百分比，而 iPhone 的
+AirPlay 音量滑块在约 [-30 dB, 0 dB] 上更接近线性；MiPlay 则直接下发 0–100
+系统媒体音量百分比。1.4.8 改为：
+
+- `percent = (db + 30) / 30 * 100`（0% 仍映射静音）；
+- `db = -30 + percent * 0.3`；
+- PCM 仍 unity gain，音量只作用于 Android STREAM_MUSIC。
+
+歌词方面：1.4.8 真机日志（14:01/14:25 段）的未知 DMAP 标签仍只有
+`mper(8), ascp(0), caps(1)`，没有歌词标签。AirPlay 2 标准 now-playing 元数据
+只有 title/artist/album/artwork/progress，iPhone App 内歌词不会随 AirPlay 下发。
+因此 AirPlay 页面只有在**实际收到 lyrics payload**时才显示“左封面/右歌词”；
+没有 payload 时显示居中封面 + 空态文案，这属于协议限制，不是布局 bug。
+如需 AirPlay 下歌词，需要额外接入在线歌词/本地 .lrc 数据源。
 
 ## 6. 已知根因/未决问题
 
