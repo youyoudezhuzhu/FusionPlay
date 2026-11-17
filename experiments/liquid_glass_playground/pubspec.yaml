@@ -1,0 +1,28 @@
+name: liquid_glass_playground
+description: Independent Liquid Glass comparison playground (not production UI).
+publish_to: none
+version: 0.1.0
+environment:
+  sdk: '>=3.8.0 <4.0.0'
+
+dependencies:
+  flutter:
+    sdk: flutter
+  fusionplay_android_flutter:
+    path: ../../flutter
+  liquid_glass_widgets:
+    path: third_party/liquid_glass_widgets
+  liquid_glass_renderer: 0.2.0-dev.4
+  vector_math: 2.3.0
+
+flutter:
+  uses-material-design: true
+  shaders:
+    - shaders/liquid_glass_refraction.frag
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+
+dependency_overrides:
+  vector_math: 2.3.0
