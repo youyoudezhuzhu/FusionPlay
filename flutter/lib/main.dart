@@ -10,6 +10,7 @@ import 'backend/windows_app_controller.dart';
 import 'models/app_state.dart';
 import 'theme/fusion_theme.dart';
 import 'ui/app_menu.dart';
+import 'ui/glass_backdrop.dart';
 import 'ui/artwork.dart';
 import 'ui/player_view.dart';
 import 'ui/remote_focus.dart';
@@ -75,12 +76,33 @@ class _FusionPlayApplicationState extends State<FusionPlayApplication> {
     debugShowCheckedModeBanner: false,
     title: 'FusionPlay',
     theme: fusionTheme(),
-    builder: (context, child) =>
-        FusionTypographyScope(child: child ?? const SizedBox.shrink()),
+    builder: (context, child) => GlassBackdropScope(
+      background: const _AppGlassBackdrop(),
+      child: FusionTypographyScope(child: child ?? const SizedBox.shrink()),
+    ),
     home: ListenableBuilder(
       listenable: controller,
       builder: (context, _) =>
           FusionPlayHome(controller: controller, state: controller.state),
+    ),
+  );
+}
+
+/// App-level backdrop for routes that are outside the player page (dialogs,
+/// update sheets). The player page installs a nested scope with the real
+/// artwork; this one keeps every other glass surface on the same real
+/// captured-texture path instead of silently falling back to frosted blur.
+class _AppGlassBackdrop extends StatelessWidget {
+  const _AppGlassBackdrop();
+
+  @override
+  Widget build(BuildContext context) => const DecoratedBox(
+    decoration: BoxDecoration(
+      gradient: LinearGradient(
+        begin: Alignment.topLeft,
+        end: Alignment.bottomRight,
+        colors: [Color(0xFF2B2238), Color(0xFF141B26), Color(0xFF090B10)],
+      ),
     ),
   );
 }
@@ -555,25 +577,27 @@ class _FusionPlayHomeState extends State<FusionPlayHome> {
         playback.durationMs != null;
     final isTelevision = state.isTelevision;
 
-    final playerSurface = Stack(
+    final playerBackdrop = Stack(
+      fit: StackFit.expand,
       children: [
-        Positioned.fill(
-          child: ArtworkBackground(source: artwork, hasPlayback: hasPlayback),
-        ),
+        ArtworkBackground(source: artwork, hasPlayback: hasPlayback),
         // Dark readability gradient over the artwork (YAQMC-style restraint).
-        Positioned.fill(
-          child: DecoratedBox(
-            decoration: BoxDecoration(
-              gradient: LinearGradient(
-                begin: Alignment.topLeft,
-                end: Alignment.bottomRight,
-                colors: hasArtwork
-                    ? const [Color(0xA6101316), Color(0xE6101316)]
-                    : const [Color(0xCC101316), Color(0xF0101316)],
-              ),
+        DecoratedBox(
+          decoration: BoxDecoration(
+            gradient: LinearGradient(
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
+              colors: hasArtwork
+                  ? const [Color(0xA6101316), Color(0xE6101316)]
+                  : const [Color(0xCC101316), Color(0xF0101316)],
             ),
           ),
         ),
+      ],
+    );
+
+    final playerSurface = Stack(
+      children: [
         SafeArea(
           child: Padding(
             key: const ValueKey('player-overscan'),
@@ -728,16 +752,21 @@ class _FusionPlayHomeState extends State<FusionPlayHome> {
         ),
       ),
     );
-    return MediaQuery(
-      data: mediaQuery.copyWith(
-        disableAnimations:
-            mediaQuery.disableAnimations ||
-            !state.settings.advancedEffectsEnabled,
-      ),
-      child: FusionFocusStyle(
-        borderWidth: isTelevision ? 4 : 3,
-        focusScale: isTelevision ? 1.02 : 1,
-        child: content,
+    return GlassBackdropScope(
+      revision:
+          '${artwork ?? ''}|${hasPlayback ? 1 : 0}|${state.playback.trackIdentity ?? ''}',
+      background: playerBackdrop,
+      child: MediaQuery(
+        data: mediaQuery.copyWith(
+          disableAnimations:
+              mediaQuery.disableAnimations ||
+              !state.settings.advancedEffectsEnabled,
+        ),
+        child: FusionFocusStyle(
+          borderWidth: isTelevision ? 4 : 3,
+          focusScale: isTelevision ? 1.02 : 1,
+          child: content,
+        ),
       ),
     );
   }

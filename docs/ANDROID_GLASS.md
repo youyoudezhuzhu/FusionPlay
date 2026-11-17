@@ -14,6 +14,7 @@
   [#170820](https://github.com/flutter/flutter/issues/170820)）。
 - 设置页顶栏用不透明深色渐变模拟遮罩，看起来像一条黑带；内容还在 body 顶部被裁切。
 - 设置页打开时自动聚焦名称输入框，导致软键盘自动弹出。
+- 旧实现只有 BackdropFilter 模糊，不是光学折射；1.7.0 已改为“无玻璃背景纹理 + 真实 SDF 折射”路径。
 
 ## 2. 新玻璃系统
 
@@ -41,14 +42,16 @@
 - `GlassSurface` 用于“外层已经是玻璃”的内部卡片：只画 token 表面、不叠加第二层模糊。
 - `GlassDialog`/`showGlassDialog` 统一深色玻璃弹窗，入场仅 opacity + scale，reduce motion 直接显示。
 
-### 明确未实现：真实屏幕空间折射
+### 真实屏幕空间折射（1.7.0）
 
-当前 Flutter/Impeller 组合下，shader 背板滤波（`ImageFilter.shader`）在多层玻璃叠加时会出现
-白色反馈，已为稳定性关闭。因此：
+旧 `ImageFilter.shader` 路径仍不恢复。新架构：
 
-- 已实现：实时背景模糊采样、动态指针高光、形状相关 rim/edge、统一材质分级。
-- 未实现：根据曲率/法线偏移 UV 的真实几何折射，以及动态色散。
-- 不把 `BackdropFilter` 模糊描述为“折射”。待上游修复或改用单层 shader 架构后再评估。
+- `GlassBackdropScope` 把**不含玻璃**的背景 RepaintBoundary 捕获成纹理；
+- `LiquidGlass` 的 `_RefractiveSurface` 用 `FragmentShader` 采样这张纹理，按圆角 SDF 法线做非均匀 UV 位移；
+- 玻璃不进入采样纹理，因此无自反馈；不使用旧 `ImageFilter.shader` 路径；
+- 无法采样/编译失败时回退到稳定 `BackdropFilter` 毛玻璃，并明确标记为降级。
+
+光学验证见 `docs/GLASS_OPTICS.md`；截图 `docs/glass/glass-optics.png` / `glass-optics-flat.png`。
 
 ## 3. 组件迁移清单
 
@@ -100,7 +103,7 @@ ClipRect(Stack[
 | 统一材质 token / 分级 | 已实现，Flutter tests 覆盖 |
 | 指针/按压动态高光 | 已实现，单测覆盖构建与无 ticker |
 | 实时背景模糊 | 已实现（BackdropFilter） |
-| 真实屏幕空间折射 | 因 Flutter/Impeller 问题未实现，保持关闭 |
+| 真实屏幕空间折射 | 已实现（捕获背景纹理 + SDF shader；widget test 验证），待真机 60 FPS 验证 |
 | 播放页/菜单/设置玻璃统一 | 已实现，widget tests |
 | 关于弹窗玻璃化 | 已实现，tests |
 | 检查更新全部状态玻璃化 | 已实现，tests |
@@ -111,7 +114,7 @@ ClipRect(Stack[
 
 ## 7. 已知限制
 
-- 真实折射/色散未实现（原因见上）。
+- 真实折射/色散已实现；真机 Android GPU 稳定性与帧率尚未验证。
 - TV 字号未随观看距离放大；overscan 为固定 28/14。
 - 高光为指针/按压驱动，不随环境光自动变化。
 - 检查更新没有持久 “有新版本” accent 状态，仍走弹窗流程。

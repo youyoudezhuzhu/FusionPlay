@@ -58,14 +58,15 @@ Column
 
 ## 3. Liquid Glass
 
-`flutter/lib/ui/liquid_glass.dart` 保留 `GlassLevel` token 和稳定 fallback：
+`flutter/lib/ui/liquid_glass.dart` 使用 1.7.0 的真实折射架构：
 
-- 单层 `BackdropFilter` 模糊背景，避免叠加多层离屏。
-- `CustomPaint` 绘制 tint/gradient、顶部镜面高光、边缘 lens band、底部 caustic、rim 与吸收阴影。
-- `interactive` 只更新 `ValueNotifier`，空闲时不跑 ticker；`RepaintBoundary` 隔离。
-- **未启用** `ImageFilter.shader` 真实屏幕空间折射：历史 Android Impeller 白帧/反馈问题（flutter#187820、#170820）；当前为高质量降级。没有把普通透明卡片冒充真实折射。
+- `GlassBackdropScope` 捕获**不含玻璃**的背景纹理，避免 `ImageFilter.shader` 自反馈。
+- `liquid_glass_refraction.frag` 用圆角 SDF 法线对背景纹理做非均匀 UV 位移，叠加色散、边缘吸收、Fresnel/specular；圆形/胶囊/圆角矩形得到不同边缘法线。
+- 无 scope、shader 失败或 `forceFallback` 时回退到稳定的 `BackdropFilter` 毛玻璃，并明确标记为降级。
+- `interactive` 只更新 `ValueNotifier`，空闲时不跑 ticker；背景纹理按 artwork revision 重拍，玻璃移动不重复采样整屏。
+- 光学验证见 `docs/GLASS_OPTICS.md` 和 `docs/glass/glass-optics.png`。
 
-应用范围：歌词面板、播放/上一曲/下一曲、音量、歌词开关、菜单按钮、无歌词 dock。歌词正文没有逐行玻璃；封面没有厚玻璃覆盖。
+应用范围：播放/上一曲/下一曲、歌词开关、菜单按钮、设置面板、弹窗、错误 toast。歌词不再使用大型独立玻璃卡片，直接融入封面背景；封面没有厚玻璃覆盖。
 
 ## 4. 动画
 
@@ -97,6 +98,6 @@ Column
 ## 6. 未验证/限制
 
 - 未在真实 Android TV/手机 GPU 上逐帧测 60 FPS；需在 800×360/960×540 设备用 DevTools 验证。
-- `ImageFilter.shader` 折射仍关闭；若后续确认 Impeller 修复，可单独启用并 A/B。
+- 真实折射已在 widget shader 层验证；Android Impeller 真机 60 FPS / 白帧仍未验证。
 - 大型歌词面板的 BackdropFilter 是主要 GPU 成本，必要时可在低端设备降级为无模糊深色玻璃。
 - 未验证所有第三方发送端的歌词字段差异；AirPlay title 识别沿用 1.5.x 启发式，未在本次 UI 重构中改业务规则。

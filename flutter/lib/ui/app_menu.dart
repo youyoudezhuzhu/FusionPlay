@@ -320,8 +320,8 @@ class FusionMorphOverlay extends StatefulWidget {
 class _FusionMorphOverlayState extends State<FusionMorphOverlay>
     with SingleTickerProviderStateMixin {
   static const settingsRadius = 28.0;
-  static const menuTint = Color(0xE014171C);
-  static const settingsTint = Color(0xF214191F);
+  static const menuTint = Color(0xC014171C);
+  static const settingsTint = Color(0xD014191F);
 
   late final AnimationController _controller = AnimationController(vsync: this);
 

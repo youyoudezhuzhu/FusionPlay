@@ -9,6 +9,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:fusionplay_android_flutter/models/app_state.dart';
 import 'package:fusionplay_android_flutter/ui/artwork.dart';
+import 'package:fusionplay_android_flutter/ui/glass_backdrop.dart';
 import 'package:fusionplay_android_flutter/ui/player_view.dart';
 
 final String _coverData =
@@ -64,21 +65,24 @@ Widget _host({
       backgroundColor: const Color(0xFF0B0D11),
       body: RepaintBoundary(
         key: boundaryKey,
-        child: Stack(
-          fit: StackFit.expand,
-          children: [
-            ArtworkBackground(source: _coverData, hasPlayback: true),
-            const ColoredBox(color: Color(0x73000000)),
-            PlayerView(
-              state: _state(withLyrics: withLyrics, loading: loading),
-              artworkSource: _coverData,
-              artworkIdentity: 'preview-cover',
-              onPlayback: (_) {},
-              onSeek: (_) {},
-              onVolume: (_) {},
-              onOpenMenu: () {},
-            ),
-          ],
+        child: GlassBackdropScope(
+          revision: 'preview',
+          background: Stack(
+            fit: StackFit.expand,
+            children: [
+              ArtworkBackground(source: _coverData, hasPlayback: true),
+              const ColoredBox(color: Color(0x73000000)),
+            ],
+          ),
+          child: PlayerView(
+            state: _state(withLyrics: withLyrics, loading: loading),
+            artworkSource: _coverData,
+            artworkIdentity: 'preview-cover',
+            onPlayback: (_) {},
+            onSeek: (_) {},
+            onVolume: (_) {},
+            onOpenMenu: () {},
+          ),
         ),
       ),
     ),

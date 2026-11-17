@@ -4,7 +4,7 @@ homepage: https://github.com/youyoudezhuzhu/FusionPlay
 repository: https://github.com/youyoudezhuzhu/FusionPlay
 issue_tracker: https://github.com/youyoudezhuzhu/FusionPlay/issues
 publish_to: none
-version: 1.6.1+10601
+version: 1.7.0+10700
 
 environment:
   sdk: ^3.8.0
@@ -22,7 +22,7 @@ dev_dependencies:
 flutter:
   uses-material-design: true
   shaders:
-    - shaders/liquid_glass.frag
+    - shaders/liquid_glass_refraction.frag
   assets:
     - assets/DLNA.svg
     - assets/airplay-broadcast.svg

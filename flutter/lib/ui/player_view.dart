@@ -1025,15 +1025,11 @@ class _PlayerViewState extends State<PlayerView> {
     required double activeFontSize,
     required double inactiveFontSize,
   }) {
+    // Lyrics belong to the backdrop, not to a large glass card. No extra
+    // full-size BackdropFilter/shader surface and no hard rectangular scrim.
     return RepaintBoundary(
-      child: LiquidGlass(
-        key: const ValueKey('player-lyrics-glass'),
-        level: GlassLevel.card,
-        borderRadius: 28,
-        blurSigma: 22,
-        tint: const Color(0x2E0B0D11),
-        forceFallback: widget.forceGlassFallback,
-        padding: const EdgeInsets.fromLTRB(20, 18, 20, 16),
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(18, 14, 8, 12),
         child: _lyricsColumn(
           activeFontSize: activeFontSize,
           inactiveFontSize: inactiveFontSize,
