@@ -89,7 +89,7 @@ AirPlay/MiPlay/DLNA、元数据、封面、播放暂停、上一曲/下一曲、
 
 **未执行**：
 
-- Android APK 构建：按此前明确要求“未说编译不编译”，未构建。
+- Android APK 构建：**已尝试 `flutter build apk --debug`，失败：No Android SDK found（未设置 ANDROID_HOME）**；环境缺少 Android SDK，无法产出 APK。
 - Android 真机/Android TV 实机横屏、刘海/挖孔/圆角/手势 Insets、Profile 帧率与玻璃性能：未验证，不能标记通过。
 - 逐像素对照：未收到参考图。
 
