@@ -3,7 +3,6 @@ import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:fusionplay_android_flutter/models/app_state.dart';
 import 'package:fusionplay_android_flutter/ui/artwork.dart';
-import 'package:fusionplay_android_flutter/ui/liquid_glass.dart';
 import 'package:fusionplay_android_flutter/ui/player_view.dart';
 import 'package:fusionplay_android_flutter/ui/rounded_progress_bar.dart';
 
@@ -152,7 +151,7 @@ void main() {
     // 旧歌词开关已移除。
     expect(find.byKey(const ValueKey('playback-lyrics-button')), findsNothing);
     // dock / 玻璃组件走 fallback 渲染。
-    expect(find.byType(LiquidGlass), findsWidgets);
+    expect(find.byType(BackdropFilter), findsWidgets);
     expect(
       find.byKey(const ValueKey('playback-play-pause-button')),
       findsOneWidget,
@@ -179,10 +178,10 @@ void main() {
       find.byKey(const ValueKey('player-lyrics-view')),
     );
 
-    // Apple Music 横屏：左侧封面/标题/作者，右侧歌词列。
+    // Liquid Player 横屏：封面/信息在顶部，歌词在其下方整宽区域。
     expect(title.top, lessThan(artist.top));
     expect(cover.left, lessThan(title.left));
-    expect(lyrics.left, greaterThan(artist.right));
+    expect(lyrics.top, greaterThan(artist.bottom));
     expect(tester.takeException(), isNull);
   });
 
@@ -405,10 +404,13 @@ void main() {
       size: const Size(420, 760),
     );
     await tester.pump();
-    expect(find.byKey(const ValueKey('player-layout-compact')), findsOneWidget);
+    expect(
+      find.byKey(const ValueKey('player-layout-horizontal')),
+      findsOneWidget,
+    );
     expect(find.byKey(const ValueKey('player-lyrics-view')), findsOneWidget);
     await tester.drag(
-      find.byKey(const ValueKey('player-layout-compact')),
+      find.byKey(const ValueKey('player-layout-horizontal')),
       const Offset(0, -160),
     );
     await tester.pump();
@@ -685,7 +687,7 @@ void main() {
 
     expect(find.text('Track'), findsOneWidget);
     expect(find.text('暂无歌词'), findsOneWidget);
-    expect(find.byKey(const ValueKey('player-dock')), findsNothing);
+    expect(find.byKey(const ValueKey('player-dock')), findsOneWidget);
     expect(
       find.byKey(const ValueKey('playback-play-pause-button')),
       findsOneWidget,

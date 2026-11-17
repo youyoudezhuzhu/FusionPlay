@@ -53,7 +53,7 @@ class GlassPlaygroundApp extends StatelessWidget {
   const GlassPlaygroundApp({
     super.key,
     this.initialScheme = GlassScheme.custom,
-    this.initialBackground = PlaygroundBackground.grid,
+    this.initialBackground = PlaygroundBackground.cover,
     this.initialLyrics = true,
     this.initialDynamic = false,
   });
@@ -86,7 +86,7 @@ class PlaygroundScreen extends StatefulWidget {
   const PlaygroundScreen({
     super.key,
     this.initialScheme = GlassScheme.custom,
-    this.initialBackground = PlaygroundBackground.grid,
+    this.initialBackground = PlaygroundBackground.cover,
     this.initialLyrics = true,
     this.initialDynamic = false,
   });
@@ -750,49 +750,45 @@ class _StaticBackground extends StatelessWidget {
     return Stack(
       fit: StackFit.expand,
       children: [
-        DecoratedBox(
-          decoration: BoxDecoration(
-            color: light ? const Color(0xFFF2EFEA) : null,
-            gradient: mode == PlaygroundBackground.cover
-                ? const LinearGradient(
-                    begin: Alignment.topLeft,
-                    end: Alignment.bottomRight,
-                    colors: [
-                      Color(0xFF1D4C7A),
-                      Color(0xFF9A2E86),
-                      Color(0xFFE59A3B),
-                    ],
-                  )
-                : mode == PlaygroundBackground.light
-                ? null
-                : const LinearGradient(
-                    begin: Alignment.topLeft,
-                    end: Alignment.bottomRight,
-                    colors: [
-                      Color(0xFF29304A),
-                      Color(0xFF121A26),
-                      Color(0xFF07090D),
-                    ],
-                  ),
+        if (mode == PlaygroundBackground.cover)
+          Positioned.fill(
+            child: Image.asset(
+              'assets/cover.png',
+              fit: BoxFit.cover,
+              filterQuality: FilterQuality.high,
+            ),
           ),
-        ),
+        if (mode == PlaygroundBackground.cover)
+          const DecoratedBox(
+            decoration: BoxDecoration(
+              gradient: LinearGradient(
+                begin: Alignment.topLeft,
+                end: Alignment.bottomRight,
+                colors: [Color(0x3D070A0E), Color(0x99070A0E)],
+              ),
+            ),
+          )
+        else
+          DecoratedBox(
+            decoration: BoxDecoration(
+              color: light ? const Color(0xFFF2EFEA) : null,
+              gradient: mode == PlaygroundBackground.light
+                  ? null
+                  : const LinearGradient(
+                      begin: Alignment.topLeft,
+                      end: Alignment.bottomRight,
+                      colors: [
+                        Color(0xFF29304A),
+                        Color(0xFF121A26),
+                        Color(0xFF07090D),
+                      ],
+                    ),
+            ),
+          ),
         if (mode == PlaygroundBackground.grid ||
             mode == PlaygroundBackground.cover)
           CustomPaint(
             painter: _GridPainter(light: light, phase: phase),
-          ),
-        if (mode == PlaygroundBackground.cover)
-          Positioned(
-            left: 80 + phase * 20,
-            top: 70,
-            child: Container(
-              width: 180,
-              height: 180,
-              decoration: const BoxDecoration(
-                color: Color(0xCCF7C86B),
-                shape: BoxShape.circle,
-              ),
-            ),
           ),
       ],
     );

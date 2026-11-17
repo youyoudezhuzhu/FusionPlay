@@ -324,8 +324,14 @@ class _FusionPlayHomeState extends State<FusionPlayHome> {
 
   void _openMenu() {
     if (_morphStage != null) return;
-    final anchor = _computeAnchorRect();
-    if (anchor == null) return;
+    final anchor =
+        _computeAnchorRect() ??
+        Rect.fromLTWH(
+          MediaQuery.sizeOf(context).width - 78,
+          MediaQuery.sizeOf(context).height - 78,
+          46,
+          46,
+        );
     setState(() {
       _anchorRect = anchor;
       _morphStage = MorphStage.menu;

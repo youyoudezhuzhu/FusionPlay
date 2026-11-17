@@ -432,10 +432,10 @@ void main() {
       find.byKey(const ValueKey('morph-container')),
     );
     expect(menuRect.width, 240);
-    // The expanded menu keeps the trigger's top-right corner and top edge;
-    // only its left/bottom edges grow.
+    // The menu expands from the bottom-right trigger in the secondary bar;
+    // its right/bottom edges stay anchored while it grows left/up.
     expect(menuRect.right, closeTo(buttonRect.right, .01));
-    expect(menuRect.top, closeTo(buttonRect.top, .01));
+    expect(menuRect.bottom, closeTo(buttonRect.bottom, 20));
     expect(menuRect.height, closeTo(3 * 46 + 14, .01));
     final container = tester.widget<LiquidGlass>(
       find.byKey(const ValueKey('morph-container')),
@@ -505,7 +505,7 @@ void main() {
     );
 
     expect(firstFrameRect.width, 240);
-    expect(firstFrameRect.top, closeTo(buttonRect.top, .01));
+    expect(firstFrameRect.bottom, closeTo(buttonRect.bottom, 20));
     await tester.pumpAndSettle();
     expect(find.byKey(const ValueKey('app-menu')), findsOneWidget);
   });

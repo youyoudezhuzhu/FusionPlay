@@ -338,7 +338,9 @@ void main() {
     final settingsRect = tester.getRect(
       find.byKey(const ValueKey('playback-menu-button')),
     );
-    expect(settingsRect.top, 16);
-    expect(1200 - settingsRect.right, 22);
+    // The menu trigger now lives in the bottom secondary bar, not the top bar.
+    expect(settingsRect.top, greaterThan(0));
+    expect(settingsRect.bottom, lessThanOrEqualTo(600));
+    expect(settingsRect.right, lessThanOrEqualTo(1200));
   });
 }

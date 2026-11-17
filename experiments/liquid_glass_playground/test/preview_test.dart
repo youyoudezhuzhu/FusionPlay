@@ -109,6 +109,18 @@ void main() {
     );
     await _capture(
       tester,
+      GlassScheme.widgets,
+      PlaygroundBackground.cover,
+      'widgets-cover-2',
+    );
+    await _capture(
+      tester,
+      GlassScheme.renderer,
+      PlaygroundBackground.cover,
+      'renderer-cover',
+    );
+    await _capture(
+      tester,
       GlassScheme.custom,
       PlaygroundBackground.grid,
       'custom-no-lyrics',
