@@ -1,17 +1,11 @@
-## FusionPlay Android 1.7.1
+## FusionPlay Android 1.7.2
 
-### 播放页 21:9 视觉调整
+### Android 显示问题修复
 
-- 顶部只显示协议，不再显示 ALAC/AAC 等音质格式。
-- 删除封面下方“来源/格式”小字，进度条与时间上移并靠近。
-- 封面改用独立 `FloatingAlbumArt`：柔光阴影、细边缘光，移除黑色厚底座。
-- 上一曲/播放/下一曲改用上游 `liquid_glass_widgets` 玻璃按钮，播放键略大。
-- 音量胶囊使用同一玻璃材质；不再叠加 FusionPlay 旧 `_GlassPaint`。
-- 无歌词为居中的封面 + 信息/控件组合；有歌词保留右侧沉浸式歌词。
-- 逐句流式歌词保留最近 7 句历史，不伪造未来歌词。
-- 播放协议、歌词解析和业务状态逻辑未改。
+- 播放页玻璃控件切换为 `liquid_glass_widgets` 的 **minimal（shader-free）** 质量档，避免部分 Android/Impeller 设备上第三方高级 shader 导致的控件黑屏/只显示背景痕迹。
+- 保留 1.7.1 的 21:9 布局、FloatingAlbumArt、玻璃按钮/音量胶囊外形和全部业务逻辑。
+- 这是兼容性回退，不是最终形态；待确认设备后可在支持 Impeller 的机型上恢复更高折射质量。
 
-### 验证
+### 已知
 
-- `flutter test`：207 passed（Flutter widget 测试）。
-- Android release APK 由 GitHub Actions 使用正式 release keystore 构建和验签。
+- 1.7.1 在部分 Android 设备上出现播放控件不显示/黑屏；本版优先保证可显示和可操作。

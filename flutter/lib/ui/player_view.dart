@@ -856,7 +856,7 @@ class _PlayerViewState extends State<PlayerView> {
         padding: EdgeInsets.symmetric(horizontal: compact ? 7 : 10),
         shape: const lg.LiquidRoundedSuperellipse(borderRadius: 999),
         useOwnLayer: true,
-        quality: lg.GlassQuality.premium,
+        quality: lg.GlassQuality.minimal,
         settings: const lg.LiquidGlassSettings(
           thickness: 14,
           blur: 4,
@@ -1267,7 +1267,7 @@ class _PlayerViewState extends State<PlayerView> {
           onPressed: onTap,
           size: size,
           useOwnLayer: true,
-          quality: lg.GlassQuality.premium,
+          quality: lg.GlassQuality.minimal,
           settings: const lg.LiquidGlassSettings(
             thickness: 16,
             blur: 4,
@@ -1363,7 +1363,7 @@ class _PlayerViewState extends State<PlayerView> {
           onPressed: onTap,
           size: 36,
           useOwnLayer: true,
-          quality: lg.GlassQuality.premium,
+          quality: lg.GlassQuality.minimal,
           settings: const lg.LiquidGlassSettings(
             thickness: 12,
             blur: 3,
@@ -1552,7 +1552,7 @@ class _PlayerViewState extends State<PlayerView> {
               ? 52
               : (MediaQuery.sizeOf(context).width >= 1500 ? 76 : 62),
           useOwnLayer: true,
-          quality: lg.GlassQuality.premium,
+          quality: lg.GlassQuality.minimal,
           settings: const lg.LiquidGlassSettings(
             thickness: 16,
             blur: 4,
