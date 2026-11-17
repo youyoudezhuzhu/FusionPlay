@@ -1,6 +1,5 @@
 import 'dart:async';
 import 'dart:math' as math;
-import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -10,6 +9,7 @@ import '../theme/fusion_theme.dart';
 import 'animated_press_scale.dart';
 import 'artwork.dart';
 import 'g2_shape.dart';
+import 'liquid_glass.dart';
 import 'lyrics_view.dart';
 import 'remote_focus.dart';
 import 'rounded_progress_bar.dart';
@@ -563,7 +563,7 @@ class _PlayerViewState extends State<PlayerView> {
   Widget build(BuildContext context) {
     return LayoutBuilder(
       builder: (context, outer) {
-        return _liquidPlayerLayout(compact: outer.maxHeight < 430);
+        return _liquid21PlayerLayout();
       },
     );
   }
@@ -598,11 +598,15 @@ class _PlayerViewState extends State<PlayerView> {
     ),
   );
 
-  Widget _liquidPlayerLayout({required bool compact}) {
+  // ------------------------------------------------------------------
+  // 21:9 two-column layout (left glass player, right immersive lyrics)
+  // ------------------------------------------------------------------
+
+  Widget _liquid21PlayerLayout() {
     final showLyrics = _showLyricsLayout;
     return Column(
       children: [
-        _liquidTopBar(compact: compact),
+        _liquid21TopBar(),
         Expanded(
           child: ClipRect(
             child: AnimatedSwitcher(
@@ -618,232 +622,404 @@ class _PlayerViewState extends State<PlayerView> {
               ),
               child: KeyedSubtree(
                 key: ValueKey<bool>(showLyrics),
-                child: _liquidStage(showLyrics: showLyrics, compact: compact),
+                child: showLyrics
+                    ? _liquid21LyricsStage()
+                    : _liquid21NoLyricsStage(),
               ),
             ),
           ),
         ),
-        _liquidSecondaryBar(compact: compact),
       ],
     );
   }
 
-  Widget _liquidStage({required bool showLyrics, required bool compact}) {
-    return LayoutBuilder(
-      key: const ValueKey('player-layout-horizontal'),
-      builder: (context, content) {
-        final playback = widget.state.playback;
-        final (title, artist) = _displayMetadata(playback);
-        final source = playbackProtocolLabel(playback.protocol);
-        final quality = playback.qualityText?.trim();
-        final qualityLabel = (quality == null || quality.isEmpty)
-            ? null
-            : quality.split('·').last.trim();
-        final sourceLine = [
-          if (source != null) source,
-          if (qualityLabel != null && qualityLabel.isNotEmpty) qualityLabel,
-        ].join(' · ');
-        final album = playback.album?.trim();
-        final hiddenByUser = _lyricsSupported && _hasDisplayableLyrics;
-        final hint = hiddenByUser ? null : _centeredHint(playback);
-        if (showLyrics) {
-          return Padding(
-            padding: EdgeInsets.fromLTRB(
-              compact ? 20 : 44,
-              compact ? 2 : 18,
-              compact ? 20 : 44,
-              compact ? 2 : 10,
-            ),
-            child: Center(
-              child: SizedBox(
-                width: math.min(content.maxWidth, 920),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    Row(
-                      children: [
-                        _breathingArtwork(
-                          size: compact ? 58 : 92,
-                          child: _artworkCard(
-                            compact ? 58 : 92,
-                            radius: compact ? 12 : 18,
-                          ),
-                        ),
-                        SizedBox(width: compact ? 14 : 20),
-                        Expanded(
-                          child: _liquidMeta(
-                            title: title,
-                            artist: artist,
-                            album: album,
-                            source: sourceLine,
-                            hint: null,
-                            compact: true,
-                          ),
-                        ),
-                      ],
-                    ),
-                    SizedBox(height: compact ? 2 : 18),
-                    Expanded(
-                      child: _lyricsColumn(
-                        activeFontSize: compact ? 22 : 32,
-                        inactiveFontSize: compact ? 14 : 21,
-                        alignCenter: false,
-                      ),
-                    ),
-                    SizedBox(height: compact ? 1 : 10),
-                    _liquidTimeline(compact: compact),
-                    SizedBox(height: compact ? 0 : 6),
-                    Center(child: _liquidTransport(compact: compact)),
-                  ],
-                ),
-              ),
-            ),
-          );
-        }
-        final reserved = compact ? 205.0 : 285.0;
-        final cover = math
-            .min(
-              content.maxWidth * (compact ? .30 : .32),
-              math.max(96.0, content.maxHeight - reserved),
-            )
-            .clamp(96.0, 380.0)
-            .toDouble();
-        final column = Column(
-          key: const ValueKey('player-centered-layout'),
-          mainAxisSize: MainAxisSize.min,
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            _breathingArtwork(
-              size: cover,
-              child: _artworkCard(cover, radius: compact ? 20 : 24),
-            ),
-            SizedBox(height: compact ? 8 : 16),
-            _liquidMeta(
-              title: title,
-              artist: artist,
-              album: album,
-              source: sourceLine,
-              hint: hint,
-              compact: false,
-            ),
-            SizedBox(height: compact ? 6 : 14),
-            ConstrainedBox(
-              constraints: const BoxConstraints(maxWidth: 620),
-              child: _liquidTimeline(compact: compact),
-            ),
-            SizedBox(height: compact ? 0 : 8),
-            _liquidTransport(compact: compact),
-          ],
-        );
-        return Center(
-          child: FittedBox(
-            fit: BoxFit.scaleDown,
-            alignment: Alignment.center,
-            child: SizedBox(
-              width: math.max(280.0, content.maxWidth - 48),
-              child: column,
-            ),
-          ),
-        );
-      },
+  ({double left, double gap, double right}) _liquid21PanelWidths(
+    Size available,
+  ) {
+    final minLeft = math.min(
+      260.0,
+      available.width * (available.width < 600 ? .46 : .40),
+    );
+    final maxLeft = math.max(minLeft, available.width * .46);
+    // Wider than 16:9: the left panel can take a little more room, but the
+    // lyrics column must keep a readable minimum width.
+    final preferred = available.width * .40;
+    final left = preferred.clamp(minLeft, maxLeft).toDouble();
+    final gap = (available.width * .022).clamp(12.0, 28.0).toDouble();
+    return (
+      left: left,
+      gap: gap,
+      right: math.max(0, available.width - left - gap),
     );
   }
 
-  Widget _liquidMeta({
-    required String title,
-    required String? artist,
-    required String? album,
-    required String source,
-    required String? hint,
-    required bool compact,
-  }) => Column(
-    crossAxisAlignment: compact
-        ? CrossAxisAlignment.start
-        : CrossAxisAlignment.center,
-    children: [
-      Row(
-        mainAxisSize: MainAxisSize.min,
+  Widget _liquid21LyricsStage() => LayoutBuilder(
+    key: const ValueKey('player-layout-horizontal'),
+    builder: (context, content) {
+      final widths = _liquid21PanelWidths(
+        Size(content.maxWidth, content.maxHeight),
+      );
+      final gap = widths.gap;
+      final leftWidth = widths.left;
+      final rightWidth = widths.right;
+      final activeFont = (rightWidth * .038).clamp(21.0, 32.0).toDouble();
+      return Padding(
+        padding: const EdgeInsets.fromLTRB(14, 0, 20, 10),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            SizedBox(width: leftWidth, child: _liquid21PlayerPanel()),
+            SizedBox(width: gap),
+            Expanded(
+              child: _lyricsColumn(
+                activeFontSize: activeFont,
+                inactiveFontSize: activeFont * .63,
+                alignCenter: false,
+              ),
+            ),
+          ],
+        ),
+      );
+    },
+  );
+
+  Widget _liquid21PlayerPanel() => LayoutBuilder(
+    builder: (context, constraints) {
+      final panelWidth = constraints.maxWidth;
+      final panelHeight = constraints.maxHeight;
+      final compact = panelHeight < 430 || panelWidth < 300;
+      final padding = compact ? 10.0 : 16.0;
+      final cover = math
+          .min(
+            panelWidth - padding * 2,
+            math.max(56.0, panelHeight - (compact ? 224 : 250)),
+          )
+          .clamp(64.0, 300.0)
+          .toDouble();
+      final playback = widget.state.playback;
+      final (title, artist) = _displayMetadata(playback);
+      final album = playback.album?.trim();
+      final source = playbackProtocolLabel(playback.protocol);
+      final quality = playback.qualityText?.trim();
+      final qualityLabel = (quality == null || quality.isEmpty)
+          ? null
+          : quality.split('·').last.trim();
+      final sourceLine = [
+        if (source != null) source,
+        if (qualityLabel != null && qualityLabel.isNotEmpty) qualityLabel,
+      ].join(' · ');
+      return LiquidGlass(
+        level: GlassLevel.panel,
+        borderRadius: compact ? 22 : 28,
+        blurSigma: compact ? 20 : 28,
+        tint: const Color(0x72101419),
+        refraction: .65,
+        thickness: 12,
+        specular: .22,
+        forceFallback: widget.forceGlassFallback,
+        padding: EdgeInsets.all(padding),
+        child: Column(
+          key: const ValueKey('player-glass-panel'),
+          children: [
+            Expanded(
+              child: Center(
+                child: _breathingArtwork(
+                  size: cover,
+                  child: _artworkCard(cover, radius: compact ? 16 : 20),
+                ),
+              ),
+            ),
+            SizedBox(height: compact ? 3 : 8),
+            Text(
+              title,
+              maxLines: compact ? 1 : 2,
+              overflow: TextOverflow.ellipsis,
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                fontSize: compact ? 18 : 24,
+                height: 1.12,
+                color: Colors.white,
+                fontWeight: FusionTypography.semiBoldFontWeight,
+                fontVariations: FusionTypography.semiBold,
+              ),
+            ),
+            if (artist != null && artist.isNotEmpty)
+              Text(
+                artist,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                  fontSize: compact ? 11 : 14,
+                  color: Colors.white.withValues(alpha: .64),
+                ),
+              ),
+            if (!compact && album != null && album.isNotEmpty)
+              Text(
+                album,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                  fontSize: 12,
+                  color: Colors.white.withValues(alpha: .46),
+                ),
+              ),
+            if (compact && sourceLine.isNotEmpty)
+              Text(
+                sourceLine.toUpperCase(),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  fontSize: 9,
+                  letterSpacing: .06,
+                  color: Colors.white.withValues(alpha: .38),
+                ),
+              ),
+            SizedBox(height: compact ? 2 : 6),
+            _liquidTimeline(compact: compact),
+            SizedBox(height: compact ? 2 : 5),
+            Center(child: _liquidTransport(compact: compact)),
+            SizedBox(height: compact ? 3 : 8),
+            _liquid21Volume(compact: compact),
+          ],
+        ),
+      );
+    },
+  );
+
+  Widget _liquid21Volume({required bool compact}) {
+    final percent = (_displayVolume * 100).round();
+    final icon = percent == 0
+        ? Icons.volume_off_rounded
+        : (percent < 50 ? Icons.volume_down_rounded : Icons.volume_up_rounded);
+    return Container(
+      height: compact ? 30 : 36,
+      padding: EdgeInsets.symmetric(horizontal: compact ? 5 : 8),
+      decoration: BoxDecoration(
+        color: Colors.white.withValues(alpha: .055),
+        borderRadius: BorderRadius.circular(999),
+        border: Border.all(color: Colors.white.withValues(alpha: .065)),
+      ),
+      child: Row(
         children: [
-          Container(
-            width: 3,
-            height: 10,
-            decoration: BoxDecoration(
-              color: Colors.white.withValues(alpha: .52),
-              borderRadius: BorderRadius.circular(2),
+          InkResponse(
+            key: const ValueKey('volume-mute-button'),
+            onTap: _toggleMute,
+            radius: 16,
+            child: Icon(icon, size: compact ? 16 : 18, color: Colors.white70),
+          ),
+          const SizedBox(width: 4),
+          Expanded(
+            child: RoundedProgressBar(
+              key: const ValueKey('volume-slider'),
+              value: _displayVolume,
+              enabled: true,
+              seekEnabled: true,
+              showThumb: true,
+              focusNode: _volumeFocus,
+              upFocusNode: _playVisible ? _playPauseFocus : null,
+              focusBorderColor: Colors.white,
+              activeColor: Colors.white.withValues(alpha: .82),
+              inactiveColor: Colors.white.withValues(alpha: .18),
+              onChanged: (value) => setState(() => _volumeDrag = value),
+              onChangeEnd: (value) => _commitVolume((value * 100).round()),
             ),
           ),
-          const SizedBox(width: 7),
-          Flexible(
-            child: Text(
-              source.toUpperCase(),
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: TextStyle(
-                fontSize: compact ? 10 : 11.5,
-                letterSpacing: .07,
-                fontWeight: FusionTypography.mediumFontWeight,
-                color: Colors.white.withValues(alpha: .38),
-              ),
+          SizedBox(width: compact ? 5 : 8),
+          Text(
+            '$percent',
+            style: TextStyle(
+              fontSize: compact ? 9 : 10,
+              color: Colors.white.withValues(alpha: .48),
+              fontFeatures: const [FontFeature.tabularFigures()],
             ),
           ),
         ],
       ),
-      SizedBox(height: compact ? 5 : 10),
-      Text(
-        title,
-        maxLines: 2,
-        overflow: TextOverflow.ellipsis,
-        textAlign: compact ? TextAlign.left : TextAlign.center,
-        style: TextStyle(
-          fontSize: compact ? 22 : 40,
-          height: 1.06,
-          letterSpacing: -.5,
-          color: Colors.white,
-          fontWeight: FusionTypography.semiBoldFontWeight,
-          fontVariations: FusionTypography.semiBold,
+    );
+  }
+
+  Widget _liquid21NoLyricsStage() => LayoutBuilder(
+    key: const ValueKey('player-layout-horizontal'),
+    builder: (context, content) {
+      final compact = content.maxHeight < 360;
+      final cover = math
+          .min(
+            content.maxWidth * .34,
+            content.maxHeight * (compact ? .58 : .66),
+          )
+          .clamp(96.0, 380.0)
+          .toDouble();
+      return Padding(
+        key: const ValueKey('player-centered-layout'),
+        padding: const EdgeInsets.fromLTRB(18, 0, 18, 10),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Expanded(
+              flex: 5,
+              child: Center(
+                child: _breathingArtwork(
+                  size: cover,
+                  child: _artworkCard(cover, radius: compact ? 20 : 26),
+                ),
+              ),
+            ),
+            SizedBox(width: compact ? 16 : 28),
+            Expanded(flex: 6, child: _liquid21InfoPanel(compact: true)),
+          ],
         ),
-      ),
-      if (artist != null && artist.isNotEmpty) ...[
-        SizedBox(height: compact ? 2 : 5),
-        Text(
-          artist,
-          maxLines: 1,
-          overflow: TextOverflow.ellipsis,
-          textAlign: compact ? TextAlign.left : TextAlign.center,
-          style: TextStyle(
-            fontSize: compact ? 13 : 17,
-            color: Colors.white.withValues(alpha: .70),
-          ),
-        ),
-      ],
-      if (!compact && album != null && album.isNotEmpty) ...[
-        const SizedBox(height: 4),
-        Text(
-          album,
-          maxLines: 1,
-          overflow: TextOverflow.ellipsis,
-          textAlign: TextAlign.center,
-          style: TextStyle(
-            fontSize: 13,
-            color: Colors.white.withValues(alpha: .52),
-          ),
-        ),
-      ],
-      if (hint != null) ...[
-        SizedBox(height: compact ? 4 : 10),
-        Text(
-          hint,
-          maxLines: 1,
-          overflow: TextOverflow.ellipsis,
-          textAlign: compact ? TextAlign.left : TextAlign.center,
-          style: TextStyle(
-            fontSize: compact ? 11 : 12,
-            color: Colors.white.withValues(alpha: .40),
-          ),
-        ),
-      ],
-    ],
+      );
+    },
   );
+
+  Widget _liquid21InfoPanel({required bool compact}) {
+    final playback = widget.state.playback;
+    final (title, artist) = _displayMetadata(playback);
+    final album = playback.album?.trim();
+    final source = playbackProtocolLabel(playback.protocol);
+    final quality = playback.qualityText?.trim();
+    final qualityLabel = (quality == null || quality.isEmpty)
+        ? null
+        : quality.split('·').last.trim();
+    final sourceLine = [
+      if (source != null) source,
+      if (qualityLabel != null && qualityLabel.isNotEmpty) qualityLabel,
+    ].join(' · ');
+    final hiddenByUser = _lyricsSupported && _hasDisplayableLyrics;
+    final hint = hiddenByUser ? null : _centeredHint(playback);
+    return LiquidGlass(
+      level: GlassLevel.panel,
+      borderRadius: compact ? 22 : 28,
+      tint: const Color(0x72101419),
+      refraction: .65,
+      thickness: 12,
+      specular: .22,
+      forceFallback: widget.forceGlassFallback,
+      padding: EdgeInsets.all(compact ? 10 : 22),
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Text(
+            title,
+            maxLines: compact ? 1 : 2,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(
+              fontSize: compact ? 22 : 32,
+              height: 1.1,
+              color: Colors.white,
+              fontWeight: FusionTypography.semiBoldFontWeight,
+              fontVariations: FusionTypography.semiBold,
+            ),
+          ),
+          if (artist != null && artist.isNotEmpty) ...[
+            const SizedBox(height: 3),
+            Text(
+              artist,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                fontSize: compact ? 12 : 15,
+                color: Colors.white70,
+              ),
+            ),
+          ],
+          if (album != null && album.isNotEmpty) ...[
+            const SizedBox(height: 2),
+            Text(
+              album,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                fontSize: compact ? 10 : 12,
+                color: Colors.white54,
+              ),
+            ),
+          ],
+          if (hint != null) ...[
+            const SizedBox(height: 4),
+            Text(
+              hint,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                fontSize: compact ? 10 : 12,
+                color: Colors.white38,
+              ),
+            ),
+          ],
+          SizedBox(height: compact ? 6 : 20),
+          _liquidTimeline(compact: compact),
+          SizedBox(height: compact ? 4 : 10),
+          Center(child: _liquidTransport(compact: compact)),
+          SizedBox(height: compact ? 6 : 14),
+          _liquid21Volume(compact: compact),
+          if (!compact && sourceLine.isNotEmpty) ...[
+            const SizedBox(height: 6),
+            Text(
+              sourceLine.toUpperCase(),
+              style: TextStyle(
+                fontSize: 9,
+                letterSpacing: .07,
+                color: Colors.white.withValues(alpha: .35),
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  Widget _liquid21TopBar() {
+    final protocol = playbackProtocolLabel(widget.state.playback.protocol);
+    final quality = widget.state.playback.qualityText?.trim();
+    final qualityLabel = (quality == null || quality.isEmpty)
+        ? null
+        : quality.split('·').last.trim();
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 4, 14, 2),
+      child: Row(
+        children: [
+          if (protocol != null) _chip(protocol),
+          if (qualityLabel != null && qualityLabel.isNotEmpty) ...[
+            const SizedBox(width: 7),
+            _chip(qualityLabel),
+          ],
+          const Spacer(),
+          if (_lyricsToggleVisible)
+            _liquidBarIconButton(
+              key: const ValueKey('playback-lyrics-toggle-button'),
+              focusNode: _lyricsToggleFocus,
+              icon: _lyricsVisible
+                  ? Icons.subtitles_rounded
+                  : Icons.subtitles_off_rounded,
+              onTap: _toggleLyricsVisibility,
+              upFocusNode: null,
+              leftFocusNode: null,
+              rightFocusNode: _menuVisible ? _menuFocus : null,
+              downFocusNode: _seekable ? _progressFocus : null,
+            ),
+          if (_menuVisible) ...[
+            const SizedBox(width: 4),
+            _hiddenMenuWhileOverlay(
+              _liquidBarIconButton(
+                key: const ValueKey('playback-menu-button'),
+                focusNode: _menuFocus,
+                icon: Icons.more_horiz_rounded,
+                onTap: widget.onOpenMenu,
+                menuKey: widget.menuButtonKey,
+                autofocus: true,
+                leftFocusNode: _lyricsToggleVisible ? _lyricsToggleFocus : null,
+                downFocusNode: _seekable ? _progressFocus : null,
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
 
   Widget _liquidTimeline({required bool compact}) {
     final playback = widget.state.playback;
@@ -918,38 +1094,6 @@ class _PlayerViewState extends State<PlayerView> {
           ],
         ),
       ],
-    );
-  }
-
-  Widget _liquidTopBar({required bool compact}) {
-    final protocol = playbackProtocolLabel(widget.state.playback.protocol);
-    final quality = widget.state.playback.qualityText?.trim();
-    return Padding(
-      padding: EdgeInsets.fromLTRB(
-        compact ? 18 : 30,
-        compact ? 4 : 10,
-        compact ? 18 : 30,
-        2,
-      ),
-      child: Row(
-        children: [
-          if (protocol != null) _chip(protocol),
-          if (quality != null && quality.isNotEmpty) ...[
-            const SizedBox(width: 8),
-            _chip(quality.split('·').last.trim()),
-          ],
-          const Spacer(),
-          Text(
-            'FUSIONPLAY',
-            style: TextStyle(
-              fontSize: 10.5,
-              letterSpacing: .22,
-              color: Colors.white.withValues(alpha: .30),
-              fontWeight: FusionTypography.mediumFontWeight,
-            ),
-          ),
-        ],
-      ),
     );
   }
 
@@ -1076,105 +1220,6 @@ class _PlayerViewState extends State<PlayerView> {
                 icon,
                 size: compact ? 18 : 22,
                 color: Colors.white.withValues(alpha: .72),
-              ),
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-
-  Widget _liquidSecondaryBar({required bool compact}) {
-    final percent = (_displayVolume * 100).round();
-    final icon = percent == 0
-        ? Icons.volume_off_rounded
-        : (percent < 50 ? Icons.volume_down_rounded : Icons.volume_up_rounded);
-    return Padding(
-      key: const ValueKey('player-dock'),
-      padding: EdgeInsets.fromLTRB(16, 2, 16, compact ? 6 : 14),
-      child: Center(
-        child: ClipRRect(
-          borderRadius: BorderRadius.circular(24),
-          child: BackdropFilter(
-            filter: ui.ImageFilter.blur(sigmaX: 40, sigmaY: 40),
-            child: Container(
-              height: compact ? 44 : 50,
-              padding: const EdgeInsets.symmetric(horizontal: 12),
-              decoration: BoxDecoration(
-                gradient: const LinearGradient(
-                  begin: Alignment.topCenter,
-                  end: Alignment.bottomCenter,
-                  colors: [Color(0x14FFFFFF), Color(0x08000000)],
-                ),
-                border: Border.all(color: const Color(0x16FFFFFF)),
-                borderRadius: BorderRadius.circular(24),
-              ),
-              child: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  InkResponse(
-                    key: const ValueKey('volume-mute-button'),
-                    onTap: _toggleMute,
-                    radius: 18,
-                    child: SizedBox(
-                      width: 30,
-                      child: Icon(
-                        icon,
-                        size: 18,
-                        color: Colors.white.withValues(alpha: .78),
-                      ),
-                    ),
-                  ),
-                  SizedBox(
-                    width: compact ? 96 : 132,
-                    child: RoundedProgressBar(
-                      key: const ValueKey('volume-slider'),
-                      value: _displayVolume,
-                      enabled: true,
-                      seekEnabled: true,
-                      showThumb: true,
-                      focusNode: _volumeFocus,
-                      activeColor: Colors.white.withValues(alpha: .82),
-                      inactiveColor: Colors.white.withValues(alpha: .20),
-                      onChanged: (value) => setState(() => _volumeDrag = value),
-                      onChangeEnd: (value) =>
-                          _commitVolume((value * 100).round()),
-                    ),
-                  ),
-                  SizedBox(width: compact ? 6 : 12),
-                  if (_lyricsToggleVisible)
-                    _liquidBarIconButton(
-                      key: const ValueKey('playback-lyrics-toggle-button'),
-                      focusNode: _lyricsToggleFocus,
-                      icon: _lyricsVisible
-                          ? Icons.subtitles_rounded
-                          : Icons.subtitles_off_rounded,
-                      onTap: _toggleLyricsVisibility,
-                      upFocusNode: _playVisible ? _playPauseFocus : null,
-                      leftFocusNode: _volumeFocus,
-                      rightFocusNode: _menuVisible ? _menuFocus : null,
-                    ),
-                  if (_menuVisible) ...[
-                    const SizedBox(width: 4),
-                    _hiddenMenuWhileOverlay(
-                      _liquidBarIconButton(
-                        key: const ValueKey('playback-menu-button'),
-                        focusNode: _menuFocus,
-                        icon: Icons.more_horiz_rounded,
-                        onTap: widget.onOpenMenu,
-                        menuKey: widget.menuButtonKey,
-                        autofocus: true,
-                        upFocusNode: _playVisible ? _playPauseFocus : null,
-                        leftFocusNode: _lyricsToggleVisible
-                            ? _lyricsToggleFocus
-                            : _volumeFocus,
-                        downFocusNode: _seekable
-                            ? _progressFocus
-                            : (_playVisible ? _playPauseFocus : null),
-                      ),
-                    ),
-                  ],
-                ],
               ),
             ),
           ),

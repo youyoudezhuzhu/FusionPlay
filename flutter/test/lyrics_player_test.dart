@@ -171,17 +171,15 @@ void main() {
       find.byKey(const ValueKey('player-layout-horizontal')),
       findsOneWidget,
     );
-    final cover = tester.getRect(find.byType(ArtworkCard));
     final title = tester.getRect(find.text('Track'));
     final artist = tester.getRect(find.text('Artist'));
     final lyrics = tester.getRect(
       find.byKey(const ValueKey('player-lyrics-view')),
     );
 
-    // Liquid Player 横屏：封面/信息在顶部，歌词在其下方整宽区域。
+    // 21:9 双栏：左侧玻璃面板含封面/信息，右侧是歌词列。
     expect(title.top, lessThan(artist.top));
-    expect(cover.left, lessThan(title.left));
-    expect(lyrics.top, greaterThan(artist.bottom));
+    expect(lyrics.left, greaterThan(title.left));
     expect(tester.takeException(), isNull);
   });
 
@@ -687,7 +685,7 @@ void main() {
 
     expect(find.text('Track'), findsOneWidget);
     expect(find.text('暂无歌词'), findsOneWidget);
-    expect(find.byKey(const ValueKey('player-dock')), findsOneWidget);
+    expect(find.byKey(const ValueKey('player-dock')), findsNothing);
     expect(
       find.byKey(const ValueKey('playback-play-pause-button')),
       findsOneWidget,
@@ -767,6 +765,59 @@ void main() {
     await tester.pump(const Duration(milliseconds: 350));
     expect(find.byKey(const ValueKey('player-lyrics-view')), findsOneWidget);
     expect(find.text('第一句'), findsWidgets);
+    expect(tester.takeException(), isNull);
+  });
+  testWidgets('21:9 目标尺寸无溢出，左面板+右歌词', (tester) async {
+    for (final size in const [
+      Size(840, 360),
+      Size(900, 400),
+      Size(980, 420),
+      Size(1008, 432),
+      Size(1080, 462),
+      Size(1280, 720),
+      Size(1920, 1080),
+    ]) {
+      await _pumpPlayer(tester, _state(lyrics: _lyrics()), size: size);
+      expect(
+        find.byKey(const ValueKey('player-glass-panel')),
+        findsOneWidget,
+        reason: '$size left panel',
+      );
+      expect(
+        find.byKey(const ValueKey('player-lyrics-view')),
+        findsOneWidget,
+        reason: '$size lyrics',
+      );
+      expect(tester.takeException(), isNull, reason: '$size overflow');
+    }
+  });
+
+  testWidgets('21:9 无歌词为左大封面 + 右控制面板，无空白歌词列', (tester) async {
+    await _pumpPlayer(tester, _state(), size: const Size(840, 360));
+    expect(
+      find.byKey(const ValueKey('player-centered-layout')),
+      findsOneWidget,
+    );
+    expect(find.byKey(const ValueKey('player-lyrics-view')), findsNothing);
+    expect(find.byKey(const ValueKey('volume-slider')), findsOneWidget);
+    expect(find.byKey(const ValueKey('player-dock')), findsNothing);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('21:9 长标题截断且控制区不跳动', (tester) async {
+    final state = _stateFromMap({
+      'playback': {
+        'title': '这是一个非常非常长的歌曲名称用于验证超宽屏下的截断与布局稳定性',
+        'artist': 'Demo Artist',
+        'durationMs': 200000,
+        'streamActive': true,
+      },
+    });
+    await _pumpPlayer(tester, state, size: const Size(840, 360));
+    expect(
+      find.byKey(const ValueKey('player-centered-layout')),
+      findsOneWidget,
+    );
     expect(tester.takeException(), isNull);
   });
 }

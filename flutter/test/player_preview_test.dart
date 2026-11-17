@@ -34,10 +34,14 @@ LyricsDocument _lyrics() => const LyricsDocument(
   ],
 );
 
-AppState _state({required bool withLyrics, bool loading = false}) => AppState(
+AppState _state({
+  required bool withLyrics,
+  bool loading = false,
+  String title = 'FusionPlay Demo',
+}) => AppState(
   initialized: true,
   playback: PlaybackSnapshot(
-    title: 'FusionPlay Demo',
+    title: title,
     artist: 'Demo Artist · 作曲',
     album: 'AirPlay Sessions',
     durationMs: 180000,
@@ -57,6 +61,7 @@ Widget _host({
   required bool withLyrics,
   required GlobalKey boundaryKey,
   bool loading = false,
+  String title = 'FusionPlay Demo',
 }) {
   return MaterialApp(
     debugShowCheckedModeBanner: false,
@@ -75,7 +80,11 @@ Widget _host({
             ],
           ),
           child: PlayerView(
-            state: _state(withLyrics: withLyrics, loading: loading),
+            state: _state(
+              withLyrics: withLyrics,
+              loading: loading,
+              title: title,
+            ),
             artworkSource: _coverData,
             artworkIdentity: 'preview-cover',
             onPlayback: (_) {},
@@ -95,6 +104,7 @@ Future<void> _capture(
   required Size size,
   required bool withLyrics,
   bool loading = false,
+  String title = 'FusionPlay Demo',
 }) async {
   tester.view.physicalSize = size;
   tester.view.devicePixelRatio = 1;
@@ -102,7 +112,12 @@ Future<void> _capture(
   addTearDown(tester.view.resetDevicePixelRatio);
   final key = GlobalKey();
   await tester.pumpWidget(
-    _host(withLyrics: withLyrics, boundaryKey: key, loading: loading),
+    _host(
+      withLyrics: withLyrics,
+      boundaryKey: key,
+      loading: loading,
+      title: title,
+    ),
   );
   await tester.pump();
   await tester.runAsync(
@@ -167,5 +182,39 @@ void main() {
       withLyrics: false,
       loading: true,
     );
+    await _capture(
+      tester,
+      name: 'tv-1920x1080',
+      size: const Size(1920, 1080),
+      withLyrics: true,
+    );
+    await _capture(
+      tester,
+      name: 'lyrics-long-title-840x360',
+      size: const Size(840, 360),
+      withLyrics: true,
+      title: '这是一个非常非常长的歌曲名称用于验证超宽屏下的截断与布局稳定性',
+    );
+    for (final size in const [
+      Size(840, 360),
+      Size(900, 400),
+      Size(980, 420),
+      Size(1008, 432),
+      Size(1080, 462),
+      Size(1280, 720),
+    ]) {
+      await _capture(
+        tester,
+        name: 'lyrics-${size.width.toInt()}x${size.height.toInt()}',
+        size: size,
+        withLyrics: true,
+      );
+      await _capture(
+        tester,
+        name: 'no-lyrics-${size.width.toInt()}x${size.height.toInt()}',
+        size: size,
+        withLyrics: false,
+      );
+    }
   });
 }
