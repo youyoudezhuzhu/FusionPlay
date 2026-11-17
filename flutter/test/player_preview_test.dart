@@ -38,6 +38,7 @@ AppState _state({
   required bool withLyrics,
   bool loading = false,
   String title = 'FusionPlay Demo',
+  String? streamLine,
 }) => AppState(
   initialized: true,
   playback: PlaybackSnapshot(
@@ -51,7 +52,9 @@ AppState _state({
     protocol: 'airplay',
     qualityText: 'AirPlay 2 · ALAC',
     volumePercent: 68,
-    lyrics: withLyrics ? _lyrics() : null,
+    lyrics: streamLine != null
+        ? LyricsDocument(synced: false, lines: [LyricLine(text: streamLine)])
+        : (withLyrics ? _lyrics() : null),
     lyricsLoading: loading,
   ),
   controls: PlaybackControls.all,
@@ -62,6 +65,7 @@ Widget _host({
   required GlobalKey boundaryKey,
   bool loading = false,
   String title = 'FusionPlay Demo',
+  String? streamLine,
 }) {
   return MaterialApp(
     debugShowCheckedModeBanner: false,
@@ -84,6 +88,7 @@ Widget _host({
               withLyrics: withLyrics,
               loading: loading,
               title: title,
+              streamLine: streamLine,
             ),
             artworkSource: _coverData,
             artworkIdentity: 'preview-cover',
@@ -105,20 +110,38 @@ Future<void> _capture(
   required bool withLyrics,
   bool loading = false,
   String title = 'FusionPlay Demo',
+  String? streamLine,
+  List<String>? streamLines,
 }) async {
   tester.view.physicalSize = size;
   tester.view.devicePixelRatio = 1;
   addTearDown(tester.view.resetPhysicalSize);
   addTearDown(tester.view.resetDevicePixelRatio);
   final key = GlobalKey();
-  await tester.pumpWidget(
-    _host(
-      withLyrics: withLyrics,
-      boundaryKey: key,
-      loading: loading,
-      title: title,
-    ),
-  );
+  final streamSequence = streamLines ?? [if (streamLine != null) streamLine];
+  if (streamSequence.isNotEmpty) {
+    for (final line in streamSequence) {
+      await tester.pumpWidget(
+        _host(
+          withLyrics: withLyrics,
+          boundaryKey: key,
+          loading: loading,
+          title: title,
+          streamLine: line,
+        ),
+      );
+      await tester.pump(const Duration(milliseconds: 280));
+    }
+  } else {
+    await tester.pumpWidget(
+      _host(
+        withLyrics: withLyrics,
+        boundaryKey: key,
+        loading: loading,
+        title: title,
+      ),
+    );
+  }
   await tester.pump();
   await tester.runAsync(
     () => Future<void>.delayed(const Duration(milliseconds: 300)),
@@ -145,6 +168,13 @@ void main() {
   });
 
   testWidgets('render Apple Music landscape previews', (tester) async {
+    // Warm the artwork decode/glass backdrop path before the first real shot.
+    await _capture(
+      tester,
+      name: '_warmup',
+      size: const Size(840, 360),
+      withLyrics: true,
+    );
     await _capture(
       tester,
       name: 'lyrics-960x540',
@@ -181,6 +211,26 @@ void main() {
       size: const Size(960, 540),
       withLyrics: false,
       loading: true,
+    );
+    await _capture(
+      tester,
+      name: 'stream-history-840x360',
+      size: const Size(840, 360),
+      withLyrics: true,
+      streamLines: const ['这是刚从发送端收到的第一句', '第二句歌词随着播放逐句到达', '第三句成为当前高亮歌词'],
+    );
+    await _capture(
+      tester,
+      name: 'stream-single-line-840x360',
+      size: const Size(840, 360),
+      withLyrics: true,
+      streamLine: '只有这一句歌词正在播放',
+    );
+    await _capture(
+      tester,
+      name: 'lyrics-840x360',
+      size: const Size(840, 360),
+      withLyrics: true,
     );
     await _capture(
       tester,

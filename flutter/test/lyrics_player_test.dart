@@ -150,8 +150,8 @@ void main() {
     expect(find.text('第二句歌词'), findsOneWidget);
     // 旧歌词开关已移除。
     expect(find.byKey(const ValueKey('playback-lyrics-button')), findsNothing);
-    // dock / 玻璃组件走 fallback 渲染。
-    expect(find.byType(BackdropFilter), findsWidgets);
+    // 三个播放按钮和音量胶囊使用上游玻璃组件。
+    expect(find.byKey(const ValueKey('player-volume-capsule')), findsOneWidget);
     expect(
       find.byKey(const ValueKey('playback-play-pause-button')),
       findsOneWidget,
@@ -437,9 +437,9 @@ void main() {
     expect(find.byKey(const ValueKey('player-lyrics-view')), findsNothing);
     expect(find.text('音频流未提供歌词'), findsOneWidget);
     expect(find.textContaining('不提供歌词'), findsNothing);
-    // 顶部保留音频来源（协议）与音质信息，避免重构后丢失已有元数据。
+    // 顶部只保留协议；音频格式不再显示。
     expect(find.text('AirPlay 2'), findsWidgets);
-    expect(find.text('AAC / 44.1 kHz / 16-bit / 2 ch'), findsOneWidget);
+    expect(find.text('AAC / 44.1 kHz / 16-bit / 2 ch'), findsNothing);
     // 没有歌词时不出现歌词开关。
     expect(
       find.byKey(const ValueKey('playback-lyrics-toggle-button')),
@@ -779,7 +779,7 @@ void main() {
     ]) {
       await _pumpPlayer(tester, _state(lyrics: _lyrics()), size: size);
       expect(
-        find.byKey(const ValueKey('player-glass-panel')),
+        find.byKey(const ValueKey('player-controls-column')),
         findsOneWidget,
         reason: '$size left panel',
       );
@@ -818,6 +818,30 @@ void main() {
       find.byKey(const ValueKey('player-centered-layout')),
       findsOneWidget,
     );
+    expect(tester.takeException(), isNull);
+  });
+  testWidgets('流式单句歌词保留最近历史，不伪造未来歌词', (tester) async {
+    AppState line(String text) => _state(
+      trackIdentity: 'stream-track',
+      lyrics: LyricsDocument(
+        origin: 'airplay',
+        synced: false,
+        lines: [LyricLine(text: text)],
+      ),
+    );
+    await _pumpPlayer(tester, line('第一句流式歌词'), size: const Size(840, 360));
+    expect(find.text('第一句流式歌词'), findsOneWidget);
+
+    await tester.pumpWidget(_playerHost(line('第二句流式歌词')));
+    await tester.pump();
+    expect(find.text('第一句流式歌词'), findsOneWidget);
+    expect(find.text('第二句流式歌词'), findsOneWidget);
+
+    await tester.pumpWidget(_playerHost(line('第三句流式歌词')));
+    await tester.pump();
+    expect(find.text('第一句流式歌词'), findsOneWidget);
+    expect(find.text('第二句流式歌词'), findsOneWidget);
+    expect(find.text('第三句流式歌词'), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
 }

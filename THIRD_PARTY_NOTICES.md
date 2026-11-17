@@ -36,3 +36,11 @@ DLNA 宿主播放器新增的 TLS 传输依赖：`rustls`（Apache-2.0/MIT/ISC �
 小米妙播接收逻辑由 `src/FusionPlay.MiPlaySdk` 中的 Rust 源码实现，不打包或启动 MiPCAudio、MAFSvr、MiConnect、MiCont、小米电脑管家或厂商账号服务。源码中的协议名称、服务标识和兼容性测试向量仅用于网络互操作。
 
 本文件用于记录工程分发边界，不构成法律意见。
+
+## liquid_glass_widgets (播放页)
+
+- 上游：<https://github.com/sdegenaar/liquid_glass_widgets>
+- 版本：0.18.4（当前项目 Flutter 3.32.8 可用；最新 1.17.5 要求 Flutter >= 3.41，未采用）
+- 路径：`flutter/third_party/liquid_glass_widgets/`
+- 许可证：MIT，Copyright (c) 2024 Sebastian Degenaar；全文见该目录 `LICENSE`。
+- 本地兼容性修改：移除 4 处 Flutter 3.32 不支持的 `filterQuality:` 参数；通过 `dependency_overrides` 固定 `vector_math 2.3.0`。未改写 shader 算法或视觉参数。

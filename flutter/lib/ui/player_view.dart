@@ -8,8 +8,10 @@ import '../models/app_state.dart';
 import '../theme/fusion_theme.dart';
 import 'animated_press_scale.dart';
 import 'artwork.dart';
+import 'floating_album_art.dart';
 import 'g2_shape.dart';
-import 'liquid_glass.dart';
+import 'package:liquid_glass_widgets/liquid_glass_widgets.dart' as lg;
+
 import 'lyrics_view.dart';
 import 'remote_focus.dart';
 import 'rounded_progress_bar.dart';
@@ -118,6 +120,9 @@ class _PlayerViewState extends State<PlayerView> {
   /// true and resets on track/source changes or when lyrics appear.
   bool _lyricsVisible = true;
   late String _lastTrackKey;
+  final List<LyricLine> _streamLyrics = <LyricLine>[];
+  String? _streamLastSignature;
+  String? _streamSessionKey;
 
   bool seeking = false;
   double? seekPositionMs;
@@ -227,6 +232,68 @@ class _PlayerViewState extends State<PlayerView> {
     }
   }
 
+  /// Protocols such as some AirPlay senders only deliver the current line.
+  /// Keep a short bounded history keyed by the current playback session; never
+  /// invent future lines or word timestamps.
+  void _observeStreamLyrics(PlaybackSnapshot playback) {
+    final session = _trackKeyOf(playback);
+    if (_streamSessionKey != session) {
+      _streamSessionKey = session;
+      _streamLyrics.clear();
+      _streamLastSignature = null;
+    }
+    final lyrics = playback.lyrics;
+    if (lyrics == null || lyrics.synced || lyrics.lines.length > 1) {
+      // Full timeline/static document: the normal LyricsView owns display.
+      _streamLyrics.clear();
+      _streamLastSignature = null;
+      return;
+    }
+    final line = lyrics.lines
+        .where((candidate) => !candidate.isBlank)
+        .map((candidate) => candidate.text.trim())
+        .where((text) => text.isNotEmpty)
+        .firstOrNull;
+    final source = lyrics.lines
+        .where((candidate) => !candidate.isBlank)
+        .firstOrNull;
+    if (line == null || source == null) return;
+    final signature = '${source.startMs}|$line';
+    if (signature == _streamLastSignature) return;
+    _streamLastSignature = signature;
+    _streamLyrics.add(source);
+    if (_streamLyrics.length > 7) {
+      _streamLyrics.removeRange(0, _streamLyrics.length - 7);
+    }
+  }
+
+  List<LyricLine> _streamHistoryFor(PlaybackSnapshot playback) {
+    if (_isAirPlayProtocol(playback) && _airPlayTitleLyrics) {
+      return _airPlayTitleCaptures
+          .map((capture) => capture.text.trim())
+          .where((text) => text.isNotEmpty)
+          .map((text) => LyricLine(text: text))
+          .toList(growable: false);
+    }
+    final lyrics = playback.lyrics;
+    if (lyrics != null &&
+        !lyrics.synced &&
+        lyrics.lines.length <= 1 &&
+        _streamLyrics.isNotEmpty) {
+      return List<LyricLine>.unmodifiable(_streamLyrics);
+    }
+    return const <LyricLine>[];
+  }
+
+  bool _isStreamingLyrics(PlaybackSnapshot playback) {
+    if (_isAirPlayProtocol(playback) && _airPlayTitleLyrics) return true;
+    final lyrics = playback.lyrics;
+    return lyrics != null &&
+        !lyrics.synced &&
+        lyrics.lines.length <= 1 &&
+        _streamLyrics.isNotEmpty;
+  }
+
   LyricsDocument? _effectiveLyricsFor(PlaybackSnapshot playback) {
     if (_isAirPlayProtocol(playback) && _airPlayTitleLyrics) {
       return LyricsDocument(
@@ -311,6 +378,7 @@ class _PlayerViewState extends State<PlayerView> {
     _progressAnchorMs = _lastStatePositionMs;
     _lastPlaying = widget.state.playback.isPlaying;
     _observeAirPlayTitle(widget.state.playback);
+    _observeStreamLyrics(widget.state.playback);
     _progressTicker = Timer.periodic(
       const Duration(milliseconds: 250),
       (_) => _tickProgress(),
@@ -339,6 +407,7 @@ class _PlayerViewState extends State<PlayerView> {
       _optimisticVolume = null;
     }
     _observeAirPlayTitle(widget.state.playback);
+    _observeStreamLyrics(widget.state.playback);
     final nextTrackKey = _trackKeyOf(widget.state.playback);
     final previousHadLyrics = _hasDisplayableLyricsFor(
       oldWidget.state.playback,
@@ -563,7 +632,7 @@ class _PlayerViewState extends State<PlayerView> {
   Widget build(BuildContext context) {
     return LayoutBuilder(
       builder: (context, outer) {
-        return _liquid21PlayerLayout();
+        return lg.LiquidGlassWidgets.wrap(child: _liquid21PlayerLayout());
       },
     );
   }
@@ -656,28 +725,36 @@ class _PlayerViewState extends State<PlayerView> {
   Widget _liquid21LyricsStage() => LayoutBuilder(
     key: const ValueKey('player-layout-horizontal'),
     builder: (context, content) {
-      final widths = _liquid21PanelWidths(
-        Size(content.maxWidth, content.maxHeight),
-      );
+      final cappedWidth =
+          (content.maxWidth > 1400
+                  ? math.min(content.maxWidth, 1600)
+                  : content.maxWidth)
+              .toDouble();
+      final widths = _liquid21PanelWidths(Size(cappedWidth, content.maxHeight));
       final gap = widths.gap;
       final leftWidth = widths.left;
       final rightWidth = widths.right;
-      final activeFont = (rightWidth * .038).clamp(21.0, 32.0).toDouble();
+      final activeFont = (rightWidth * .038).clamp(21.0, 42.0).toDouble();
       return Padding(
         padding: const EdgeInsets.fromLTRB(14, 0, 20, 10),
-        child: Row(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            SizedBox(width: leftWidth, child: _liquid21PlayerPanel()),
-            SizedBox(width: gap),
-            Expanded(
-              child: _lyricsColumn(
-                activeFontSize: activeFont,
-                inactiveFontSize: activeFont * .63,
-                alignCenter: false,
-              ),
+        child: Center(
+          child: SizedBox(
+            width: cappedWidth,
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                SizedBox(width: leftWidth, child: _liquid21PlayerPanel()),
+                SizedBox(width: gap),
+                Expanded(
+                  child: _lyricsColumn(
+                    activeFontSize: activeFont,
+                    inactiveFontSize: activeFont * .63,
+                    alignCenter: false,
+                  ),
+                ),
+              ],
             ),
-          ],
+          ),
         ),
       );
     },
@@ -687,49 +764,34 @@ class _PlayerViewState extends State<PlayerView> {
     builder: (context, constraints) {
       final panelWidth = constraints.maxWidth;
       final panelHeight = constraints.maxHeight;
-      final compact = panelHeight < 430 || panelWidth < 300;
-      final padding = compact ? 10.0 : 16.0;
+      final compact = panelHeight < 560 || panelWidth < 300;
+      final dense = compact && panelHeight < 330;
+      final padding = compact ? 8.0 : 16.0;
       final cover = math
           .min(
             panelWidth - padding * 2,
-            math.max(56.0, panelHeight - (compact ? 224 : 250)),
+            math.max(56.0, panelHeight - (compact ? 236 : 300)),
           )
-          .clamp(64.0, 300.0)
+          .clamp(64.0, 500.0)
           .toDouble();
       final playback = widget.state.playback;
       final (title, artist) = _displayMetadata(playback);
       final album = playback.album?.trim();
-      final source = playbackProtocolLabel(playback.protocol);
-      final quality = playback.qualityText?.trim();
-      final qualityLabel = (quality == null || quality.isEmpty)
-          ? null
-          : quality.split('·').last.trim();
-      final sourceLine = [
-        if (source != null) source,
-        if (qualityLabel != null && qualityLabel.isNotEmpty) qualityLabel,
-      ].join(' · ');
-      return LiquidGlass(
-        level: GlassLevel.panel,
-        borderRadius: compact ? 22 : 28,
-        blurSigma: compact ? 20 : 28,
-        tint: const Color(0x72101419),
-        refraction: .65,
-        thickness: 12,
-        specular: .22,
-        forceFallback: widget.forceGlassFallback,
+      final artistLine =
+          compact && artist != null && album != null && album.isNotEmpty
+          ? '$artist · $album'
+          : artist;
+      return Padding(
         padding: EdgeInsets.all(padding),
         child: Column(
-          key: const ValueKey('player-glass-panel'),
+          key: const ValueKey('player-controls-column'),
+          mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            Expanded(
-              child: Center(
-                child: _breathingArtwork(
-                  size: cover,
-                  child: _artworkCard(cover, radius: compact ? 16 : 20),
-                ),
-              ),
+            _breathingArtwork(
+              size: cover,
+              child: _artworkCard(cover, radius: compact ? 16 : 20),
             ),
-            SizedBox(height: compact ? 3 : 8),
+            SizedBox(height: compact ? 6 : 12),
             Text(
               title,
               maxLines: compact ? 1 : 2,
@@ -743,9 +805,9 @@ class _PlayerViewState extends State<PlayerView> {
                 fontVariations: FusionTypography.semiBold,
               ),
             ),
-            if (artist != null && artist.isNotEmpty)
+            if (artistLine != null && artistLine.isNotEmpty)
               Text(
-                artist,
+                artistLine,
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
                 textAlign: TextAlign.center,
@@ -765,22 +827,11 @@ class _PlayerViewState extends State<PlayerView> {
                   color: Colors.white.withValues(alpha: .46),
                 ),
               ),
-            if (compact && sourceLine.isNotEmpty)
-              Text(
-                sourceLine.toUpperCase(),
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: TextStyle(
-                  fontSize: 9,
-                  letterSpacing: .06,
-                  color: Colors.white.withValues(alpha: .38),
-                ),
-              ),
-            SizedBox(height: compact ? 2 : 6),
+            SizedBox(height: compact ? 1 : 4),
             _liquidTimeline(compact: compact),
-            SizedBox(height: compact ? 2 : 5),
+            SizedBox(height: compact ? 0 : 4),
             Center(child: _liquidTransport(compact: compact)),
-            SizedBox(height: compact ? 3 : 8),
+            SizedBox(height: dense ? 8 : (compact ? 16 : 20)),
             _liquid21Volume(compact: compact),
           ],
         ),
@@ -793,49 +844,60 @@ class _PlayerViewState extends State<PlayerView> {
     final icon = percent == 0
         ? Icons.volume_off_rounded
         : (percent < 50 ? Icons.volume_down_rounded : Icons.volume_up_rounded);
-    return Container(
-      height: compact ? 30 : 36,
-      padding: EdgeInsets.symmetric(horizontal: compact ? 5 : 8),
-      decoration: BoxDecoration(
-        color: Colors.white.withValues(alpha: .055),
-        borderRadius: BorderRadius.circular(999),
-        border: Border.all(color: Colors.white.withValues(alpha: .065)),
+    return ConstrainedBox(
+      constraints: BoxConstraints(
+        maxWidth: compact
+            ? 360
+            : (MediaQuery.sizeOf(context).width >= 1500 ? 560 : 460),
       ),
-      child: Row(
-        children: [
-          InkResponse(
-            key: const ValueKey('volume-mute-button'),
-            onTap: _toggleMute,
-            radius: 16,
-            child: Icon(icon, size: compact ? 16 : 18, color: Colors.white70),
-          ),
-          const SizedBox(width: 4),
-          Expanded(
-            child: RoundedProgressBar(
-              key: const ValueKey('volume-slider'),
-              value: _displayVolume,
-              enabled: true,
-              seekEnabled: true,
-              showThumb: true,
-              focusNode: _volumeFocus,
-              upFocusNode: _playVisible ? _playPauseFocus : null,
-              focusBorderColor: Colors.white,
-              activeColor: Colors.white.withValues(alpha: .82),
-              inactiveColor: Colors.white.withValues(alpha: .18),
-              onChanged: (value) => setState(() => _volumeDrag = value),
-              onChangeEnd: (value) => _commitVolume((value * 100).round()),
+      child: lg.GlassContainer(
+        key: const ValueKey('player-volume-capsule'),
+        height: compact ? 30 : 40,
+        padding: EdgeInsets.symmetric(horizontal: compact ? 7 : 10),
+        shape: const lg.LiquidRoundedSuperellipse(borderRadius: 999),
+        useOwnLayer: true,
+        quality: lg.GlassQuality.premium,
+        settings: const lg.LiquidGlassSettings(
+          thickness: 14,
+          blur: 4,
+          glassColor: Color(0x18FFFFFF),
+        ),
+        child: Row(
+          children: [
+            InkResponse(
+              key: const ValueKey('volume-mute-button'),
+              onTap: _toggleMute,
+              radius: 16,
+              child: Icon(icon, size: compact ? 16 : 18, color: Colors.white70),
             ),
-          ),
-          SizedBox(width: compact ? 5 : 8),
-          Text(
-            '$percent',
-            style: TextStyle(
-              fontSize: compact ? 9 : 10,
-              color: Colors.white.withValues(alpha: .48),
-              fontFeatures: const [FontFeature.tabularFigures()],
+            const SizedBox(width: 4),
+            Expanded(
+              child: RoundedProgressBar(
+                key: const ValueKey('volume-slider'),
+                value: _displayVolume,
+                enabled: true,
+                seekEnabled: true,
+                showThumb: true,
+                focusNode: _volumeFocus,
+                upFocusNode: _playVisible ? _playPauseFocus : null,
+                focusBorderColor: Colors.white,
+                activeColor: Colors.white.withValues(alpha: .82),
+                inactiveColor: Colors.white.withValues(alpha: .18),
+                onChanged: (value) => setState(() => _volumeDrag = value),
+                onChangeEnd: (value) => _commitVolume((value * 100).round()),
+              ),
             ),
-          ),
-        ],
+            SizedBox(width: compact ? 5 : 8),
+            Text(
+              '$percent',
+              style: TextStyle(
+                fontSize: compact ? 9 : 10,
+                color: Colors.white.withValues(alpha: .48),
+                fontFeatures: const [FontFeature.tabularFigures()],
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -844,60 +906,61 @@ class _PlayerViewState extends State<PlayerView> {
     key: const ValueKey('player-layout-horizontal'),
     builder: (context, content) {
       final compact = content.maxHeight < 360;
+      final cappedWidth =
+          (content.maxWidth > 1400
+                  ? math.min(content.maxWidth, 1600)
+                  : content.maxWidth)
+              .toDouble();
+      final groupWidth = math
+          .min(cappedWidth * .82, 980.0)
+          .clamp(math.min(cappedWidth, 360), cappedWidth)
+          .toDouble();
       final cover = math
-          .min(
-            content.maxWidth * .34,
-            content.maxHeight * (compact ? .58 : .66),
-          )
-          .clamp(96.0, 380.0)
+          .min(groupWidth * .34, content.maxHeight * (compact ? .58 : .66))
+          .clamp(88.0, 380.0)
           .toDouble();
       return Padding(
         key: const ValueKey('player-centered-layout'),
         padding: const EdgeInsets.fromLTRB(18, 0, 18, 10),
-        child: Row(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            Expanded(
-              flex: 5,
-              child: Center(
-                child: _breathingArtwork(
-                  size: cover,
-                  child: _artworkCard(cover, radius: compact ? 20 : 26),
+        child: Center(
+          child: SizedBox(
+            width: groupWidth,
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Expanded(
+                  flex: 5,
+                  child: Center(
+                    child: _breathingArtwork(
+                      size: cover,
+                      child: _artworkCard(cover, radius: compact ? 20 : 26),
+                    ),
+                  ),
                 ),
-              ),
+                SizedBox(width: compact ? 16 : 28),
+                Expanded(
+                  flex: 6,
+                  child: _liquid21InfoPanel(
+                    compact: true,
+                    dense: content.maxHeight < 330,
+                  ),
+                ),
+              ],
             ),
-            SizedBox(width: compact ? 16 : 28),
-            Expanded(flex: 6, child: _liquid21InfoPanel(compact: true)),
-          ],
+          ),
         ),
       );
     },
   );
 
-  Widget _liquid21InfoPanel({required bool compact}) {
+  Widget _liquid21InfoPanel({required bool compact, bool dense = false}) {
     final playback = widget.state.playback;
     final (title, artist) = _displayMetadata(playback);
     final album = playback.album?.trim();
-    final source = playbackProtocolLabel(playback.protocol);
-    final quality = playback.qualityText?.trim();
-    final qualityLabel = (quality == null || quality.isEmpty)
-        ? null
-        : quality.split('·').last.trim();
-    final sourceLine = [
-      if (source != null) source,
-      if (qualityLabel != null && qualityLabel.isNotEmpty) qualityLabel,
-    ].join(' · ');
     final hiddenByUser = _lyricsSupported && _hasDisplayableLyrics;
     final hint = hiddenByUser ? null : _centeredHint(playback);
-    return LiquidGlass(
-      level: GlassLevel.panel,
-      borderRadius: compact ? 22 : 28,
-      tint: const Color(0x72101419),
-      refraction: .65,
-      thickness: 12,
-      specular: .22,
-      forceFallback: widget.forceGlassFallback,
-      padding: EdgeInsets.all(compact ? 10 : 22),
+    return Padding(
+      padding: EdgeInsets.all(compact ? (dense ? 4 : 6) : 22),
       child: Column(
         mainAxisAlignment: MainAxisAlignment.center,
         crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -950,23 +1013,12 @@ class _PlayerViewState extends State<PlayerView> {
               ),
             ),
           ],
-          SizedBox(height: compact ? 6 : 20),
+          SizedBox(height: dense ? 2 : (compact ? 6 : 20)),
           _liquidTimeline(compact: compact),
-          SizedBox(height: compact ? 4 : 10),
+          SizedBox(height: dense ? 2 : (compact ? 4 : 10)),
           Center(child: _liquidTransport(compact: compact)),
           SizedBox(height: compact ? 6 : 14),
           _liquid21Volume(compact: compact),
-          if (!compact && sourceLine.isNotEmpty) ...[
-            const SizedBox(height: 6),
-            Text(
-              sourceLine.toUpperCase(),
-              style: TextStyle(
-                fontSize: 9,
-                letterSpacing: .07,
-                color: Colors.white.withValues(alpha: .35),
-              ),
-            ),
-          ],
         ],
       ),
     );
@@ -974,19 +1026,11 @@ class _PlayerViewState extends State<PlayerView> {
 
   Widget _liquid21TopBar() {
     final protocol = playbackProtocolLabel(widget.state.playback.protocol);
-    final quality = widget.state.playback.qualityText?.trim();
-    final qualityLabel = (quality == null || quality.isEmpty)
-        ? null
-        : quality.split('·').last.trim();
     return Padding(
       padding: const EdgeInsets.fromLTRB(16, 4, 14, 2),
       child: Row(
         children: [
           if (protocol != null) _chip(protocol),
-          if (qualityLabel != null && qualityLabel.isNotEmpty) ...[
-            const SizedBox(width: 7),
-            _chip(qualityLabel),
-          ],
           const Spacer(),
           if (_lyricsToggleVisible)
             _liquidBarIconButton(
@@ -1069,29 +1113,32 @@ class _PlayerViewState extends State<PlayerView> {
             },
           ),
         ),
-        const SizedBox(height: 5),
-        Row(
-          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-          children: [
-            Text(
-              _hasPlayback ? _formatDuration(position) : '0:00',
-              style: TextStyle(
-                fontSize: 10.5,
-                color: Colors.white.withValues(alpha: .42),
-                fontFeatures: const [FontFeature.tabularFigures()],
+        SizedBox(height: compact ? 0 : 2),
+        Transform.translate(
+          offset: Offset(0, compact ? -4 : -2),
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Text(
+                _hasPlayback ? _formatDuration(position) : '0:00',
+                style: TextStyle(
+                  fontSize: 10.5,
+                  color: Colors.white.withValues(alpha: .42),
+                  fontFeatures: const [FontFeature.tabularFigures()],
+                ),
               ),
-            ),
-            Text(
-              _hasPlayback
-                  ? '-${_formatDuration(math.max(0, duration - position))}'
-                  : '-0:00',
-              style: TextStyle(
-                fontSize: 10.5,
-                color: Colors.white.withValues(alpha: .42),
-                fontFeatures: const [FontFeature.tabularFigures()],
+              Text(
+                _hasPlayback
+                    ? '-${_formatDuration(math.max(0, duration - position))}'
+                    : '-0:00',
+                style: TextStyle(
+                  fontSize: 10.5,
+                  color: Colors.white.withValues(alpha: .42),
+                  fontFeatures: const [FontFeature.tabularFigures()],
+                ),
               ),
-            ),
-          ],
+            ],
+          ),
         ),
       ],
     );
@@ -1168,7 +1215,8 @@ class _PlayerViewState extends State<PlayerView> {
     FocusNode? downFocusNode,
     required bool compact,
   }) {
-    final size = compact ? 38.0 : 44.0;
+    final tv = MediaQuery.sizeOf(context).width >= 1500;
+    final size = compact ? 34.0 : (tv ? 56.0 : 44.0);
     return AnimatedPressScale(
       key: key,
       externalPressed: focusNode == _previousFocus
@@ -1210,18 +1258,21 @@ class _PlayerViewState extends State<PlayerView> {
             },
           ),
         },
-        child: SizedBox.square(
-          dimension: size,
-          child: InkResponse(
-            onTap: onTap,
-            radius: size / 2,
-            child: Center(
-              child: FusionVectorIcon(
-                icon,
-                size: compact ? 18 : 22,
-                color: Colors.white.withValues(alpha: .72),
-              ),
-            ),
+        child: lg.GlassIconButton(
+          icon: FusionVectorIcon(
+            icon,
+            size: compact ? 18 : 22,
+            color: Colors.white.withValues(alpha: .88),
+          ),
+          onPressed: onTap,
+          size: size,
+          useOwnLayer: true,
+          quality: lg.GlassQuality.premium,
+          settings: const lg.LiquidGlassSettings(
+            thickness: 16,
+            blur: 4,
+            glassColor: Color(0x18FFFFFF),
+            lightIntensity: .5,
           ),
         ),
       ),
@@ -1301,18 +1352,22 @@ class _PlayerViewState extends State<PlayerView> {
           },
         ),
       },
-      child: InkResponse(
-        onTap: onTap,
-        radius: 18,
-        child: Semantics(
-          button: true,
-          child: SizedBox.square(
-            dimension: 34,
-            child: Icon(
-              icon,
-              size: 19,
-              color: Colors.white.withValues(alpha: .82),
-            ),
+      child: Semantics(
+        button: true,
+        child: lg.GlassIconButton(
+          icon: Icon(
+            icon,
+            size: 19,
+            color: Colors.white.withValues(alpha: .90),
+          ),
+          onPressed: onTap,
+          size: 36,
+          useOwnLayer: true,
+          quality: lg.GlassQuality.premium,
+          settings: const lg.LiquidGlassSettings(
+            thickness: 12,
+            blur: 3,
+            glassColor: Color(0x14FFFFFF),
           ),
         ),
       ),
@@ -1331,27 +1386,15 @@ class _PlayerViewState extends State<PlayerView> {
   // Main content
   // ------------------------------------------------------------------
 
-  Widget _artworkCard(double size, {double radius = 26}) => DecoratedBox(
-    decoration: BoxDecoration(
-      borderRadius: BorderRadius.circular(radius),
-      boxShadow: [
-        BoxShadow(
-          color: Colors.black.withValues(alpha: .42),
-          blurRadius: 38,
-          spreadRadius: -6,
-          offset: const Offset(0, 18),
-        ),
-      ],
-    ),
-    child: ClipRRect(
-      borderRadius: BorderRadius.circular(radius),
-      child: ArtworkCard(
-        source: widget.artworkSource,
-        size: size,
-        hasPlayback: _hasPlayback,
-        identity: _artworkCardIdentity,
-        flipDirection: artworkFlipDirection,
-      ),
+  Widget _artworkCard(double size, {double radius = 26}) => FloatingAlbumArt(
+    size: size,
+    radius: radius,
+    child: ArtworkCard(
+      source: widget.artworkSource,
+      size: size,
+      hasPlayback: _hasPlayback,
+      identity: _artworkCardIdentity,
+      flipDirection: artworkFlipDirection,
     ),
   );
 
@@ -1385,6 +1428,17 @@ class _PlayerViewState extends State<PlayerView> {
     final emptyCopy = lyricsEmptyCopyForChannel(
       playbackChannelForProtocol(playback.protocol),
     );
+    if (_isStreamingLyrics(playback)) {
+      final history = _streamHistoryFor(playback);
+      return _StreamingLyricsView(
+        key: const ValueKey('player-lyrics-view'),
+        lines: history.length > 7
+            ? history.sublist(history.length - 7)
+            : history,
+        activeFontSize: activeFontSize,
+        reduceMotion: _reduceMotion,
+      );
+    }
     return LyricsView(
       key: const ValueKey('player-lyrics-view'),
       lyrics: _effectiveLyricsFor(playback),
@@ -1415,14 +1469,9 @@ class _PlayerViewState extends State<PlayerView> {
   // ------------------------------------------------------------------
 
   Widget _playPauseButton(bool reduceMotion, {required bool compact}) {
-    final dimension = compact ? 46.0 : 58.0;
     final radius = compact ? 23.0 : 29.0;
     final glyph = compact ? 22.0 : 28.0;
     final hasPlayback = _hasPlayback;
-    final background = hasPlayback ? Colors.white : const Color(0x1AFFFFFF);
-    final foreground = hasPlayback
-        ? const Color(0xFF151515)
-        : const Color(0x61FFFFFF);
     return AnimatedPressScale(
       key: const ValueKey('playback-play-pause-button'),
       enabled: hasPlayback,
@@ -1469,44 +1518,46 @@ class _PlayerViewState extends State<PlayerView> {
             },
           ),
         },
-        child: SizedBox.square(
-          dimension: dimension,
-          child: Material(
-            color: background,
-            shape: const CircleBorder(),
-            clipBehavior: Clip.antiAlias,
-            child: IconButton(
-              padding: EdgeInsets.zero,
-              onPressed: hasPlayback
-                  ? () => widget.onPlayback(PlaybackCommand.playPause)
-                  : null,
-              icon: AnimatedSwitcher(
-                duration: reduceMotion
-                    ? Duration.zero
-                    : const Duration(milliseconds: 170),
-                switchInCurve: Curves.easeOutCubic,
-                transitionBuilder: (child, animation) => FadeTransition(
-                  opacity: animation,
-                  child: ScaleTransition(
-                    scale: Tween<double>(begin: .82, end: 1).animate(
-                      CurvedAnimation(
-                        parent: animation,
-                        curve: Curves.easeOutCubic,
-                      ),
-                    ),
-                    child: child,
+        child: lg.GlassIconButton(
+          icon: AnimatedSwitcher(
+            duration: reduceMotion
+                ? Duration.zero
+                : const Duration(milliseconds: 170),
+            switchInCurve: Curves.easeOutCubic,
+            transitionBuilder: (child, animation) => FadeTransition(
+              opacity: animation,
+              child: ScaleTransition(
+                scale: Tween<double>(begin: .82, end: 1).animate(
+                  CurvedAnimation(
+                    parent: animation,
+                    curve: Curves.easeOutCubic,
                   ),
                 ),
-                child: FusionVectorIcon(
-                  widget.state.playback.isPlaying
-                      ? FusionIcons.pause
-                      : FusionIcons.play,
-                  key: ValueKey<bool>(widget.state.playback.isPlaying),
-                  size: glyph,
-                  color: foreground,
-                ),
+                child: child,
               ),
             ),
+            child: FusionVectorIcon(
+              widget.state.playback.isPlaying
+                  ? FusionIcons.pause
+                  : FusionIcons.play,
+              key: ValueKey<bool>(widget.state.playback.isPlaying),
+              size: glyph,
+              color: Colors.white,
+            ),
+          ),
+          onPressed: hasPlayback
+              ? () => widget.onPlayback(PlaybackCommand.playPause)
+              : null,
+          size: compact
+              ? 52
+              : (MediaQuery.sizeOf(context).width >= 1500 ? 76 : 62),
+          useOwnLayer: true,
+          quality: lg.GlassQuality.premium,
+          settings: const lg.LiquidGlassSettings(
+            thickness: 16,
+            blur: 4,
+            glassColor: Color(0x18FFFFFF),
+            lightIntensity: .5,
           ),
         ),
       ),
@@ -1678,4 +1729,106 @@ class _ArtworkBreathState extends State<_ArtworkBreath>
     },
     child: widget.child,
   );
+}
+
+/// Bounded current-line stream used when the sender provides one lyric at a
+/// time. Older lines drift up and fade; the newest line stays in the visual
+/// focus area. No future lines are fabricated.
+class _StreamingLyricsView extends StatelessWidget {
+  const _StreamingLyricsView({
+    super.key,
+    required this.lines,
+    required this.activeFontSize,
+    required this.reduceMotion,
+  });
+
+  final List<LyricLine> lines;
+  final double activeFontSize;
+  final bool reduceMotion;
+
+  @override
+  Widget build(BuildContext context) {
+    final visible = lines.length > 7 ? lines.sublist(lines.length - 7) : lines;
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final children = <Widget>[];
+        for (var index = 0; index < visible.length; index++) {
+          final isCurrent = index == visible.length - 1;
+          final age = visible.length - 1 - index;
+          final opacity = isCurrent ? 1.0 : (0.58 - age * .075).clamp(.20, .58);
+          final fontSize = isCurrent
+              ? activeFontSize
+              : (activeFontSize * .62).clamp(13.0, 22.0);
+          final duration = reduceMotion
+              ? Duration.zero
+              : const Duration(milliseconds: 260);
+          children.add(
+            AnimatedOpacity(
+              key: ValueKey<String>(
+                'stream-line-$index-${visible[index].text}',
+              ),
+              opacity: opacity,
+              duration: duration,
+              curve: Curves.easeOutCubic,
+              child: AnimatedSlide(
+                offset: isCurrent ? Offset.zero : const Offset(0, -.045),
+                duration: duration,
+                curve: Curves.easeOutCubic,
+                child: Padding(
+                  padding: EdgeInsets.only(
+                    top: isCurrent ? activeFontSize * .15 : 2,
+                    bottom: isCurrent ? 2 : activeFontSize * .12,
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        visible[index].text,
+                        style: TextStyle(
+                          color: Colors.white,
+                          fontSize: fontSize,
+                          height: 1.22,
+                          fontWeight: isCurrent
+                              ? FusionTypography.semiBoldFontWeight
+                              : FusionTypography.regularFontWeight,
+                          fontVariations: isCurrent
+                              ? FusionTypography.semiBold
+                              : FusionTypography.regular,
+                          shadows: const [
+                            Shadow(blurRadius: 18, color: Color(0x66000000)),
+                          ],
+                        ),
+                      ),
+                      if ((visible[index].translation ?? '').trim().isNotEmpty)
+                        Text(
+                          visible[index].translation!.trim(),
+                          style: TextStyle(
+                            color: Colors.white.withValues(
+                              alpha: isCurrent ? .80 : opacity * .85,
+                            ),
+                            fontSize: (fontSize * .58).clamp(11.0, 20.0),
+                            height: 1.22,
+                          ),
+                        ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          );
+        }
+        return Padding(
+          padding: const EdgeInsets.only(right: 12),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Spacer(flex: 3),
+              ...children,
+              const Spacer(flex: 2),
+            ],
+          ),
+        );
+      },
+    );
+  }
 }

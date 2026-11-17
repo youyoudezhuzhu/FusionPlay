@@ -463,6 +463,26 @@ class _LyricsListBody extends StatelessWidget {
             inactiveColor: inactiveColor,
           )
         : Text(blank ? '♪' : line.text, textAlign: TextAlign.start);
+    final translation = line.translation?.trim();
+    final translated = translation == null || translation.isEmpty
+        ? null
+        : Padding(
+            padding: EdgeInsets.only(top: active ? 3 : 2),
+            child: Text(
+              translation,
+              textAlign: TextAlign.start,
+              style: TextStyle(
+                fontFamily: FusionTypography.fontFamily,
+                fontSize: fontSize * .62,
+                height: 1.3,
+                color: active
+                    ? activeColor.withValues(alpha: .92)
+                    : inactiveColor.withValues(alpha: .72),
+                fontWeight: FusionTypography.regularFontWeight,
+                fontVariations: FusionTypography.regular,
+              ),
+            ),
+          );
     return Padding(
       key: lineKeys.length > index ? lineKeys[index] : null,
       padding: EdgeInsets.symmetric(horizontal: 2, vertical: active ? 7 : 5),
@@ -482,7 +502,10 @@ class _LyricsListBody extends StatelessWidget {
           child: Stack(
             alignment: Alignment.topLeft,
             children: [
-              content,
+              Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [content, ?translated],
+              ),
               if (active)
                 const SizedBox.shrink(key: ValueKey('active-lyric-line')),
             ],

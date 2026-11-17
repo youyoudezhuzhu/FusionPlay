@@ -79,15 +79,26 @@ class LyricsWord {
 
 /// One line of lyrics. [startMs] is null for untimed/static lyrics.
 class LyricLine {
-  const LyricLine({this.startMs, required this.text, this.words = const []});
+  const LyricLine({
+    this.startMs,
+    required this.text,
+    this.translation,
+    this.words = const [],
+  });
 
   final int? startMs;
   final String text;
+
+  /// Optional translated line supplied by the sender. FusionPlay does not
+  /// translate lyrics itself; this is display-only when the metadata includes it.
+  final String? translation;
+
   final List<LyricsWord> words;
 
   factory LyricLine.fromMap(Map<Object?, Object?> map) => LyricLine(
     startMs: _integer(map['startMs']),
     text: _string(map['text']) ?? '',
+    translation: _string(map['translation']) ?? _string(map['translatedText']),
     words: (map['words'] as List<Object?>? ?? const <Object?>[])
         .whereType<Map>()
         .map((word) => LyricsWord.fromMap(word.cast<Object?, Object?>()))
@@ -105,10 +116,12 @@ class LyricLine {
       other is LyricLine &&
           startMs == other.startMs &&
           text == other.text &&
+          translation == other.translation &&
           listEquals(words, other.words);
 
   @override
-  int get hashCode => Object.hash(startMs, text, Object.hashAll(words));
+  int get hashCode =>
+      Object.hash(startMs, text, translation, Object.hashAll(words));
 
   @override
   String toString() => 'LyricLine(startMs: $startMs, "$text")';
