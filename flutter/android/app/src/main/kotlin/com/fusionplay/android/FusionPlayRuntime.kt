@@ -318,7 +318,6 @@ class FusionPlayRuntime(
 
     private suspend fun pauseSourceForTakeover(
         source: MediaSource,
-        remoteAlreadySuspended: Boolean = false,
     ) {
         val playback = viewModel.playbackForSource(source)
         if (networkPlayer.source == source) {
@@ -331,22 +330,14 @@ class FusionPlayRuntime(
             )
             networkPlayer.pause()
         }
-        if (remoteAlreadySuspended && source != MediaSource.XIAOMI_MIPLAY) {
-            viewModel.markSourcePaused(source)
-            return
-        }
-        when (source) {
-            MediaSource.XIAOMI_MIPLAY -> {
-                xiaomiTakeoverGate.arm(playback.isPlaying)
-                runCatching { bridge.suspendXiaomiOutput() }
-                    .onFailure { reportError("小米妙播本机输出暂停失败", it) }
-                runCatching { bridge.pauseXiaomi() }
-                    .onFailure { reportError("小米妙播暂停失败", it) }
-            }
-            MediaSource.AIRPLAY -> if (playback.mediaUrl == null) {
-                runCatching { viewModel.sendPlayback(PlaybackCommand.PAUSE) }
-            }
-            MediaSource.DLNA -> runCatching { viewModel.sendPlayback(PlaybackCommand.PAUSE) }
+        // Native takeover already suspended the previous AirPlay/DLNA lease.
+        // A foreground PAUSE here can target the newly projected receiver.
+        if (source == MediaSource.XIAOMI_MIPLAY) {
+            xiaomiTakeoverGate.arm(playback.isPlaying)
+            runCatching { bridge.suspendXiaomiOutput() }
+                .onFailure { reportError("小米妙播本机输出暂停失败", it) }
+            runCatching { bridge.pauseXiaomi() }
+                .onFailure { reportError("小米妙播暂停失败", it) }
         }
         if (
             source != MediaSource.XIAOMI_MIPLAY ||
@@ -359,7 +350,6 @@ class FusionPlayRuntime(
 
     private suspend fun activatePlaybackSource(
         source: MediaSource,
-        previousAlreadySuspendedByCore: Boolean = false,
         projectSource: Boolean = true,
     ) {
         if (source != MediaSource.XIAOMI_MIPLAY) {
@@ -374,7 +364,7 @@ class FusionPlayRuntime(
             transition.previous
                 ?.takeUnless { it == MediaSource.XIAOMI_MIPLAY }
                 ?.let {
-                pauseSourceForTakeover(it, previousAlreadySuspendedByCore)
+                pauseSourceForTakeover(it)
             }
         }
         if (projectSource) viewModel.activateSourceProjection(source)
@@ -839,7 +829,6 @@ class FusionPlayRuntime(
                                 if (resumed.isSuccess) {
                                     activatePlaybackSource(
                                         MediaSource.XIAOMI_MIPLAY,
-                                        previousAlreadySuspendedByCore = true,
                                     )
                                 }
                             }
