@@ -768,13 +768,13 @@ class _PlayerViewState extends State<PlayerView> {
       final compact = panelHeight < 560 || panelWidth < 300;
       final dense = compact && panelHeight < 330;
       final padding = compact ? 8.0 : 16.0;
-      final cover = math
-          .min(
-            panelWidth - padding * 2,
-            math.max(56.0, panelHeight - (compact ? 238 : 320)),
-          )
-          .clamp(64.0, 500.0)
-          .toDouble();
+      // Reserve space for metadata, timeline, transport and volume first.
+      // Use remaining height for artwork rather than an arbitrary 238px cut.
+      final controlsBudget = dense ? 160.0 : (compact ? 183.0 : 226.0);
+      final cover = math.min(
+        panelWidth - padding * 2,
+        math.max(64.0, panelHeight - padding * 2 - controlsBudget),
+      ).clamp(64.0, 500.0).toDouble();
       final playback = widget.state.playback;
       final (title, artist) = _displayMetadata(playback);
       final album = playback.album?.trim();
@@ -908,7 +908,7 @@ class _PlayerViewState extends State<PlayerView> {
   Widget _liquid21NoLyricsStage() => LayoutBuilder(
     key: const ValueKey('player-layout-horizontal'),
     builder: (context, content) {
-      final compact = content.maxHeight < 360;
+      final compact = content.maxHeight < 390;
       final cappedWidth =
           (content.maxWidth > 1400
                   ? math.min(content.maxWidth, 1600)
@@ -920,10 +920,11 @@ class _PlayerViewState extends State<PlayerView> {
           .toDouble();
       // Portrait / very narrow: cover above info instead of a cramped row.
       final portrait = cappedWidth < 560;
-      final cover = math
-          .min(groupWidth * .34, content.maxHeight * (compact ? .58 : .66))
-          .clamp(88.0, 380.0)
-          .toDouble();
+      // Make the cover the visual anchor without consuming control space.
+      final cover = math.min(
+        groupWidth * .39,
+        content.maxHeight * (compact ? .72 : .76),
+      ).clamp(88.0, 420.0).toDouble();
       return Padding(
         key: const ValueKey('player-centered-layout'),
         padding: const EdgeInsets.fromLTRB(18, 0, 18, 10),
@@ -966,7 +967,7 @@ class _PlayerViewState extends State<PlayerView> {
                       Expanded(
                         flex: 6,
                         child: _liquid21InfoPanel(
-                          compact: content.maxHeight < 360,
+                          compact: compact,
                           dense: content.maxHeight < 330,
                         ),
                       ),
