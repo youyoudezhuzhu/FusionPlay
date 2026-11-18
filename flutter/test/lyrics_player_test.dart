@@ -199,18 +199,63 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('AirPlay 无 remote 命令时隐藏上一曲/下一曲，播放保留', (tester) async {
+  testWidgets('相同歌词状态下三种来源的封面和操作区位置一致', (tester) async {
+    for (final lyrics in [false, true]) {
+      List<Rect>? reference;
+      for (final protocol in ['airplay', 'xiaomi_miplay', 'dlna']) {
+        final state = _stateFromMap({
+          'playback': {
+            'protocol': protocol,
+            if (lyrics)
+              'lyrics': {
+                'lines': [
+                  {'startMs': 0, 'text': 'Same lyric'},
+                ],
+              },
+          },
+        });
+        await _pumpPlayer(
+          tester,
+          state,
+          reduceMotion: true,
+          size: const Size(980, 420),
+        );
+        await tester.pump(const Duration(seconds: 1));
+        final rects = [
+          tester.getRect(find.byType(ArtworkCard)),
+          tester.getRect(find.text('Track')),
+          for (final key in [
+            'player-progress-bar',
+            'playback-previous-button',
+            'playback-play-pause-button',
+            'playback-next-button',
+            'player-volume-capsule',
+            if (lyrics) 'player-lyrics-view',
+          ])
+            tester.getRect(find.byKey(ValueKey(key))),
+        ];
+        reference ??= rects;
+        expect(rects, reference, reason: 'protocol=$protocol lyrics=$lyrics');
+      }
+    }
+  });
+
+  testWidgets('AirPlay 无 remote 命令时禁用上一曲/下一曲，播放保留', (tester) async {
     final state = _stateFromMap({
       'playback': {'protocol': 'airplay'},
       'remoteControl': {'available': false, 'commands': <Object?>[]},
     });
-    await _pumpPlayer(tester, state);
+    final commands = <PlaybackCommand>[];
+    await _pumpPlayer(tester, state, onPlayback: commands.add);
+    await tester.tap(find.byKey(const ValueKey('playback-previous-button')));
+    await tester.tap(find.byKey(const ValueKey('playback-next-button')));
+    expect(commands, isEmpty);
 
     expect(
       find.byKey(const ValueKey('playback-previous-button')),
-      findsNothing,
+      findsOneWidget,
     );
-    expect(find.byKey(const ValueKey('playback-next-button')), findsNothing);
+    expect(find.byKey(const ValueKey('playback-next-button')), findsOneWidget);
     expect(
       find.byKey(const ValueKey('playback-play-pause-button')),
       findsOneWidget,
@@ -247,7 +292,7 @@ void main() {
     expect(find.byKey(const ValueKey('playback-next-button')), findsOneWidget);
   });
 
-  testWidgets('显式 controls 可隐藏 skip 并禁用 seek', (tester) async {
+  testWidgets('显式 controls 可禁用 skip 并禁用 seek', (tester) async {
     final state = _stateFromMap({
       'playback': {'protocol': 'airplay'},
       'controls': {
@@ -261,9 +306,9 @@ void main() {
 
     expect(
       find.byKey(const ValueKey('playback-previous-button')),
-      findsNothing,
+      findsOneWidget,
     );
-    expect(find.byKey(const ValueKey('playback-next-button')), findsNothing);
+    expect(find.byKey(const ValueKey('playback-next-button')), findsOneWidget);
     final progressBar = tester.widget<RoundedProgressBar>(
       find.byKey(const ValueKey('player-progress-bar')),
     );

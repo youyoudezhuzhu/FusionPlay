@@ -49,14 +49,13 @@ void main() {
           'volumePercent': 68,
           'streamActive': true,
           'coverArt': art,
-          if (item.$1 != 'airplay')
-            'lyrics': {
-              'synced': true,
-              'lines': [
-                {'startMs': 0, 'text': 'The night is calling'},
-                {'startMs': 20000, 'text': 'With you by my side'},
-              ],
-            },
+          'lyrics': {
+            'synced': true,
+            'lines': [
+              {'startMs': 0, 'text': 'The night is calling'},
+              {'startMs': 20000, 'text': 'With you by my side'},
+            ],
+          },
         },
       });
       tester.view.physicalSize = const Size(980, 420);
@@ -100,10 +99,7 @@ void main() {
         tester.widget<ArtworkCard>(find.byType(ArtworkCard)).source,
         source,
       );
-      expect(
-        find.text('With you by my side'),
-        item.$1 == 'airplay' ? findsNothing : findsOneWidget,
-      );
+      expect(find.text('With you by my side'), findsOneWidget);
       final output = Platform.environment['FUSIONPLAY_METADATA_PREVIEW_DIR'];
       if (output != null) {
         Directory(output).createSync(recursive: true);

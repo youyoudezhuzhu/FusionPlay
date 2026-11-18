@@ -191,10 +191,6 @@ class _PlayerViewState extends State<PlayerView> {
         playback.durationMs != null;
   }
 
-  bool get _lyricsSupported =>
-      lyricsAvailabilityForProtocol(widget.state.playback.protocol) ==
-      LyricsAvailability.supported;
-
   bool _hasDisplayableLyricsFor(PlaybackSnapshot playback) {
     if (_isAirPlayProtocol(playback) && _airPlayTitleLyrics) return true;
     final lyrics = playback.lyrics;
@@ -376,13 +372,12 @@ class _PlayerViewState extends State<PlayerView> {
     return (artist, null);
   }
 
-  bool get _lyricsToggleVisible => _lyricsSupported && _hasDisplayableLyrics;
+  bool get _lyricsToggleVisible => _hasDisplayableLyrics;
 
-  /// Two-column lyrics layout: only when the channel supports lyrics and the
+  /// Two-column lyrics layout: only when lyrics are available and the
   /// user has not hidden them. While loading we keep the two-column shimmer
   /// placeholder even if the user had hidden lyrics before.
   bool get _showLyricsLayout =>
-      _lyricsSupported &&
       _hasDisplayableLyrics &&
       (widget.state.playback.lyricsLoading || _lyricsVisible);
 
@@ -395,11 +390,11 @@ class _PlayerViewState extends State<PlayerView> {
         '\u001f${playback.artist ?? ''}\u001f${playback.mediaUrl ?? ''}';
   }
 
-  bool get _playVisible => _hasPlayback && _controls.playPause;
+  bool get _playEnabled => _hasPlayback && _controls.playPause;
 
-  bool get _previousVisible => _hasPlayback && _controls.previous;
+  bool get _previousEnabled => _hasPlayback && _controls.previous;
 
-  bool get _nextVisible => _hasPlayback && _controls.next;
+  bool get _nextEnabled => _hasPlayback && _controls.next;
 
   bool get _seekable => _durationMs > 0 && _controls.seek;
 
@@ -985,7 +980,7 @@ class _PlayerViewState extends State<PlayerView> {
                   seekEnabled: true,
                   showThumb: true,
                   focusNode: _volumeFocus,
-                  upFocusNode: _playVisible ? _playPauseFocus : null,
+                  upFocusNode: _playEnabled ? _playPauseFocus : null,
                   focusBorderColor: Colors.white,
                   activeColor: Colors.white.withValues(alpha: .82),
                   inactiveColor: Colors.white.withValues(alpha: .18),
@@ -1209,7 +1204,7 @@ class _PlayerViewState extends State<PlayerView> {
                 showThumb: false,
                 focusNode: _progressFocus,
                 upFocusNode: _menuVisible ? _menuFocus : null,
-                downFocusNode: _playVisible ? _playPauseFocus : null,
+                downFocusNode: _playEnabled ? _playPauseFocus : null,
                 focusBorderColor: Colors.white,
                 activeColor: Colors.white,
                 inactiveColor: Colors.white.withValues(alpha: .18),
@@ -1275,9 +1270,10 @@ class _PlayerViewState extends State<PlayerView> {
 
   Widget _liquidTransport({required bool compact}) {
     final reduceMotion = _reduceMotion;
-    final children = <Widget>[];
-    if (_previousVisible) {
-      children.add(
+    final gap = SizedBox(width: compact ? 18 : 28);
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
         _ControlEntrance(
           index: 0,
           reduceMotion: reduceMotion,
@@ -1285,33 +1281,25 @@ class _PlayerViewState extends State<PlayerView> {
             key: const ValueKey('playback-previous-button'),
             focusNode: _previousFocus,
             icon: FusionIcons.previous,
-            onTap: () => _changeTrack(
-              PlaybackCommand.previous,
-              ArtworkFlipDirection.right,
-            ),
-            rightFocusNode: _playVisible ? _playPauseFocus : null,
+            onTap: _previousEnabled
+                ? () => _changeTrack(
+                    PlaybackCommand.previous,
+                    ArtworkFlipDirection.right,
+                  )
+                : null,
+            rightFocusNode: _playEnabled
+                ? _playPauseFocus
+                : (_nextEnabled ? _nextFocus : _volumeFocus),
             compact: compact,
           ),
         ),
-      );
-    }
-    if (_playVisible) {
-      if (children.isNotEmpty) {
-        children.add(SizedBox(width: compact ? 18 : 28));
-      }
-      children.add(
+        gap,
         _ControlEntrance(
           index: 1,
           reduceMotion: reduceMotion,
           child: _playPauseButton(reduceMotion, compact: compact),
         ),
-      );
-    }
-    if (_nextVisible) {
-      if (children.isNotEmpty) {
-        children.add(SizedBox(width: compact ? 18 : 28));
-      }
-      children.add(
+        gap,
         _ControlEntrance(
           index: 2,
           reduceMotion: reduceMotion,
@@ -1319,25 +1307,29 @@ class _PlayerViewState extends State<PlayerView> {
             key: const ValueKey('playback-next-button'),
             focusNode: _nextFocus,
             icon: FusionIcons.next,
-            onTap: () =>
-                _changeTrack(PlaybackCommand.next, ArtworkFlipDirection.left),
-            leftFocusNode: _playVisible ? _playPauseFocus : null,
+            onTap: _nextEnabled
+                ? () => _changeTrack(
+                    PlaybackCommand.next,
+                    ArtworkFlipDirection.left,
+                  )
+                : null,
+            leftFocusNode: _playEnabled
+                ? _playPauseFocus
+                : (_previousEnabled ? _previousFocus : null),
             rightFocusNode: _volumeFocus,
             downFocusNode: _volumeFocus,
             compact: compact,
           ),
         ),
-      );
-    }
-    if (children.isEmpty) return const SizedBox(height: 56);
-    return Row(mainAxisSize: MainAxisSize.min, children: children);
+      ],
+    );
   }
 
   Widget _liquidIconButton({
     required Key key,
     required FocusNode focusNode,
     required String icon,
-    required VoidCallback onTap,
+    required VoidCallback? onTap,
     FocusNode? leftFocusNode,
     FocusNode? rightFocusNode,
     FocusNode? upFocusNode,
@@ -1348,11 +1340,13 @@ class _PlayerViewState extends State<PlayerView> {
     final size = compact ? 34.0 : (tv ? 56.0 : 44.0);
     return AnimatedPressScale(
       key: key,
+      enabled: onTap != null,
       externalPressed: focusNode == _previousFocus
           ? _previousPressed
           : _nextPressed,
       child: RemoteFocusFrame(
         focusNode: focusNode,
+        enabled: onTap != null,
         onActivate: onTap,
         borderColor: Colors.white,
         shape: const CircleBorder(),
@@ -1390,7 +1384,7 @@ class _PlayerViewState extends State<PlayerView> {
         child: SizedBox.square(
           dimension: size,
           child: LiquidGlass(
-            interactive: true,
+            interactive: onTap != null,
             forceFallback: widget.forceGlassFallback,
             borderRadius: 999,
             child: Material(
@@ -1404,7 +1398,9 @@ class _PlayerViewState extends State<PlayerView> {
                   child: FusionVectorIcon(
                     icon,
                     size: compact ? 18 : 22,
-                    color: Colors.white.withValues(alpha: .9),
+                    color: Colors.white.withValues(
+                      alpha: onTap == null ? .48 : .9,
+                    ),
                   ),
                 ),
               ),
@@ -1598,15 +1594,15 @@ class _PlayerViewState extends State<PlayerView> {
     final radius = compact ? 23.0 : 29.0;
     final short = MediaQuery.sizeOf(context).height < 400;
     final glyph = short ? 20.0 : (compact ? 24.0 : 30.0);
-    final hasPlayback = _hasPlayback;
+    final enabled = _playEnabled;
     return AnimatedPressScale(
       key: const ValueKey('playback-play-pause-button'),
-      enabled: hasPlayback,
+      enabled: enabled,
       externalPressed: _playPausePressed,
       child: RemoteFocusFrame(
-        enabled: hasPlayback,
+        enabled: enabled,
         focusNode: _playPauseFocus,
-        onActivate: hasPlayback
+        onActivate: enabled
             ? () => widget.onPlayback(PlaybackCommand.playPause)
             : null,
         onPressChange: (pressed) => _playPausePressed.value = pressed,
@@ -1615,10 +1611,10 @@ class _PlayerViewState extends State<PlayerView> {
         shortcuts: <ShortcutActivator, Intent>{
           const SingleActivator(LogicalKeyboardKey.arrowUp):
               const DirectionalFocusIntent(TraversalDirection.up),
-          if (_previousVisible)
+          if (_previousEnabled)
             const SingleActivator(LogicalKeyboardKey.arrowLeft):
                 const DirectionalFocusIntent(TraversalDirection.left),
-          if (_nextVisible)
+          if (_nextEnabled)
             const SingleActivator(LogicalKeyboardKey.arrowRight):
                 const DirectionalFocusIntent(TraversalDirection.right),
           const SingleActivator(LogicalKeyboardKey.arrowDown):
@@ -1635,9 +1631,9 @@ class _PlayerViewState extends State<PlayerView> {
                             ? _progressFocus
                             : (_menuVisible ? _menuFocus : null)),
                 TraversalDirection.left =>
-                  _previousVisible ? _previousFocus : null,
+                  _previousEnabled ? _previousFocus : null,
                 TraversalDirection.right =>
-                  _nextVisible ? _nextFocus : _volumeFocus,
+                  _nextEnabled ? _nextFocus : _volumeFocus,
                 TraversalDirection.down => _volumeFocus,
               };
               target?.requestFocus();
@@ -1646,7 +1642,7 @@ class _PlayerViewState extends State<PlayerView> {
           ),
         },
         child: AnimatedOpacity(
-          opacity: hasPlayback ? 1 : .45,
+          opacity: enabled ? 1 : .45,
           duration: reduceMotion
               ? Duration.zero
               : const Duration(milliseconds: 160),
@@ -1675,7 +1671,7 @@ class _PlayerViewState extends State<PlayerView> {
                 shape: const CircleBorder(),
                 clipBehavior: Clip.antiAlias,
                 child: InkResponse(
-                  onTap: hasPlayback
+                  onTap: enabled
                       ? () => widget.onPlayback(PlaybackCommand.playPause)
                       : null,
                   radius: 60,
