@@ -738,6 +738,23 @@ class _PlayerViewState extends State<PlayerView> {
   Widget _liquid21LyricsStage() => LayoutBuilder(
     key: const ValueKey('player-layout-horizontal'),
     builder: (context, content) {
+      if (content.maxHeight > content.maxWidth) {
+        return Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 12),
+          child: Column(
+            children: [
+              Expanded(child: _liquid21PlayerPanel()),
+              Expanded(
+                child: _lyricsColumn(
+                  activeFontSize: 24,
+                  inactiveFontSize: 16,
+                  alignCenter: true,
+                ),
+              ),
+            ],
+          ),
+        );
+      }
       final cappedWidth =
           (content.maxWidth > 1400
                   ? math.min(content.maxWidth, 1600)

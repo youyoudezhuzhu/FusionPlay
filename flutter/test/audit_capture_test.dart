@@ -298,8 +298,9 @@ Widget _settings() => SettingsView(
 
 void main() {
   tearDownAll(() {
-    if (Platform.environment['FUSIONPLAY_AUDIT'] != '1')
+    if (Platform.environment['FUSIONPLAY_AUDIT'] != '1') {
       reviewDir.deleteSync(recursive: true);
+    }
   });
   setUpAll(() async {
     final loader = FontLoader('MiSans')
@@ -659,6 +660,18 @@ void main() {
       '${reviewDir.path}/screenshots/glass/D02-grid-980x420.png',
     );
   });
+  testWidgets('portrait lyrics retain controls and scrolling space', (
+    tester,
+  ) async {
+    await _pump(
+      tester,
+      _playerHost(_state(), artwork: coverData),
+      const Size(390, 844),
+    );
+    expect(tester.takeException(), isNull);
+    await _capture(tester, '${reviewDir.path}/screenshots/player/portrait.png');
+  });
+
   testWidgets('capture update routes through Navigator', (tester) async {
     late BuildContext home;
     final pending = Completer<int>();
