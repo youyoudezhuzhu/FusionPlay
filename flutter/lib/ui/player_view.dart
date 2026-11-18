@@ -10,7 +10,7 @@ import 'animated_press_scale.dart';
 import 'artwork.dart';
 import 'floating_album_art.dart';
 import 'g2_shape.dart';
-import 'package:liquid_glass_widgets/liquid_glass_widgets.dart' as lg;
+import 'liquid_glass.dart';
 
 import 'lyrics_view.dart';
 import 'remote_focus.dart';
@@ -651,7 +651,7 @@ class _PlayerViewState extends State<PlayerView> {
   Widget build(BuildContext context) {
     return LayoutBuilder(
       builder: (context, outer) {
-        return lg.LiquidGlassWidgets.wrap(child: _liquid21PlayerLayout());
+        return _liquid21PlayerLayout();
       },
     );
   }
@@ -806,9 +806,11 @@ class _PlayerViewState extends State<PlayerView> {
       // space instead; the right column has its own centered control stack.
       final innerWidth = panelWidth - padding * 2;
       // Reserve the complete compact transport row before allocating artwork.
-      const transportWidth = 34.0 * 2 + 46 + 18 * 2;
-      final sideCover = math.min(innerWidth - transportWidth - 8,
-          math.min(innerWidth * .52, panelHeight - padding * 2));
+      const transportWidth = 34.0 * 2 + 60 + 18 * 2;
+      final sideCover = math.min(
+        innerWidth - transportWidth - 8,
+        math.min(innerWidth * .47, panelHeight - padding * 2),
+      );
       if (compact && sideCover >= cover && innerWidth >= transportWidth + 96) {
         final artworkSize = sideCover;
         return Padding(
@@ -927,56 +929,56 @@ class _PlayerViewState extends State<PlayerView> {
             ? 360
             : (MediaQuery.sizeOf(context).width >= 1500 ? 560 : 460),
       ),
-      child: lg.GlassContainer(
+      child: SizedBox(
         key: const ValueKey('player-volume-capsule'),
         height: compact
             ? (MediaQuery.sizeOf(context).height < 500 ? 28 : 30)
             : 40,
-        padding: EdgeInsets.symmetric(horizontal: compact ? 7 : 10),
-        shape: const lg.LiquidRoundedSuperellipse(borderRadius: 999),
-        useOwnLayer: true,
-        quality: lg.GlassQuality.premium,
-        settings: const lg.LiquidGlassSettings(
-          thickness: 14,
-          blur: 4,
-          glassColor: Color(0x0DFFFFFF),
-          chromaticAberration: 0.35,
-        ),
-        child: Row(
-          children: [
-            InkResponse(
-              key: const ValueKey('volume-mute-button'),
-              onTap: _toggleMute,
-              radius: 16,
-              child: Icon(icon, size: compact ? 16 : 18, color: Colors.white70),
-            ),
-            const SizedBox(width: 4),
-            Expanded(
-              child: RoundedProgressBar(
-                key: const ValueKey('volume-slider'),
-                value: _displayVolume,
-                enabled: true,
-                seekEnabled: true,
-                showThumb: true,
-                focusNode: _volumeFocus,
-                upFocusNode: _playVisible ? _playPauseFocus : null,
-                focusBorderColor: Colors.white,
-                activeColor: Colors.white.withValues(alpha: .82),
-                inactiveColor: Colors.white.withValues(alpha: .18),
-                onChanged: (value) => setState(() => _volumeDrag = value),
-                onChangeEnd: (value) => _commitVolume((value * 100).round()),
+        child: LiquidGlass(
+          interactive: true,
+          forceFallback: widget.forceGlassFallback,
+          borderRadius: 999,
+          padding: EdgeInsets.symmetric(horizontal: compact ? 7 : 10),
+          child: Row(
+            children: [
+              InkResponse(
+                key: const ValueKey('volume-mute-button'),
+                onTap: _toggleMute,
+                radius: 16,
+                child: Icon(
+                  icon,
+                  size: compact ? 16 : 18,
+                  color: Colors.white70,
+                ),
               ),
-            ),
-            SizedBox(width: compact ? 5 : 8),
-            Text(
-              '$percent',
-              style: TextStyle(
-                fontSize: compact ? 9 : 10,
-                color: Colors.white.withValues(alpha: .48),
-                fontFeatures: const [FontFeature.tabularFigures()],
+              const SizedBox(width: 4),
+              Expanded(
+                child: RoundedProgressBar(
+                  key: const ValueKey('volume-slider'),
+                  value: _displayVolume,
+                  enabled: true,
+                  seekEnabled: true,
+                  showThumb: true,
+                  focusNode: _volumeFocus,
+                  upFocusNode: _playVisible ? _playPauseFocus : null,
+                  focusBorderColor: Colors.white,
+                  activeColor: Colors.white.withValues(alpha: .82),
+                  inactiveColor: Colors.white.withValues(alpha: .18),
+                  onChanged: (value) => setState(() => _volumeDrag = value),
+                  onChangeEnd: (value) => _commitVolume((value * 100).round()),
+                ),
               ),
-            ),
-          ],
+              SizedBox(width: compact ? 5 : 8),
+              Text(
+                '$percent',
+                style: TextStyle(
+                  fontSize: compact ? 9 : 10,
+                  color: Colors.white.withValues(alpha: .48),
+                  fontFeatures: const [FontFeature.tabularFigures()],
+                ),
+              ),
+            ],
+          ),
         ),
       ),
     );
@@ -1338,18 +1340,10 @@ class _PlayerViewState extends State<PlayerView> {
         },
         child: SizedBox.square(
           dimension: size,
-          child: lg.GlassContainer(
-            height: size,
-            padding: EdgeInsets.zero,
-            shape: const lg.LiquidRoundedSuperellipse(borderRadius: 999),
-            useOwnLayer: true,
-            quality: lg.GlassQuality.premium,
-            settings: const lg.LiquidGlassSettings(
-              thickness: 9,
-              blur: 2,
-              glassColor: Color(0x0CFFFFFF),
-              chromaticAberration: 0.35,
-            ),
+          child: LiquidGlass(
+            interactive: true,
+            forceFallback: widget.forceGlassFallback,
+            borderRadius: 999,
             child: Material(
               color: Colors.transparent,
               shape: const CircleBorder(),
@@ -1447,21 +1441,18 @@ class _PlayerViewState extends State<PlayerView> {
       },
       child: Semantics(
         button: true,
-        child: lg.GlassIconButton(
-          icon: Icon(
-            icon,
-            size: 19,
-            color: Colors.white.withValues(alpha: .90),
-          ),
-          onPressed: onTap,
-          size: 36,
-          useOwnLayer: true,
-          quality: lg.GlassQuality.premium,
-          settings: const lg.LiquidGlassSettings(
-            thickness: 9,
-            blur: 2,
-            glassColor: Color(0x0DFFFFFF),
-            chromaticAberration: 0.35,
+        child: LiquidGlass(
+          interactive: true,
+          forceFallback: widget.forceGlassFallback,
+          borderRadius: 999,
+          child: IconButton(
+            padding: EdgeInsets.zero,
+            onPressed: onTap,
+            icon: Icon(
+              icon,
+              size: 19,
+              color: Colors.white.withValues(alpha: .90),
+            ),
           ),
         ),
       ),

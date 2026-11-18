@@ -156,7 +156,9 @@ class _GlassBackdropScopeState extends State<GlassBackdropScope> {
       if (mounted) {
         final stale = _texture.value;
         _texture.value = null;
-        WidgetsBinding.instance.addPostFrameCallback((_) => stale?.image.dispose());
+        WidgetsBinding.instance.addPostFrameCallback(
+          (_) => stale?.image.dispose(),
+        );
       }
     } finally {
       _capturing = false;
@@ -174,7 +176,11 @@ class _GlassBackdropScopeState extends State<GlassBackdropScope> {
       child: Stack(
         fit: StackFit.expand,
         children: [
-          _BackdropBoundary(key: _boundaryKey, onPaint: _scheduleCapture, child: widget.background),
+          _BackdropBoundary(
+            key: _boundaryKey,
+            onPaint: _scheduleCapture,
+            child: widget.background,
+          ),
           widget.child,
         ],
       ),
@@ -192,13 +198,17 @@ class _GlassBackdropInherited
   GlassBackdropTexture? get texture => notifier?.value;
 }
 
-
 class _BackdropBoundary extends SingleChildRenderObjectWidget {
-  const _BackdropBoundary({super.key, required this.onPaint, required super.child});
+  const _BackdropBoundary({
+    super.key,
+    required this.onPaint,
+    required super.child,
+  });
   final VoidCallback onPaint;
 
   @override
-  RenderRepaintBoundary createRenderObject(BuildContext context) => _PaintBoundary(onPaint);
+  RenderRepaintBoundary createRenderObject(BuildContext context) =>
+      _PaintBoundary(onPaint);
 }
 
 class _PaintBoundary extends RenderRepaintBoundary {

@@ -364,8 +364,8 @@ class _RefractiveSurfaceState extends State<_RefractiveSurface> {
       if (!mounted || program == null) return;
       setState(() => _shader = program.fragmentShader());
       _scheduleGeometry();
-    } catch (_) {
-      // Fall back to _GlassPaint when the shader cannot be loaded.
+    } catch (error) {
+      debugPrint('FusionPlay glass shader unavailable, using blur: $error');
     }
   }
 
@@ -404,7 +404,13 @@ class _RefractiveSurfaceState extends State<_RefractiveSurface> {
             key: _key,
             child: RepaintBoundary(
               child: shader == null
-                  ? const SizedBox()
+                  ? BackdropFilter(
+                      filter: ui.ImageFilter.blur(
+                        sigmaX: widget.spec.blur,
+                        sigmaY: widget.spec.blur,
+                      ),
+                      child: const SizedBox.expand(),
+                    )
                   : ValueListenableBuilder<Rect?>(
                       valueListenable: _globalRect,
                       builder: (context, rect, _) => CustomPaint(
@@ -766,8 +772,7 @@ class GlassDialog extends StatelessWidget {
               interactive: true,
               borderRadius: 24,
               padding: padding,
-              forceFallback: true,
-              refraction: 0,
+              refraction: .85,
               specular: .18,
               thickness: 8,
               child: Material(

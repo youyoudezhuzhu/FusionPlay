@@ -3,7 +3,6 @@ import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:liquid_glass_widgets/liquid_glass_widgets.dart' as lg;
 
 import 'backend/app_controller.dart';
 import 'backend/native_app_controller.dart';
@@ -22,7 +21,6 @@ import 'ui/vector_icon.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  await lg.LiquidGlassWidgets.initialize(enablePerformanceMonitor: false);
   final imageCache = PaintingBinding.instance.imageCache;
   imageCache.maximumSize = 8;
   imageCache.maximumSizeBytes = 32 * 1024 * 1024;
