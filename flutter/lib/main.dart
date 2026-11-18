@@ -150,6 +150,7 @@ class _FusionPlayHomeState extends State<FusionPlayHome> {
   String? _requestedArtworkSource;
   String? _displayedArtworkIdentity;
   String? _requestedArtworkIdentity;
+  int _artworkRequest = 0;
   bool _artworkPreparationStarted = false;
   Timer? _artworkClearTimer;
   DateTime? _artworkRetryAfter;
@@ -214,6 +215,17 @@ class _FusionPlayHomeState extends State<FusionPlayHome> {
     );
   }
 
+  (String?, int?, String?) _artworkOwner(AppState state) {
+    final source = (state.playback.protocol ?? state.activeMediaSource)
+        ?.toLowerCase();
+    final dlna = source == 'dlna';
+    return (
+      source,
+      dlna ? state.playback.sourceEpoch : null,
+      dlna ? state.playback.mediaUrl : null,
+    );
+  }
+
   @override
   void didUpdateWidget(covariant FusionPlayHome oldWidget) {
     super.didUpdateWidget(oldWidget);
@@ -222,7 +234,13 @@ class _FusionPlayHomeState extends State<FusionPlayHome> {
       widget.state.playback.coverArt,
     );
     final nextIdentity = widget.state.playback.artworkTransitionIdentity;
-    if (nextArtwork == _requestedArtworkSource) {
+    final ownerChanged =
+        _artworkOwner(oldWidget.state) != _artworkOwner(widget.state);
+    if (ownerChanged) {
+      _displayedArtworkSource = null;
+      _displayedArtworkIdentity = null;
+    }
+    if (!ownerChanged && nextArtwork == _requestedArtworkSource) {
       // Same (or still absent) cover image: now-playing metadata/track identity
       // churn must not restart the artwork flip. Keep the displayed identity
       // until the actual image source changes.
@@ -255,6 +273,7 @@ class _FusionPlayHomeState extends State<FusionPlayHome> {
   }
 
   Future<void> _prepareArtwork(String? source, String? identity) async {
+    final request = ++_artworkRequest;
     _artworkClearTimer?.cancel();
     _artworkRetryAfter = null;
     if (source == null) {
@@ -269,29 +288,50 @@ class _FusionPlayHomeState extends State<FusionPlayHome> {
       });
       return;
     }
+    final dlna = _artworkOwner(widget.state).$1 == 'dlna';
+    final epoch = widget.state.playback.sourceEpoch;
+    void report(String outcome) {
+      if (dlna) {
+        debugPrint('FusionPlay DLNA cover epoch=$epoch result=$outcome');
+      }
+    }
+
     final provider = artworkProvider(source);
-    if (provider == null) return;
+    if (provider == null) {
+      report('invalid_image_source');
+      return;
+    }
     try {
-      var failed = false;
-      await precacheImage(provider, context, onError: (_, _) => failed = true);
-      if (failed) {
-        if (mounted && _requestedArtworkSource == source) {
-          _artworkRetryAfter = DateTime.now().add(const Duration(seconds: 5));
-        }
-        return;
+      // A renderer may get the same /cover.jpg address for successive songs.
+      // Invalidate it on an actual media/art request, never on position ticks.
+      if (dlna &&
+          (source.startsWith('http://') || source.startsWith('https://'))) {
+        await provider.evict();
+        if (!mounted || request != _artworkRequest) return;
       }
-      if (mounted &&
-          _requestedArtworkSource == source &&
-          _requestedArtworkIdentity == identity) {
-        setState(() {
-          _displayedArtworkIdentity = _displayedArtworkSource == source
-              ? _displayedArtworkIdentity
-              : identity;
-          _displayedArtworkSource = source;
-        });
-      }
-    } catch (_) {
-      // Preserve the decoded previous cover through transient load failures.
+      Object? failure;
+      await precacheImage(
+        provider,
+        context,
+        onError: (error, _) => failure = error,
+      );
+      if (!mounted || request != _artworkRequest) return;
+      if (failure case final Object error) throw error;
+      setState(() {
+        _displayedArtworkIdentity = _displayedArtworkSource == source
+            ? _displayedArtworkIdentity
+            : identity;
+        _displayedArtworkSource = source;
+      });
+      report('decoded');
+    } catch (error) {
+      if (!mounted || request != _artworkRequest) return;
+      _artworkRetryAfter = DateTime.now().add(const Duration(seconds: 5));
+      report(
+        error is NetworkImageLoadException
+            ? 'http_${error.statusCode}'
+            : '${error.runtimeType}',
+      );
     }
   }
 
@@ -580,6 +620,7 @@ class _FusionPlayHomeState extends State<FusionPlayHome> {
     final isTelevision = state.isTelevision;
 
     final playerBackdrop = PlayerBackdrop(
+      key: ValueKey(_artworkOwner(state)),
       source: artwork,
       hasPlayback: hasPlayback,
     );

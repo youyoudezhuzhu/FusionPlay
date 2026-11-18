@@ -281,6 +281,9 @@ class FusionPlayDiagnosticLogger(
                 details["album_length"] = event.album?.length
                 details["artwork_present"] =
                     !event.artworkUrl.isNullOrBlank()
+                details["resolved_artwork_present"] = event.resolvedArtwork != null
+                details["lyrics_text_present"] = !event.lyricsText.isNullOrBlank()
+                details["lyrics_uri_present"] = !event.lyricsUri.isNullOrBlank()
                 details["content_type"] = event.contentType
                 details["media_kind"] = event.mediaKind
                 details["duration_ms"] = event.durationMs

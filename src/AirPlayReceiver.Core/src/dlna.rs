@@ -3349,7 +3349,15 @@ fn parse_didl_metadata_for_uri(metadata: &str, preferred_uri: Option<&str>) -> M
         artist: extract_xml_text(metadata, "artist")
             .or_else(|| extract_xml_text(metadata, "creator")),
         album: extract_xml_text(metadata, "album"),
-        artwork_url: extract_xml_text(metadata, "albumArtURI"),
+        artwork_url: extract_xml_text(metadata, "albumArtURI")
+            .filter(|uri| !uri.trim().is_empty())
+            .or_else(|| {
+                extract_xml_elements(metadata, "res").into_iter().find_map(|(tag, uri)| {
+                    (!uri.trim().is_empty()
+                        && resource_mime_type(&tag).is_some_and(|mime| mime.to_ascii_lowercase().starts_with("image/")))
+                        .then_some(uri)
+                })
+            }),
         mime_type,
         bitrate_bps,
         sample_rate,
@@ -4318,6 +4326,7 @@ mod tests {
 
         let parsed = parse_didl_metadata_for_uri(metadata, Some("https://example.test/current"));
         assert_eq!(parsed.mime_type.as_deref(), Some("audio/flac"));
+        assert_eq!(parsed.artwork_url.as_deref(), Some("https://example.test/cover.jpg"));
         assert_eq!(parsed.bitrate_bps, Some(320_000));
         assert_eq!(parsed.sample_rate, Some(44_100));
         assert_eq!(parsed.bits_per_sample, Some(24));

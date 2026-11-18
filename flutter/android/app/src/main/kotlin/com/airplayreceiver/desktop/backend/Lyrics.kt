@@ -545,9 +545,9 @@ class OfflineLyricsResolver(
             mediaUri: String?,
         ): URI? {
             val candidate = raw?.trim()?.takeIf(String::isNotEmpty) ?: return null
-            val parsed = runCatching { URI(candidate) }.getOrNull() ?: return null
+            val parsed = runCatching { URI(candidate.replace(" ", "%20")) }.getOrNull() ?: return null
             val base = mediaUri
-                ?.let { runCatching { URI(it) }.getOrNull() }
+                ?.let { runCatching { URI(it.replace(" ", "%20")) }.getOrNull() }
                 ?.takeIf(URI::isAbsolute)
                 ?: return null
             val resolved = if (parsed.isAbsolute) {

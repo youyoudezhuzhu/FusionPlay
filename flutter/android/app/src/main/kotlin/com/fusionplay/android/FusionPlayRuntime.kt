@@ -102,7 +102,7 @@ class FusionPlayRuntime(
     private var lastDesiredCoreConfiguration: CoreReceiverConfiguration? = null
     private var lastDesiredMiPlayConfiguration: MiPlayReceiverConfiguration? = null
     private var appliedMiPlayConfiguration: MiPlayReceiverConfiguration? = null
-    private var lastPublishedArtwork: String? = null
+    private var lastPublishedArtwork: Triple<String?, Long?, String?>? = null
     private var lastPublishedMetadata: MediaMetadataProjection? = null
     private var lastPublishedPlaying: Boolean? = null
     private var lastPublishedCapabilities: MediaCapabilitiesProjection? = null
@@ -1113,8 +1113,10 @@ class FusionPlayRuntime(
             )
         }
         val artwork = playback.coverArt
-        if (artwork != lastPublishedArtwork) {
-            lastPublishedArtwork = artwork
+        val dlna = state.activeMediaSource == MediaSource.DLNA
+        val artworkKey = Triple(artwork, playback.sourceEpoch.takeIf { dlna }, playback.mediaUrl.takeIf { dlna })
+        if (artworkKey != lastPublishedArtwork) {
+            lastPublishedArtwork = artworkKey
             artworkJob?.cancel()
             artworkJob = scope.launch {
                 if (artwork.isNullOrBlank()) {

@@ -37,13 +37,13 @@ void main() {
       final source = item.$1 == 'xiaomi_miplay'
           ? 'data:image/png;base64,${base64Encode(cover.readAsBytesSync())}'
           : cover.uri.toString();
-      AppState state(String art) => AppState.fromMap({
+      AppState state(String art, String protocol) => AppState.fromMap({
         'initialized': true,
         'playback': {
           'title': 'Starlight',
           'artist': 'Muse',
           'album': 'Drones',
-          'protocol': item.$1,
+          'protocol': protocol,
           'durationMs': 180000,
           'positionMs': 22000,
           'volumePercent': 68,
@@ -74,14 +74,14 @@ void main() {
           },
         ),
       );
-      Widget home(String art) => MaterialApp(
+      Widget home(String art, {String? protocol}) => MaterialApp(
         debugShowCheckedModeBanner: false,
         theme: fusionTheme(),
         home: RepaintBoundary(
           key: key,
           child: FusionPlayHome(
             controller: controller,
-            state: state(art),
+            state: state(art, protocol ?? item.$1),
             isAndroid: true,
           ),
         ),
@@ -123,6 +123,25 @@ void main() {
         tester.widget<ArtworkCard>(find.byType(ArtworkCard)).source,
         source,
       );
+      if (item.$1 == 'airplay') {
+        const invalidCover = 'data:image/png;base64,@@@';
+        await tester.pumpWidget(home(invalidCover, protocol: 'dlna'));
+        await tester.pump(const Duration(seconds: 1));
+        expect(
+          tester.widget<ArtworkCard>(find.byType(ArtworkCard)).source,
+          isNull,
+        );
+        expect(
+          tester.widget<PlayerBackdrop>(find.byType(PlayerBackdrop)).source,
+          isNull,
+        );
+        await tester.pumpWidget(home(source, protocol: 'dlna'));
+        await tester.pump(const Duration(milliseconds: 350));
+        expect(
+          tester.widget<ArtworkCard>(find.byType(ArtworkCard)).source,
+          source,
+        );
+      }
       expect(tester.takeException(), isNull);
     });
   }

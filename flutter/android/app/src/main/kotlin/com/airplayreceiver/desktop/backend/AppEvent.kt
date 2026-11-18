@@ -211,6 +211,10 @@ sealed interface AppEvent {
         val epoch: Long? = null,
     ) : AppEvent {
         override val type = "dlna_media"
+        internal val resolvedArtwork: String? = artworkUrl?.trim()?.let { artwork ->
+            if (artwork.startsWith("data:image/", ignoreCase = true)) artwork
+            else OfflineLyricsResolver.resolveMetadataUri(artwork, url)?.toASCIIString()
+        }
     }
 
     data class DlnaSeek(

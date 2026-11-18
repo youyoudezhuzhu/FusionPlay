@@ -31,6 +31,10 @@ internal class NativeNetworkPlayer(
             /* handleAudioFocus = */ false,
         )
         addListener(object : Player.Listener {
+            override fun onPlayWhenReadyChanged(playWhenReady: Boolean, reason: Int) {
+                recordPlayback("decoder_play_intent", mapOf("play_when_ready" to playWhenReady, "reason_code" to reason))
+            }
+
             override fun onIsPlayingChanged(isPlaying: Boolean) {
                 playing = isPlaying
                 recordPlayback("decoder_playing", mapOf("playing" to isPlaying))

@@ -499,11 +499,7 @@ internal object AppStateTransitions {
                 title = event.title ?: previous.title.takeIf { sameMedia },
                 artist = event.artist ?: previous.artist.takeIf { sameMedia },
                 album = event.album ?: previous.album.takeIf { sameMedia },
-                coverArt = event.artworkUrl?.let { artwork ->
-                    if (artwork.startsWith("data:image/", ignoreCase = true)) artwork
-                    else OfflineLyricsResolver.resolveMetadataUri(artwork, event.url)?.toString()
-                }
-                    ?: previous.coverArt.takeIf { sameMedia },
+                coverArt = event.resolvedArtwork ?: previous.coverArt.takeIf { sameMedia },
                 mediaUrl = event.url,
                 mediaKind = event.mediaKind,
                 protocol = DLNA_SOURCE,

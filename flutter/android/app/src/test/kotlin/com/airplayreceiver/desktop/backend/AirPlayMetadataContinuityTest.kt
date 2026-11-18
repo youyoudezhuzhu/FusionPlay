@@ -46,6 +46,15 @@ class AirPlayMetadataContinuityTest {
     }
 
     @Test
+    fun dlnaCoverAcceptsSpacesWithoutReencodingSignedQuery() {
+        val event = AppEventParser.parse(
+            """{"type":"dlna_media","url":"http://example.test/My Music/a.mp3","artwork_url":"../Cover Art/a.jpg?token=a%2Fb&size=300"}"""
+        ) as AppEvent.DlnaMedia
+        val next = AppStateTransitions.dlnaMedia(AppState(activeMediaSource = MediaSource.DLNA), event)
+        assertEquals("http://example.test/Cover%20Art/a.jpg?token=a%2Fb&size=300", next.playback.coverArt)
+    }
+
+    @Test
     fun trackTakeoverKeepsVisualMetadataAndControlsUntilFreshEventsArrive() {
         val playback = PlaybackSnapshot(
             title = "Old title",
