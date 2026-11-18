@@ -1646,7 +1646,7 @@ fn merge_track_metadata(
             && consistent(&old.persistent_id, &sanitized.persistent_id)
             && consistent(&old.track_number, &sanitized.track_number)
             && consistent(&old.duration_ms, &sanitized.duration_ms)
-            && (old.title_lyrics || (credit.is_some() && new_line))
+            && (old.title_lyrics || new_line)
     });
     sanitized.title_lyrics = anchor || same_credit;
     let identity_changed = current.is_some_and(|current| {
@@ -2898,6 +2898,26 @@ mod tests {
         assert_eq!(event["artist"], "周杰伦");
         assert_eq!(event["lyric_line"], "故事的小黄花");
         assert_eq!(event["track_changed"], false);
+    }
+
+    #[test]
+    fn title_stream_joined_mid_song_keeps_credit_on_partial_frames() {
+        let first = TrackMetadata {
+            title: Some("Line one".into()),
+            artist: Some("Song - Performer".into()),
+            persistent_id: Some("a".into()),
+            ..TrackMetadata::default()
+        };
+        let (first, _) = merge_track_metadata(None, &first);
+        assert!(!first.title_lyrics);
+        let next = TrackMetadata { title: Some("Line two".into()), ..TrackMetadata::default() };
+        let (second, changed) = merge_track_metadata(Some(&first), &next);
+        assert!(!changed);
+        assert!(second.title_lyrics);
+        let new_song = TrackMetadata { persistent_id: Some("b".into()), ..next };
+        let (third, changed) = merge_track_metadata(Some(&second), &new_song);
+        assert!(changed);
+        assert!(!third.title_lyrics);
     }
 
     #[test]
