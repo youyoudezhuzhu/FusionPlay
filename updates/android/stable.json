@@ -2,14 +2,14 @@
   "schema_version": 1,
   "channel": "stable",
   "published": true,
-  "version_name": "1.7.4",
-  "version_code": 10704,
-  "sha256": "1733e9d576264d75bdcc8340027ca8fabf249a4877c236e560807fc9b5d8b87b",
+  "version_name": "1.7.5",
+  "version_code": 10705,
+  "sha256": "6e34b787e90c01f264886737d7013f2a3bf029b5df6131a07e9749dbd3016108",
   "signer_sha256": "4836fb96c2ef76fd81ac385455f1b0154af77fadae1b45bbb752b192499dc12f",
-  "apk_url": "https://youyoudezhuzhu.github.io/FusionPlay/update/android/dl/latest.apk?v=10704",
-  "apk_url_alt": "https://github.com/youyoudezhuzhu/FusionPlay/releases/download/android-v1.7.4/FusionPlay-Android-1.7.4.apk",
-  "apk_size": 12683195,
-  "source_commit": "8bdcb36735e7943bcb6ba0dc31d5f838e6f6b802",
-  "notes": "## FusionPlay Android 1.7.4\n\n- AirPlay 2、小米妙播和 DLNA 共用固定的上一曲、播放/暂停、下一曲按钮行。发送端未提供的操作以淡色显示，保留位置，禁用触摸和遥控器操作。\n- 所有来源沿用相同的有歌词和无歌词布局。对相同的封面、曲名、进度条、音量、歌词区域和三个按钮增加了跨来源位置回归测试。",
-  "published_at": "2026-11-18T11:48:08Z"
+  "apk_url": "https://youyoudezhuzhu.github.io/FusionPlay/update/android/dl/latest.apk?v=10705",
+  "apk_url_alt": "https://github.com/youyoudezhuzhu/FusionPlay/releases/download/android-v1.7.5/FusionPlay-Android-1.7.5.apk",
+  "apk_size": 12686292,
+  "source_commit": "e7cc13dbbf20857a8d7a1bd84ccc06f05024d950",
+  "notes": "## FusionPlay Android 1.7.5\n\n- 横屏有歌词时，封面、曲名和歌手、进度条、播放按钮、音量条在左栏垂直居中排列，右栏显示歌词。\n- AirPlay 2 播放期间，妙播的曲目信息可先缓存。妙播开始播放时，Android 等待原生核心确认接管后再请求恢复妙播输出。\n- 已有活动播放来源时，过滤后台 AirPlay 或妙播发送的系统音量更新。\n\n本版本已通过 Flutter 布局与播放页回归，以及 Android 接管逻辑测试。两台发送设备实际交替投送时的切换延迟和声音重叠仍待真机验证。",
+  "published_at": "2026-11-18T12:43:07Z"
 }
