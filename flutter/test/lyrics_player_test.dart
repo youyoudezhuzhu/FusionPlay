@@ -195,7 +195,7 @@ void main() {
       findsOneWidget,
     );
     expect(find.byKey(const ValueKey('player-lyrics-view')), findsNothing);
-    expect(find.text('暂无歌词'), findsOneWidget);
+    expect(find.text('暂无歌词'), findsNothing);
     expect(tester.takeException(), isNull);
   });
 
@@ -435,7 +435,7 @@ void main() {
       findsOneWidget,
     );
     expect(find.byKey(const ValueKey('player-lyrics-view')), findsNothing);
-    expect(find.text('音频流未提供歌词'), findsOneWidget);
+    expect(find.text('音频流未提供歌词'), findsNothing);
     expect(find.textContaining('不提供歌词'), findsNothing);
     // 顶部只保留协议；音频格式不再显示。
     expect(find.text('AirPlay 2'), findsWidgets);
@@ -456,7 +456,7 @@ void main() {
       findsOneWidget,
     );
     expect(find.byKey(const ValueKey('player-lyrics-view')), findsNothing);
-    expect(find.text('此发送端未提供歌词'), findsOneWidget);
+    expect(find.text('此发送端未提供歌词'), findsNothing);
     expect(find.text('暂无歌词'), findsNothing);
   });
 
@@ -467,7 +467,7 @@ void main() {
       find.byKey(const ValueKey('player-centered-layout')),
       findsOneWidget,
     );
-    expect(find.text('此歌曲没有歌词'), findsOneWidget);
+    expect(find.text('此歌曲没有歌词'), findsNothing);
     expect(find.text('暂无歌词'), findsNothing);
   });
 
@@ -684,7 +684,7 @@ void main() {
     await _pumpPlayer(tester, _state(), size: const Size(800, 360));
 
     expect(find.text('Track'), findsOneWidget);
-    expect(find.text('暂无歌词'), findsOneWidget);
+    expect(find.text('暂无歌词'), findsNothing);
     expect(find.byKey(const ValueKey('player-dock')), findsNothing);
     expect(
       find.byKey(const ValueKey('playback-play-pause-button')),

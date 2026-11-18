@@ -9,7 +9,6 @@ import '../theme/fusion_theme.dart';
 import 'animated_press_scale.dart';
 import 'artwork.dart';
 import 'floating_album_art.dart';
-import 'liquid_glass.dart';
 import 'g2_shape.dart';
 import 'package:liquid_glass_widgets/liquid_glass_widgets.dart' as lg;
 
@@ -306,6 +305,25 @@ class _PlayerViewState extends State<PlayerView> {
       );
     }
     return playback.lyrics;
+  }
+
+  /// Some senders append a composer marker ("作曲", "Composer") to the artist
+  /// field. The player shows the performer only.
+  String? _cleanArtist(String? raw) {
+    final value = raw?.trim();
+    if (value == null || value.isEmpty) return null;
+    var cleaned = value
+        .replaceAll(
+          RegExp(r'\s*[·•|｜/]\s*(作曲|Composer)\s*$', caseSensitive: false),
+          '',
+        )
+        .replaceAll(
+          RegExp(r'^\s*(作曲|Composer)\s*[·•|｜/]?\s*', caseSensitive: false),
+          '',
+        )
+        .trim();
+    if (cleaned.isEmpty) cleaned = value;
+    return cleaned;
   }
 
   (String, String?) _displayMetadata(PlaybackSnapshot playback) {
@@ -774,17 +792,16 @@ class _PlayerViewState extends State<PlayerView> {
       // volume and spacing.  The 900x400 / 980x420 previews previously
       // overflowed because 183px underestimated the real controls stack.
       final controlsBudget = dense ? 206.0 : (compact ? 248.0 : 286.0);
-      final cover = math.min(
-        panelWidth - padding * 2,
-        math.max(64.0, panelHeight - padding * 2 - controlsBudget),
-      ).clamp(64.0, 500.0).toDouble();
+      final cover = math
+          .min(
+            panelWidth - padding * 2,
+            math.max(64.0, panelHeight - padding * 2 - controlsBudget),
+          )
+          .clamp(64.0, 500.0)
+          .toDouble();
       final playback = widget.state.playback;
       final (title, artist) = _displayMetadata(playback);
-      final album = playback.album?.trim();
-      final artistLine =
-          compact && artist != null && album != null && album.isNotEmpty
-          ? '$artist · $album'
-          : artist;
+      final artistLine = _cleanArtist(artist);
       return Padding(
         padding: EdgeInsets.all(padding),
         child: Column(
@@ -818,17 +835,6 @@ class _PlayerViewState extends State<PlayerView> {
                 style: TextStyle(
                   fontSize: compact ? 11 : 14,
                   color: Colors.white.withValues(alpha: .64),
-                ),
-              ),
-            if (!compact && album != null && album.isNotEmpty)
-              Text(
-                album,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                textAlign: TextAlign.center,
-                style: TextStyle(
-                  fontSize: 12,
-                  color: Colors.white.withValues(alpha: .46),
                 ),
               ),
             SizedBox(height: compact ? 1 : 4),
@@ -924,10 +930,10 @@ class _PlayerViewState extends State<PlayerView> {
       // Portrait / very narrow: cover above info instead of a cramped row.
       final portrait = cappedWidth < 560;
       // Make the cover the visual anchor without consuming control space.
-      final cover = math.min(
-        groupWidth * .39,
-        content.maxHeight * (compact ? .72 : .76),
-      ).clamp(88.0, 420.0).toDouble();
+      final cover = math
+          .min(groupWidth * .39, content.maxHeight * (compact ? .72 : .76))
+          .clamp(88.0, 420.0)
+          .toDouble();
       return Padding(
         key: const ValueKey('player-centered-layout'),
         padding: const EdgeInsets.fromLTRB(18, 0, 18, 10),
@@ -985,9 +991,6 @@ class _PlayerViewState extends State<PlayerView> {
   Widget _liquid21InfoPanel({required bool compact, bool dense = false}) {
     final playback = widget.state.playback;
     final (title, artist) = _displayMetadata(playback);
-    final album = playback.album?.trim();
-    final hiddenByUser = _lyricsSupported && _hasDisplayableLyrics;
-    final hint = hiddenByUser ? null : _centeredHint(playback);
     return Padding(
       padding: EdgeInsets.all(compact ? (dense ? 4 : 6) : 18),
       child: Column(
@@ -1009,36 +1012,12 @@ class _PlayerViewState extends State<PlayerView> {
           if (artist != null && artist.isNotEmpty) ...[
             const SizedBox(height: 3),
             Text(
-              artist,
+              _cleanArtist(artist) ?? '',
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
               style: TextStyle(
                 fontSize: compact ? 12 : 15,
                 color: Colors.white70,
-              ),
-            ),
-          ],
-          if (album != null && album.isNotEmpty) ...[
-            const SizedBox(height: 2),
-            Text(
-              album,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: TextStyle(
-                fontSize: compact ? 10 : 12,
-                color: Colors.white54,
-              ),
-            ),
-          ],
-          if (hint != null) ...[
-            const SizedBox(height: 4),
-            Text(
-              hint,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: TextStyle(
-                fontSize: compact ? 10 : 12,
-                color: Colors.white38,
               ),
             ),
           ],
@@ -1446,14 +1425,6 @@ class _PlayerViewState extends State<PlayerView> {
   Widget _breathingArtwork({required double size, required Widget child}) {
     final enabled = widget.state.playback.isPlaying && !_reduceMotion;
     return _ArtworkBreath(enabled: enabled, child: child);
-  }
-
-  String _centeredHint(PlaybackSnapshot playback) {
-    final channel = playbackChannelForProtocol(playback.protocol);
-    final copy = lyricsEmptyCopyForChannel(channel);
-    // Neutral runtime wording: never claim the protocol lacks lyric support.
-    if (channel == PlaybackChannel.airPlay) return copy.description;
-    return copy.title;
   }
 
   /// Apple Music-style no-lyrics landscape: one large cover with the real
