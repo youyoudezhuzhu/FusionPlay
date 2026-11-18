@@ -804,13 +804,13 @@ class _PlayerViewState extends State<PlayerView> {
       // On short ultrawide displays, stacking artwork above all controls
       // limits the cover to ~114px at 900x400. Use the available horizontal
       // space instead; the right column has its own centered control stack.
-      if (compact && panelHeight >= 350 && panelHeight <= 460 &&
-          panelWidth >= 330) {
-        final innerWidth = panelWidth - padding * 2;
-        final artworkSize = math.min(
-          innerWidth * .46,
-          math.min(panelHeight * .43, 190.0),
-        );
+      final innerWidth = panelWidth - padding * 2;
+      // Reserve the complete compact transport row before allocating artwork.
+      const transportWidth = 34.0 * 2 + 46 + 18 * 2;
+      final sideCover = math.min(innerWidth - transportWidth - 8,
+          math.min(innerWidth * .52, panelHeight - padding * 2));
+      if (compact && sideCover >= cover && innerWidth >= transportWidth + 96) {
+        final artworkSize = sideCover;
         return Padding(
           padding: EdgeInsets.all(padding),
           child: Row(
@@ -1193,7 +1193,7 @@ class _PlayerViewState extends State<PlayerView> {
         // hit target) without reducing the seekable touch area.
         SizedBox(height: compact ? 0 : 2),
         Transform.translate(
-          offset: Offset(0, compact ? -10 : -8),
+          offset: Offset(0, compact ? -13 : -11),
           child: Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
