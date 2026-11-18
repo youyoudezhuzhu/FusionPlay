@@ -648,13 +648,7 @@ class _PlayerViewState extends State<PlayerView> {
   }
 
   @override
-  Widget build(BuildContext context) {
-    return LayoutBuilder(
-      builder: (context, outer) {
-        return _liquid21PlayerLayout();
-      },
-    );
-  }
+  Widget build(BuildContext context) => _liquid21PlayerLayout();
 
   // ------------------------------------------------------------------
   // Top bar

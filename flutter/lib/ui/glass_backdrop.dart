@@ -17,11 +17,13 @@ class GlassBackdropTexture {
     required this.image,
     required this.logicalSize,
     required this.pixelRatio,
+    this.origin = Offset.zero,
   });
 
   final ui.Image image;
   final Size logicalSize;
   final double pixelRatio;
+  final Offset origin;
 }
 
 /// Provides a real backdrop texture to every descendant glass surface.
@@ -35,6 +37,7 @@ class GlassBackdropScope extends StatefulWidget {
     required this.background,
     required this.child,
     this.revision,
+    this.onTextureChanged,
     this.enabled = true,
     this.captureInterval = const Duration(milliseconds: 120),
   });
@@ -46,6 +49,7 @@ class GlassBackdropScope extends StatefulWidget {
   /// the artwork identity; animated demos can pass a frame counter.
   final Object? revision;
 
+  final ValueChanged<GlassBackdropTexture?>? onTextureChanged;
   final bool enabled;
 
   /// Minimum time between captures while [revision] keeps changing.
@@ -54,7 +58,7 @@ class GlassBackdropScope extends StatefulWidget {
   /// Returns the nearest backdrop texture, or null when no scope is available
   /// (or it has not captured yet). Null must always select the stable fallback.
   static GlassBackdropTexture? of(BuildContext context) => context
-      .dependOnInheritedWidgetOfExactType<_GlassBackdropInherited>()
+      .dependOnInheritedWidgetOfExactType<GlassBackdropProvider>()
       ?.texture;
 
   @override
@@ -82,6 +86,17 @@ class _GlassBackdropScopeState extends State<GlassBackdropScope> {
   @override
   void didUpdateWidget(covariant GlassBackdropScope oldWidget) {
     super.didUpdateWidget(oldWidget);
+    if (!widget.enabled && oldWidget.enabled) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted || widget.enabled) return;
+        final stale = _texture.value;
+        _texture.value = null;
+        widget.onTextureChanged?.call(null);
+        WidgetsBinding.instance.addPostFrameCallback(
+          (_) => stale?.image.dispose(),
+        );
+      });
+    }
     if (widget.enabled != oldWidget.enabled ||
         widget.revision != oldWidget.revision) {
       _scheduleCapture();
@@ -130,6 +145,7 @@ class _GlassBackdropScopeState extends State<GlassBackdropScope> {
     _lastCaptureAt = DateTime.now();
     try {
       final logicalSize = boundary.size;
+      final origin = boundary.localToGlobal(Offset.zero);
       final ratio = (MediaQuery.maybeDevicePixelRatioOf(context) ?? 1.0)
           .clamp(1.0, 2.0)
           .toDouble();
@@ -142,9 +158,11 @@ class _GlassBackdropScopeState extends State<GlassBackdropScope> {
         image: image,
         logicalSize: logicalSize,
         pixelRatio: ratio,
+        origin: origin,
       );
       final old = _texture.value;
       _texture.value = next;
+      widget.onTextureChanged?.call(next);
       // Keep the old image alive for the frame currently being painted.
       if (old != null) {
         WidgetsBinding.instance.addPostFrameCallback(
@@ -156,6 +174,7 @@ class _GlassBackdropScopeState extends State<GlassBackdropScope> {
       if (mounted) {
         final stale = _texture.value;
         _texture.value = null;
+        widget.onTextureChanged?.call(null);
         WidgetsBinding.instance.addPostFrameCallback(
           (_) => stale?.image.dispose(),
         );
@@ -171,7 +190,7 @@ class _GlassBackdropScopeState extends State<GlassBackdropScope> {
 
   @override
   Widget build(BuildContext context) {
-    return _GlassBackdropInherited(
+    return GlassBackdropProvider(
       notifier: _texture,
       child: Stack(
         fit: StackFit.expand,
@@ -188,9 +207,10 @@ class _GlassBackdropScopeState extends State<GlassBackdropScope> {
   }
 }
 
-class _GlassBackdropInherited
+class GlassBackdropProvider
     extends InheritedNotifier<ValueNotifier<GlassBackdropTexture?>> {
-  const _GlassBackdropInherited({
+  const GlassBackdropProvider({
+    super.key,
     required ValueNotifier<GlassBackdropTexture?> notifier,
     required super.child,
   }) : super(notifier: notifier);

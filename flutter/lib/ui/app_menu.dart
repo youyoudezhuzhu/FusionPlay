@@ -518,12 +518,9 @@ class _FusionMorphOverlayState extends State<FusionMorphOverlay>
               level: GlassLevel.panel,
               interactive: false,
               borderRadius: radius,
-              blurSigma: settingsAmount > .5 ? 24 : 20,
+              blurSigma: 20 + 4 * settingsAmount,
               tint: tint,
               forceFallback: widget.forceFallback,
-              refraction: 0.85,
-              specular: .30,
-              thickness: 14,
               tintGradient: settingsAmount > .35
                   ? const LinearGradient(
                       begin: Alignment.topLeft,

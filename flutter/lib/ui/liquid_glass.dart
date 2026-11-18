@@ -17,7 +17,7 @@ import 'remote_focus.dart';
 /// - [card]    Level 1: plain content cards / small chips (light tint, soft rim)
 /// - [control] Level 2: interactive controls (buttons, toggles, dock controls)
 /// - [panel]   Level 3: menus, sheets, dialogs (deep tint, stronger rim)
-enum GlassLevel { card, control, panel }
+enum GlassLevel { card, control, panel, popup }
 
 @immutable
 class GlassSpec {
@@ -33,8 +33,14 @@ class GlassSpec {
     required this.shadowBlur,
     required this.shadowOffsetY,
     this.gradient,
+    this.refraction = .85,
+    this.specular = .30,
+    this.thickness = 14,
   });
 
+  final double refraction;
+  final double specular;
+  final double thickness;
   final Color tint;
   final double blur;
   final double radius;
@@ -103,7 +109,7 @@ class GlassSpec {
   static GlassSpec of(GlassLevel level) => switch (level) {
     GlassLevel.card => card,
     GlassLevel.control => control,
-    GlassLevel.panel => panel,
+    GlassLevel.panel || GlassLevel.popup => panel,
   };
 }
 
@@ -132,9 +138,9 @@ class LiquidGlass extends StatefulWidget {
     this.blurSigma,
     this.tint,
     this.tintGradient,
-    this.refraction = 1.0,
-    this.specular = 1.0,
-    this.thickness = 16.0,
+    this.refraction,
+    this.specular,
+    this.thickness,
     this.absorption = 0.35,
     this.animate = false,
     this.forceFallback = false,
@@ -164,13 +170,13 @@ class LiquidGlass extends StatefulWidget {
   final Gradient? tintGradient;
 
   /// Strength of the real SDF backdrop displacement (0 disables refraction).
-  final double refraction;
+  final double? refraction;
 
   /// Rim/sheen strength multiplier, 0 disables highlights.
-  final double specular;
+  final double? specular;
 
   /// Optical thickness in logical pixels; controls the bevel width.
-  final double thickness;
+  final double? thickness;
 
   /// Beer-Lambert-style bottom/right edge darkening, 0..1.
   final double absorption;
@@ -246,9 +252,9 @@ class _LiquidGlassState extends State<LiquidGlass> {
             ? _RefractiveSurface(
                 backdrop: backdrop,
                 borderRadius: widget.borderRadius,
-                refraction: widget.refraction,
-                specular: widget.specular,
-                thickness: widget.thickness,
+                refraction: widget.refraction ?? spec.refraction,
+                specular: widget.specular ?? spec.specular,
+                thickness: widget.thickness ?? spec.thickness,
                 absorption: widget.absorption,
                 tint: tint,
                 sheen: _sheen,
@@ -275,7 +281,7 @@ class _LiquidGlassState extends State<LiquidGlass> {
                             tint: tint,
                             gradient: widget.tintGradient ?? spec.gradient,
                             borderRadius: widget.borderRadius,
-                            specular: widget.specular,
+                            specular: widget.specular ?? spec.specular,
                             absorption: widget.absorption,
                             focused: focused,
                           ),
@@ -485,8 +491,8 @@ class _RefractionPainter extends CustomPainter {
     shader
       ..setFloat(0, size.width)
       ..setFloat(1, size.height)
-      ..setFloat(2, rect.left)
-      ..setFloat(3, rect.top)
+      ..setFloat(2, rect.left - texture.origin.dx)
+      ..setFloat(3, rect.top - texture.origin.dy)
       ..setFloat(4, texture.image.width.toDouble())
       ..setFloat(5, texture.image.height.toDouble())
       ..setFloat(6, texture.pixelRatio)
@@ -768,7 +774,7 @@ class GlassDialog extends StatelessWidget {
           ),
           child: RepaintBoundary(
             child: LiquidGlass(
-              level: GlassLevel.panel,
+              level: GlassLevel.popup,
               interactive: true,
               borderRadius: 24,
               padding: padding,

@@ -52,6 +52,7 @@ class FusionPlayApplication extends StatefulWidget {
 }
 
 class _FusionPlayApplicationState extends State<FusionPlayApplication> {
+  final backdrop = ValueNotifier<GlassBackdropTexture?>(null);
   late final FusionPlayController controller = _createController();
 
   /// Android keeps the Kotlin backend; every other desktop target uses the
@@ -68,6 +69,7 @@ class _FusionPlayApplicationState extends State<FusionPlayApplication> {
   @override
   void dispose() {
     controller.dispose();
+    backdrop.dispose();
     super.dispose();
   }
 
@@ -76,32 +78,16 @@ class _FusionPlayApplicationState extends State<FusionPlayApplication> {
     debugShowCheckedModeBanner: false,
     title: 'FusionPlay',
     theme: fusionTheme(),
-    builder: (context, child) => GlassBackdropScope(
-      background: const _AppGlassBackdrop(),
+    builder: (context, child) => GlassBackdropProvider(
+      notifier: backdrop,
       child: FusionTypographyScope(child: child ?? const SizedBox.shrink()),
     ),
     home: ListenableBuilder(
       listenable: controller,
-      builder: (context, _) =>
-          FusionPlayHome(controller: controller, state: controller.state),
-    ),
-  );
-}
-
-/// App-level backdrop for routes that are outside the player page (dialogs,
-/// update sheets). The player page installs a nested scope with the real
-/// artwork; this one keeps every other glass surface on the same real
-/// captured-texture path instead of silently falling back to frosted blur.
-class _AppGlassBackdrop extends StatelessWidget {
-  const _AppGlassBackdrop();
-
-  @override
-  Widget build(BuildContext context) => const DecoratedBox(
-    decoration: BoxDecoration(
-      gradient: LinearGradient(
-        begin: Alignment.topLeft,
-        end: Alignment.bottomRight,
-        colors: [Color(0xFF2B2238), Color(0xFF141B26), Color(0xFF090B10)],
+      builder: (context, _) => FusionPlayHome(
+        controller: controller,
+        state: controller.state,
+        backdrop: backdrop,
       ),
     ),
   );
@@ -113,9 +99,11 @@ class FusionPlayHome extends StatefulWidget {
     required this.controller,
     required this.state,
     this.isAndroid,
+    this.backdrop,
     this.forceGlassFallback = false,
   });
 
+  final ValueNotifier<GlassBackdropTexture?>? backdrop;
   final FusionPlayController controller;
   final AppState state;
 
@@ -695,9 +683,6 @@ class _FusionPlayHomeState extends State<FusionPlayHome> {
                           borderRadius: 22,
                           padding: const EdgeInsets.fromLTRB(18, 8, 6, 8),
                           forceFallback: widget.forceGlassFallback,
-                          refraction: 0.85,
-                          specular: .30,
-                          thickness: 14,
                           child: DefaultTextStyle.merge(
                             style: const TextStyle(
                               color: Color(0xEBFFFFFF),
@@ -765,6 +750,11 @@ class _FusionPlayHomeState extends State<FusionPlayHome> {
       ),
     );
     return GlassBackdropScope(
+      onTextureChanged: widget.backdrop == null
+          ? null
+          : (value) => widget.backdrop!.value = value,
+      enabled:
+          state.settings.advancedEffectsEnabled && !widget.forceGlassFallback,
       revision:
           '${artwork ?? ''}|${hasPlayback ? 1 : 0}|${state.playback.trackIdentity ?? ''}',
       background: playerBackdrop,
