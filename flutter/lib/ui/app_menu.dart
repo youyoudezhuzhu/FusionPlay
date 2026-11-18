@@ -321,8 +321,8 @@ class FusionMorphOverlay extends StatefulWidget {
 class _FusionMorphOverlayState extends State<FusionMorphOverlay>
     with SingleTickerProviderStateMixin {
   static const settingsRadius = 28.0;
-  static const menuTint = Color(0x7014171C);
-  static const settingsTint = Color(0x8814191F);
+  static const menuTint = Color(0x32141722);
+  static const settingsTint = Color(0x42141925);
 
   late final AnimationController _controller = AnimationController(vsync: this);
 
@@ -520,10 +520,10 @@ class _FusionMorphOverlayState extends State<FusionMorphOverlay>
               borderRadius: radius,
               blurSigma: settingsAmount > .5 ? 24 : 20,
               tint: tint,
-              forceFallback: true,
-              refraction: 0,
-              specular: .18,
-              thickness: 8,
+              forceFallback: widget.forceFallback,
+              refraction: 0.85,
+              specular: .30,
+              thickness: 14,
               tintGradient: settingsAmount > .35
                   ? const LinearGradient(
                       begin: Alignment.topLeft,
