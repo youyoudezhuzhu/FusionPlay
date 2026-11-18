@@ -92,7 +92,8 @@ void main() {
         () => Future<void>.delayed(const Duration(milliseconds: 400)),
       );
       await tester.pump(const Duration(seconds: 1));
-      await tester.pump();
+      // Let the prepared cover finish its background crossfade.
+      await tester.pump(const Duration(milliseconds: 350));
       expect(find.text('Starlight'), findsOneWidget);
       expect(find.text(item.$2), findsWidgets);
       expect(
