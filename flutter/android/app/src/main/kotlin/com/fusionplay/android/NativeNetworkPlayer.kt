@@ -8,6 +8,8 @@ import androidx.media3.common.C
 import androidx.media3.common.MediaItem
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.PlaybackParameters
+import androidx.media3.common.Tracks
+import androidx.media3.extractor.metadata.id3.Id3Frame
 import androidx.media3.common.Player
 import androidx.media3.exoplayer.ExoPlayer
 import com.airplayreceiver.desktop.backend.FusionPlayDiagnosticLogger
@@ -19,6 +21,10 @@ internal class NativeNetworkPlayer(
     private val diagnostics: FusionPlayDiagnosticLogger,
     private val onError: (String) -> Unit = {},
 ) : Closeable {
+    private companion object {
+        val lyricFrameIds = setOf("USLT", "SYLT", "ULT", "SLT")
+    }
+
     private val applicationContext = context.applicationContext
     private val mainHandler = Handler(Looper.getMainLooper())
     private var player: ExoPlayer? = null
@@ -31,6 +37,29 @@ internal class NativeNetworkPlayer(
             /* handleAudioFocus = */ false,
         )
         addListener(object : Player.Listener {
+            @androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
+            override fun onTracksChanged(tracks: Tracks) {
+                if (source != MediaSource.DLNA) return
+                val observed = mutableSetOf<String>()
+                var audioTracks = 0
+                for (group in tracks.groups) {
+                    if (group.type != C.TRACK_TYPE_AUDIO) continue
+                    for (index in 0 until group.length) {
+                        if (!group.isTrackSelected(index)) continue
+                        audioTracks++
+                        val tags = group.getTrackFormat(index).metadata ?: continue
+                        for (i in 0 until tags.length()) {
+                            val id = (tags[i] as? Id3Frame)?.id ?: continue
+                            if (id in lyricFrameIds) observed.add(id)
+                        }
+                    }
+                }
+                if (audioTracks > 0) {
+                    recordPlayback("decoder_id3_lyrics", mapOf("audio_tracks" to audioTracks,
+                        "frames" to observed.sorted().joinToString(","), "lyrics_frame_present" to observed.isNotEmpty()))
+                }
+            }
+
             override fun onPlayWhenReadyChanged(playWhenReady: Boolean, reason: Int) {
                 recordPlayback("decoder_play_intent", mapOf("play_when_ready" to playWhenReady, "reason_code" to reason))
             }

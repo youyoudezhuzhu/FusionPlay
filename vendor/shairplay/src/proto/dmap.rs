@@ -81,7 +81,7 @@ impl TrackMetadata {
             }
             pos += len;
         }
-        tracing::debug!(?meta, "Track metadata parsed");
+        tracing::debug!(bytes = data.len(), "Track metadata parsed");
         meta
     }
 }

@@ -103,6 +103,7 @@ sealed interface AppEvent {
         val trackId: String? = null,
         val lyricLine: String? = null,
         val trackChanged: Boolean? = null,
+        val packetSummary: String? = null,
     ) : AppEvent {
         override val type = "now_playing"
     }
@@ -200,6 +201,7 @@ sealed interface AppEvent {
         val mediaKind: String?,
         val durationMs: Long?,
         val startPositionMs: Long,
+        val didlFields: String? = null,
         val lyricsText: String? = null,
         val lyricsUri: String? = null,
         val bitrateBps: Long? = null,

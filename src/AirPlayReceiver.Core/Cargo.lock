@@ -75,6 +75,7 @@ dependencies = [
  "md-5",
  "ndk-context",
  "oboe",
+ "quick-xml",
  "rand",
  "serde",
  "serde_json",

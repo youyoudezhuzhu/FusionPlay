@@ -610,6 +610,7 @@ impl DmrController {
         }
         if let Some(lease) = lease {
             self.events.emit(CoreEvent::NowPlaying {
+                packet_summary: None,
                 lyric_line: None,
                 track_changed: None,
                 track_id: None,
@@ -881,6 +882,7 @@ impl DmrController {
             metadata.upnp_class.as_deref(),
         );
         self.events.emit(CoreEvent::DlnaMedia {
+            didl_fields: didl_field_names(&metadata.raw),
             source: "dlna",
             epoch: lease.epoch(),
             url: uri,
@@ -901,6 +903,7 @@ impl DmrController {
             lyrics_uri: metadata.lyrics_uri.as_deref(),
         });
         self.events.emit(CoreEvent::NowPlaying {
+                packet_summary: None,
             lyric_line: None,
             track_changed: None,
             track_id: None,
@@ -3262,6 +3265,50 @@ fn validate_media_uri(uri: &str) -> Result<()> {
         bail!("DLNA 仅接受 HTTP/HTTPS 媒体地址");
     }
     Ok(())
+}
+
+// Inspect the input independently of the supported DIDL aliases. Only export
+// bounded XML names, never text, attribute values, tokens or resource URLs.
+fn didl_field_names(xml: &str) -> String {
+    use quick_xml::{Reader, events::Event};
+    use std::collections::BTreeSet;
+
+    let mut reader = Reader::from_str(xml);
+    let mut names = BTreeSet::new();
+    let mut size = 0;
+    let mut add = |name: &[u8], attribute: bool| {
+        if name.len() > 48 || !name.iter().all(|b| b.is_ascii_alphanumeric() || b"_:.-".contains(b)) {
+            return false;
+        }
+        let field = format!("{}{}", if attribute { "@" } else { "" }, String::from_utf8_lossy(name));
+        if !names.contains(&field) {
+            size += field.len() + 1;
+            if names.len() >= 48 || size > 900 { return false; }
+            names.insert(field);
+        }
+        true
+    };
+    let status = 'scan: loop {
+        match reader.read_event() {
+            Ok(Event::Start(tag) | Event::Empty(tag)) => {
+                if !add(tag.name().as_ref(), false) { break "limited"; }
+                for attr in tag.attributes() {
+                    let Ok(attr) = attr else { break 'scan "invalid"; };
+                    if !add(attr.key.as_ref(), true) { break 'scan "limited"; }
+                }
+            }
+            Ok(Event::Eof) => break "complete",
+            Err(_) => break "invalid",
+            _ => {}
+        }
+    };
+    format!("{status}:{}", names.into_iter().collect::<Vec<_>>().join(","))
+}
+
+#[test]
+fn didl_inventory_excludes_values_and_cdata_markup() {
+    let xml = r#"<item xmlns:v="secret"><v:krc v:src="private"><![CDATA[<private/>]]></v:krc><res/></item>"#;
+    assert_eq!(didl_field_names(xml), "complete:@v:src,@xmlns:v,item,res,v:krc");
 }
 
 #[cfg(test)]
