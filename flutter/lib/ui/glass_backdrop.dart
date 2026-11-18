@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:ui' as ui;
+import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
@@ -39,7 +40,7 @@ class GlassBackdropScope extends StatefulWidget {
     this.revision,
     this.onTextureChanged,
     this.enabled = true,
-    this.captureInterval = const Duration(milliseconds: 120),
+    this.captureInterval = const Duration(milliseconds: 33),
   });
 
   final Widget background;
@@ -146,9 +147,13 @@ class _GlassBackdropScopeState extends State<GlassBackdropScope> {
     try {
       final logicalSize = boundary.size;
       final origin = boundary.localToGlobal(Offset.zero);
-      final ratio = (MediaQuery.maybeDevicePixelRatioOf(context) ?? 1.0)
-          .clamp(1.0, 2.0)
-          .toDouble();
+      if (logicalSize.isEmpty) return;
+      final displayRatio = MediaQuery.maybeDevicePixelRatioOf(context) ?? 1.0;
+      // Bound a single RGBA texture to roughly 8 MiB, including on 4K TVs.
+      final budgetRatio = math.sqrt(
+        2097152 / (logicalSize.width * logicalSize.height),
+      );
+      final ratio = math.min(math.min(displayRatio, 2.0), budgetRatio);
       final image = await boundary.toImage(pixelRatio: ratio);
       if (!mounted || !widget.enabled) {
         image.dispose();

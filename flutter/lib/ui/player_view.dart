@@ -800,12 +800,13 @@ class _PlayerViewState extends State<PlayerView> {
       // space instead; the right column has its own centered control stack.
       final innerWidth = panelWidth - padding * 2;
       // Reserve the complete compact transport row before allocating artwork.
-      const transportWidth = 34.0 * 2 + 60 + 18 * 2;
+      final wide = MediaQuery.sizeOf(context).width >= 1500;
+      final transportWidth = compact ? 164.0 : (wide ? 250.0 : 214.0);
       final sideCover = math.min(
         innerWidth - transportWidth - 8,
         math.min(innerWidth * .47, panelHeight - padding * 2),
       );
-      if (compact && sideCover >= cover && innerWidth >= transportWidth + 96) {
+      if (sideCover >= 96) {
         final artworkSize = sideCover;
         return Padding(
           padding: EdgeInsets.all(padding),
@@ -831,8 +832,8 @@ class _PlayerViewState extends State<PlayerView> {
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                       textAlign: TextAlign.center,
-                      style: const TextStyle(
-                        fontSize: 17,
+                      style: TextStyle(
+                        fontSize: compact ? 17 : 24,
                         height: 1.12,
                         color: Colors.white,
                         fontWeight: FontWeight.w600,
@@ -845,19 +846,19 @@ class _PlayerViewState extends State<PlayerView> {
                         overflow: TextOverflow.ellipsis,
                         textAlign: TextAlign.center,
                         style: TextStyle(
-                          fontSize: 11,
+                          fontSize: compact ? 11 : 14,
                           color: Colors.white.withValues(alpha: .64),
                         ),
                       ),
                     const SizedBox(height: 4),
-                    _liquidTimeline(compact: true),
+                    _liquidTimeline(compact: compact),
                     const SizedBox(height: 5),
                     Transform.translate(
                       offset: const Offset(0, -5),
-                      child: Center(child: _liquidTransport(compact: true)),
+                      child: Center(child: _liquidTransport(compact: compact)),
                     ),
                     const SizedBox(height: 5),
-                    _liquid21Volume(compact: true),
+                    _liquid21Volume(compact: compact),
                   ],
                 ),
               ),

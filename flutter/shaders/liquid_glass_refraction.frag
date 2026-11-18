@@ -18,6 +18,8 @@ uniform float uThickness;
 uniform float uSpecular;
 uniform float uAbsorption;
 uniform vec4 uTint;
+uniform vec2 uAxisX;
+uniform vec2 uAxisY;
 
 uniform sampler2D uBackdrop;
 
@@ -34,7 +36,7 @@ float sdfAt(vec2 p, vec2 halfSize, float radius) {
 
 void main() {
   vec2 fragPx = FlutterFragCoord().xy;
-  float dpr = max(uDpr, 1.0);
+  float dpr = max(uDpr, 0.001);
   vec2 sizePx = max(uSize, vec2(1.0));
   vec2 local = fragPx; // Canvas-local logical coordinates.
   vec2 halfSize = sizePx * 0.5;
@@ -62,7 +64,7 @@ void main() {
   // the bevel, the larger the physical path length through the glass.
   float bendPx = thickness * 0.85 * uRefraction * bevel;
   vec2 displacedLocal = local + normal * bendPx;
-  vec2 globalLogical = uOrigin + displacedLocal;
+  vec2 globalLogical = uOrigin + uAxisX * displacedLocal.x + uAxisY * displacedLocal.y;
 
   // Convert global logical pixels to captured texture UV.
   vec2 imagePx = uImageSize;

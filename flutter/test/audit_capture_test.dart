@@ -18,9 +18,11 @@ import 'package:fusionplay_android_flutter/ui/liquid_glass.dart';
 import 'package:fusionplay_android_flutter/ui/player_view.dart';
 import 'package:fusionplay_android_flutter/ui/settings_view.dart';
 
-final Directory reviewDir = Directory('../fusionplay-ui-audit-codex');
+final Directory reviewDir = Platform.environment['FUSIONPLAY_AUDIT'] == '1'
+    ? Directory('../fusionplay-ui-audit-codex')
+    : Directory.systemTemp.createTempSync('fusionplay-ui-audit-');
 final String coverData =
-    'data:image/png;base64,${base64Encode(File('${reviewDir.path}/assets/cover.png').readAsBytesSync())}';
+    'data:image/png;base64,${base64Encode(File('../fusionplay-ui-audit-codex/assets/cover.png').readAsBytesSync())}';
 
 LyricsDocument _lyrics() => const LyricsDocument(
   origin: 'embedded',
@@ -295,6 +297,10 @@ Widget _settings() => SettingsView(
 );
 
 void main() {
+  tearDownAll(() {
+    if (Platform.environment['FUSIONPLAY_AUDIT'] != '1')
+      reviewDir.deleteSync(recursive: true);
+  });
   setUpAll(() async {
     final loader = FontLoader('MiSans')
       ..addFont(rootBundle.load('assets/fonts/MiSansUI.ttf'));

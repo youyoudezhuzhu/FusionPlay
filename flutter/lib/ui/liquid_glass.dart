@@ -352,14 +352,12 @@ class _RefractiveSurfaceState extends State<_RefractiveSurface> {
   static Future<ui.FragmentProgram?>? _programFuture;
 
   final GlobalKey _key = GlobalKey(debugLabel: 'refractive-glass-surface');
-  final ValueNotifier<Rect?> _globalRect = ValueNotifier(null);
   ui.FragmentShader? _shader;
 
   @override
   void initState() {
     super.initState();
     _loadShader();
-    _scheduleGeometry();
   }
 
   Future<void> _loadShader() async {
@@ -369,33 +367,14 @@ class _RefractiveSurfaceState extends State<_RefractiveSurface> {
       ));
       if (!mounted || program == null) return;
       setState(() => _shader = program.fragmentShader());
-      _scheduleGeometry();
     } catch (error) {
       debugPrint('FusionPlay glass shader unavailable, using blur: $error');
     }
   }
 
   @override
-  void didUpdateWidget(covariant _RefractiveSurface oldWidget) {
-    super.didUpdateWidget(oldWidget);
-    _scheduleGeometry();
-  }
-
-  void _scheduleGeometry() {
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted) return;
-      final box = _key.currentContext?.findRenderObject();
-      if (box is! RenderBox || !box.hasSize) return;
-      final origin = box.localToGlobal(Offset.zero);
-      final next = origin & box.size;
-      if (_globalRect.value != next) _globalRect.value = next;
-    });
-  }
-
-  @override
   void dispose() {
     _shader?.dispose();
-    _globalRect.dispose();
     super.dispose();
   }
 
@@ -408,32 +387,27 @@ class _RefractiveSurfaceState extends State<_RefractiveSurface> {
         Positioned.fill(
           child: SizedBox.expand(
             key: _key,
-            child: RepaintBoundary(
-              child: shader == null
-                  ? BackdropFilter(
-                      filter: ui.ImageFilter.blur(
-                        sigmaX: widget.spec.blur,
-                        sigmaY: widget.spec.blur,
-                      ),
-                      child: const SizedBox.expand(),
-                    )
-                  : ValueListenableBuilder<Rect?>(
-                      valueListenable: _globalRect,
-                      builder: (context, rect, _) => CustomPaint(
-                        painter: _RefractionPainter(
-                          shader: shader,
-                          backdrop: widget.backdrop,
-                          globalRect: rect,
-                          borderRadius: widget.borderRadius,
-                          refraction: widget.refraction,
-                          specular: widget.specular,
-                          thickness: widget.thickness,
-                          absorption: widget.absorption,
-                          tint: widget.tint,
-                        ),
-                      ),
+            child: shader == null
+                ? BackdropFilter(
+                    filter: ui.ImageFilter.blur(
+                      sigmaX: widget.spec.blur,
+                      sigmaY: widget.spec.blur,
                     ),
-            ),
+                    child: const SizedBox.expand(),
+                  )
+                : CustomPaint(
+                    painter: _RefractionPainter(
+                      shader: shader,
+                      backdrop: widget.backdrop,
+                      surfaceKey: _key,
+                      borderRadius: widget.borderRadius,
+                      refraction: widget.refraction,
+                      specular: widget.specular,
+                      thickness: widget.thickness,
+                      absorption: widget.absorption,
+                      tint: widget.tint,
+                    ),
+                  ),
           ),
         ),
         Positioned.fill(
@@ -464,7 +438,7 @@ class _RefractionPainter extends CustomPainter {
   _RefractionPainter({
     required this.shader,
     required this.backdrop,
-    required this.globalRect,
+    required this.surfaceKey,
     required this.borderRadius,
     required this.refraction,
     required this.specular,
@@ -475,7 +449,7 @@ class _RefractionPainter extends CustomPainter {
 
   final ui.FragmentShader shader;
   final GlassBackdropTexture backdrop;
-  final Rect? globalRect;
+  final GlobalKey surfaceKey;
   final double borderRadius;
   final double refraction;
   final double specular;
@@ -485,14 +459,18 @@ class _RefractionPainter extends CustomPainter {
 
   @override
   void paint(Canvas canvas, Size size) {
-    final rect = globalRect;
-    if (rect == null || size.isEmpty) return;
+    final box = surfaceKey.currentContext?.findRenderObject();
+    if (box is! RenderBox || size.isEmpty) return;
+    final origin = box.localToGlobal(Offset.zero);
+    final axisX = box.localToGlobal(const Offset(1, 0)) - origin;
+    final axisY = box.localToGlobal(const Offset(0, 1)) - origin;
+    if (!origin.isFinite || !axisX.isFinite || !axisY.isFinite) return;
     final texture = backdrop;
     shader
       ..setFloat(0, size.width)
       ..setFloat(1, size.height)
-      ..setFloat(2, rect.left - texture.origin.dx)
-      ..setFloat(3, rect.top - texture.origin.dy)
+      ..setFloat(2, origin.dx - texture.origin.dx)
+      ..setFloat(3, origin.dy - texture.origin.dy)
       ..setFloat(4, texture.image.width.toDouble())
       ..setFloat(5, texture.image.height.toDouble())
       ..setFloat(6, texture.pixelRatio)
@@ -504,7 +482,11 @@ class _RefractionPainter extends CustomPainter {
       ..setFloat(12, tint.r)
       ..setFloat(13, tint.g)
       ..setFloat(14, tint.b)
-      ..setFloat(15, tint.a);
+      ..setFloat(15, tint.a)
+      ..setFloat(16, axisX.dx)
+      ..setFloat(17, axisX.dy)
+      ..setFloat(18, axisY.dx)
+      ..setFloat(19, axisY.dy);
     shader.setImageSampler(0, texture.image);
     canvas.drawRect(Offset.zero & size, Paint()..shader = shader);
   }
@@ -513,7 +495,7 @@ class _RefractionPainter extends CustomPainter {
   bool shouldRepaint(_RefractionPainter oldDelegate) =>
       oldDelegate.shader != shader ||
       oldDelegate.backdrop != backdrop ||
-      oldDelegate.globalRect != globalRect ||
+      oldDelegate.surfaceKey != surfaceKey ||
       oldDelegate.borderRadius != borderRadius ||
       oldDelegate.refraction != refraction ||
       oldDelegate.specular != specular ||
