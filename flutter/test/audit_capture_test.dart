@@ -69,32 +69,33 @@ Widget _background() => Stack(
   ],
 );
 
-Widget _playerHost(AppState state, {String? artwork}) => RepaintBoundary(
-  key: const ValueKey('review-boundary'),
-  child: GlassBackdropScope(
-    revision: 'review2',
-    background: _background(),
-    child: Scaffold(
-      backgroundColor: Colors.transparent,
-      body: Stack(
-        fit: StackFit.expand,
-        children: [
-          SafeArea(
-            child: PlayerView(
-              state: state,
-              artworkSource: artwork,
-              artworkIdentity: 'review-cover',
-              onPlayback: (_) {},
-              onSeek: (_) {},
-              onVolume: (_) {},
-              onOpenMenu: () {},
-            ),
+Widget _playerHost(AppState state, {String? artwork, Widget? backdrop}) =>
+    RepaintBoundary(
+      key: const ValueKey('review-boundary'),
+      child: GlassBackdropScope(
+        revision: 'review2',
+        background: backdrop ?? _background(),
+        child: Scaffold(
+          backgroundColor: Colors.transparent,
+          body: Stack(
+            fit: StackFit.expand,
+            children: [
+              SafeArea(
+                child: PlayerView(
+                  state: state,
+                  artworkSource: artwork,
+                  artworkIdentity: 'review-cover',
+                  onPlayback: (_) {},
+                  onSeek: (_) {},
+                  onVolume: (_) {},
+                  onOpenMenu: () {},
+                ),
+              ),
+            ],
           ),
-        ],
+        ),
       ),
-    ),
-  ),
-);
+    );
 
 Future<void> _pump(
   WidgetTester tester,
@@ -311,6 +312,44 @@ void main() {
     await icons.load();
   });
 
+  testWidgets('photographic cover lighting study', (tester) async {
+    final savedShadows = debugDisableShadows;
+    debugDisableShadows = false;
+    try {
+      final photo = File(
+        '../fusionplay-ui-audit-codex/cover-study/alpenglow.jpg',
+      );
+      final source =
+          'data:image/jpeg;base64,${base64Encode(photo.readAsBytesSync())}';
+      await tester.pumpWidget(const MaterialApp(home: SizedBox()));
+      await tester.runAsync(
+        () => precacheImage(
+          artworkProvider(source)!,
+          tester.element(find.byType(SizedBox).last),
+        ),
+      );
+      for (final lyrics in [false, true]) {
+        await _pump(
+          tester,
+          _playerHost(
+            _state(withLyrics: lyrics),
+            artwork: source,
+            backdrop: PlayerBackdrop(source: source, hasPlayback: true),
+          ),
+          const Size(1280, 597),
+        );
+        await tester.pump(const Duration(milliseconds: 400));
+        expect(tester.takeException(), isNull);
+        await _capture(
+          tester,
+          '${reviewDir.path}/cover-study/${lyrics ? "lyrics" : "player"}.png',
+        );
+      }
+    } finally {
+      debugDisableShadows = savedShadows;
+    }
+  });
+
   testWidgets('round2 player captures P01-P20', (tester) async {
     final specs = <(String, Size, AppState, String?, String, String)>[
       (
@@ -512,6 +551,8 @@ void main() {
       const Size(980, 420),
       elapsed: Duration.zero,
     );
+    final output = Directory('${reviewDir.path}/screenshots/glass')
+      ..createSync(recursive: true);
     final frames = Directory('/tmp/fusionplay-preview/menu-frames')
       ..createSync(recursive: true);
     for (var frame = 0; frame <= 16; frame++) {
@@ -525,7 +566,7 @@ void main() {
             : frame == 8
             ? 'G05'
             : 'menu-open';
-        File(path).copySync('${reviewDir.path}/screenshots/glass/$name.png');
+        File(path).copySync('${output.path}/$name.png');
       }
     }
     await _pump(
