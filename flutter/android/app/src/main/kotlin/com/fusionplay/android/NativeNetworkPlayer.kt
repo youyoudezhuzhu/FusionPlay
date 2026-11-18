@@ -10,11 +10,13 @@ import androidx.media3.common.PlaybackException
 import androidx.media3.common.PlaybackParameters
 import androidx.media3.common.Player
 import androidx.media3.exoplayer.ExoPlayer
+import com.airplayreceiver.desktop.backend.FusionPlayDiagnosticLogger
 import com.airplayreceiver.desktop.backend.MediaSource
 import java.io.Closeable
 
 internal class NativeNetworkPlayer(
     context: Context,
+    private val diagnostics: FusionPlayDiagnosticLogger,
     private val onError: (String) -> Unit = {},
 ) : Closeable {
     private val applicationContext = context.applicationContext
@@ -24,22 +26,42 @@ internal class NativeNetworkPlayer(
     private fun createPlayer(): ExoPlayer = ExoPlayer.Builder(applicationContext).build().apply {
         setAudioAttributes(
             AudioAttributes.Builder().setUsage(C.USAGE_MEDIA).setContentType(C.AUDIO_CONTENT_TYPE_MUSIC).build(),
-            true,
+            // FusionPlayMediaChannel owns system audio focus for all receivers.
+            // A second request here can revoke our own focus and pause DLNA.
+            /* handleAudioFocus = */ false,
         )
         addListener(object : Player.Listener {
             override fun onIsPlayingChanged(isPlaying: Boolean) {
                 playing = isPlaying
+                recordPlayback("decoder_playing", mapOf("playing" to isPlaying))
             }
 
             override fun onPlaybackStateChanged(playbackState: Int) {
                 ready = playbackState == Player.STATE_READY
+                recordPlayback("decoder_state", mapOf("state" to when (playbackState) {
+                    Player.STATE_BUFFERING -> "buffering"
+                    Player.STATE_READY -> "ready"
+                    Player.STATE_ENDED -> "ended"
+                    else -> "idle"
+                }))
             }
 
             override fun onPlayerError(error: PlaybackException) {
-                onError(error.message ?: "未知播放器错误")
+                recordPlayback("decoder_error", mapOf("code" to error.errorCodeName))
+                onError("${error.errorCodeName}：${error.message ?: "未知播放器错误"}")
             }
         })
         volume = if (muted) 0f else unmutedVolume
+    }
+
+    private fun recordPlayback(event: String, details: Map<String, Any?>) {
+        val component = when (source) {
+            MediaSource.DLNA -> "dlna"
+            MediaSource.AIRPLAY -> "airplay"
+            else -> return
+        }
+        diagnostics.write(component, event, if (event == "decoder_error") "failure" else "observed",
+            details + ("epoch" to sourceEpoch))
     }
 
     var source: MediaSource? = null

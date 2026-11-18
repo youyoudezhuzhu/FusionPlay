@@ -93,7 +93,7 @@ class FusionPlayRuntime(
     private val mediaSourceArbiter = MediaSourceArbiter()
     private val coreLifecycleMutex = Mutex()
     private val miPlayLifecycleMutex = Mutex()
-    private val networkPlayer = NativeNetworkPlayer(context) { message ->
+    private val networkPlayer = NativeNetworkPlayer(context, diagnosticLogger) { message ->
         viewModel.reportExternalLog("网络媒体播放失败：$message", isError = true)
     }
     private val closed = AtomicBoolean(false)
