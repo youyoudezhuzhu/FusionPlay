@@ -43,3 +43,9 @@ FUSIONPLAY_AUDIT=1 flutter test test/audit_capture_test.dart --plain-name 'photo
 照片仅作审查素材。BrettA343 的 *Alpenglow on Mt. Forbes in the Canadian Rockies*，裁成方形并缩放；照片和预览中的照片衍生图像按 CC BY-SA 4.0 提供。[原始作品与作者](https://commons.wikimedia.org/wiki/File:Alpenglow_on_Mt._Forbes_in_the_Canadian_Rockies.jpg) · [许可](https://creativecommons.org/licenses/by-sa/4.0/)
 
 本次全量测试通过 214 项。flutter analyze 返回 18 条既有的第三方弃用 info。Android Impeller 真机上的高光、颜色和阴影仍待验证。[测试日志](test.txt) · [分析器输出](analyze.txt)
+
+## 播放按钮行的位置
+
+以进度轨道和音量轨道的水平中心线为基准，让上一曲、播放/暂停、下一曲的按钮中心位于两线正中。时间文字独立定位，进度拖动热区仍高 40 逻辑像素。截图矩阵逐个检查可见按钮的中点偏差，容差为 1 逻辑像素。
+
+![按钮垂直位置，左为修改前，右为修改后](transport-comparison.jpg)

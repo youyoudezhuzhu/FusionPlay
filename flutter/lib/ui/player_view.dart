@@ -871,14 +871,7 @@ class _PlayerViewState extends State<PlayerView> {
                         ),
                       ),
                     const SizedBox(height: 4),
-                    _liquidTimeline(compact: compact),
-                    const SizedBox(height: 5),
-                    Transform.translate(
-                      offset: const Offset(0, -5),
-                      child: Center(child: _liquidTransport(compact: compact)),
-                    ),
-                    const SizedBox(height: 5),
-                    _liquid21Volume(compact: compact),
+                    _playbackControls(compact: compact, gap: 5),
                   ],
                 ),
               ),
@@ -922,18 +915,17 @@ class _PlayerViewState extends State<PlayerView> {
                 ),
               ),
             SizedBox(height: compact ? 1 : 4),
-            _liquidTimeline(compact: compact),
-            SizedBox(height: dense ? 7 : (compact ? 10 : 16)),
-            Center(child: _liquidTransport(compact: compact)),
-            SizedBox(height: dense ? 7 : (compact ? 10 : 16)),
-            _liquid21Volume(compact: compact),
+            _playbackControls(
+              compact: compact,
+              gap: dense ? 7 : (compact ? 10 : 16),
+            ),
           ],
         ),
       );
     },
   );
 
-  Widget _liquid21Volume({required bool compact}) {
+  Widget _liquid21Volume({required bool compact, required double height}) {
     final percent = (_displayVolume * 100).round();
     final icon = percent == 0
         ? Icons.volume_off_rounded
@@ -946,9 +938,7 @@ class _PlayerViewState extends State<PlayerView> {
       ),
       child: SizedBox(
         key: const ValueKey('player-volume-capsule'),
-        height: compact
-            ? (MediaQuery.sizeOf(context).height < 500 ? 28 : 30)
-            : 40,
+        height: height,
         child: LiquidGlass(
           interactive: true,
           forceFallback: widget.forceGlassFallback,
@@ -1107,11 +1097,11 @@ class _PlayerViewState extends State<PlayerView> {
             ),
           ],
           SizedBox(height: dense ? 2 : (compact ? 6 : 20)),
-          _liquidTimeline(compact: compact),
-          SizedBox(height: dense ? 7 : (compact ? 10 : 16)),
-          Center(child: _liquidTransport(compact: compact)),
-          SizedBox(height: dense ? 7 : (compact ? 10 : 16)),
-          _liquid21Volume(compact: compact),
+          _playbackControls(
+            fillVolumeWidth: true,
+            compact: compact,
+            gap: dense ? 7 : (compact ? 10 : 16),
+          ),
         ],
       ),
     );
@@ -1158,7 +1148,11 @@ class _PlayerViewState extends State<PlayerView> {
     );
   }
 
-  Widget _liquidTimeline({required bool compact}) {
+  Widget _playbackControls({
+    required bool compact,
+    required double gap,
+    bool fillVolumeWidth = false,
+  }) {
     final playback = widget.state.playback;
     final duration = _durationMs;
     final position = _visiblePositionMs.clamp(
@@ -1166,73 +1160,93 @@ class _PlayerViewState extends State<PlayerView> {
       duration == 0 ? playback.positionMs : duration,
     );
     final progress = duration > 0 ? position / duration : 0.0;
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
+    const trackHeight = RoundedProgressBar.hitHeight;
+    const labelFont = 10.5;
+    final volumeHeight = compact
+        ? (MediaQuery.sizeOf(context).height < 500 ? 28.0 : 30.0)
+        : 40.0;
+    final labelSpace = MediaQuery.textScalerOf(context).scale(labelFont);
+    final inset = gap + labelSpace * .40;
+    final volume = _liquid21Volume(compact: compact, height: volumeHeight);
+    return Stack(
+      alignment: Alignment.topCenter,
       children: [
-        TweenAnimationBuilder<double>(
-          tween: Tween(end: progress),
-          duration: _reduceMotion
-              ? Duration.zero
-              : const Duration(milliseconds: 220),
-          curve: Curves.easeOutCubic,
-          builder: (context, value, _) => RoundedProgressBar(
-            key: const ValueKey('player-progress-bar'),
-            value: value,
-            enabled: duration > 0,
-            seekEnabled: _seekable,
-            showThumb: false,
-            focusNode: _progressFocus,
-            upFocusNode: _menuVisible ? _menuFocus : null,
-            downFocusNode: _playVisible ? _playPauseFocus : null,
-            focusBorderColor: Colors.white,
-            activeColor: Colors.white,
-            inactiveColor: Colors.white.withValues(alpha: .18),
-            onChangeStart: (_) => setState(() => seeking = true),
-            onChanged: (value) => setState(() {
-              seeking = true;
-              seekPositionMs = duration * value;
-            }),
-            onChangeEnd: (value) {
-              final target = (duration * value).round();
-              setState(() {
-                seeking = false;
-                seekPositionMs = target.toDouble();
-                pendingSeekTargetMs = target;
-                _progressAnchorMs = target;
-                _progressAnchorAt = DateTime.now();
-                _displayedPositionMs = target;
-              });
-              widget.onSeek(target);
-            },
-          ),
+        Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            TweenAnimationBuilder<double>(
+              tween: Tween(end: progress),
+              duration: _reduceMotion
+                  ? Duration.zero
+                  : const Duration(milliseconds: 220),
+              curve: Curves.easeOutCubic,
+              builder: (context, value, _) => RoundedProgressBar(
+                key: const ValueKey('player-progress-bar'),
+                value: value,
+                enabled: duration > 0,
+                seekEnabled: _seekable,
+                showThumb: false,
+                focusNode: _progressFocus,
+                upFocusNode: _menuVisible ? _menuFocus : null,
+                downFocusNode: _playVisible ? _playPauseFocus : null,
+                focusBorderColor: Colors.white,
+                activeColor: Colors.white,
+                inactiveColor: Colors.white.withValues(alpha: .18),
+                onChangeStart: (_) => setState(() => seeking = true),
+                onChanged: (value) => setState(() {
+                  seeking = true;
+                  seekPositionMs = duration * value;
+                }),
+                onChangeEnd: (value) {
+                  final target = (duration * value).round();
+                  setState(() {
+                    seeking = false;
+                    seekPositionMs = target.toDouble();
+                    pendingSeekTargetMs = target;
+                    _progressAnchorMs = target;
+                    _progressAnchorAt = DateTime.now();
+                    _displayedPositionMs = target;
+                  });
+                  widget.onSeek(target);
+                },
+              ),
+            ),
+            SizedBox(height: inset),
+            Center(child: _liquidTransport(compact: compact)),
+            // Equal distances from the transport center to the two track centers.
+            SizedBox(height: inset + (trackHeight - volumeHeight) / 2),
+            if (fillVolumeWidth) volume else Center(child: volume),
+          ],
         ),
-        // Move labels closer to the painted track (centered in its 40px
-        // hit target) without reducing the seekable touch area.
-        SizedBox(height: compact ? 0 : 2),
-        Transform.translate(
-          offset: Offset(0, compact ? -13 : -11),
-          child: Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              Text(
-                _hasPlayback ? _formatDuration(position) : '0:00',
-                style: TextStyle(
-                  fontSize: 10.5,
-                  color: Colors.white.withValues(alpha: .42),
-                  fontFeatures: const [FontFeature.tabularFigures()],
+        Positioned(
+          left: 0,
+          right: 0,
+          top: trackHeight / 2 + (compact ? 7 : 11),
+          child: IgnorePointer(
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Text(
+                  _hasPlayback ? _formatDuration(position) : '0:00',
+                  style: TextStyle(
+                    fontSize: labelFont,
+                    color: Colors.white.withValues(alpha: .42),
+                    fontFeatures: const [FontFeature.tabularFigures()],
+                  ),
                 ),
-              ),
-              Text(
-                _hasPlayback
-                    ? '-${_formatDuration(math.max(0, duration - position))}'
-                    : '-0:00',
-                style: TextStyle(
-                  fontSize: 10.5,
-                  color: Colors.white.withValues(alpha: .42),
-                  fontFeatures: const [FontFeature.tabularFigures()],
+                Text(
+                  _hasPlayback
+                      ? '-${_formatDuration(math.max(0, duration - position))}'
+                      : '-0:00',
+                  style: TextStyle(
+                    fontSize: labelFont,
+                    color: Colors.white.withValues(alpha: .42),
+                    fontFeatures: const [FontFeature.tabularFigures()],
+                  ),
                 ),
-              ),
-            ],
+              ],
+            ),
           ),
         ),
       ],

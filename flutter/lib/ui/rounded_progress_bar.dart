@@ -7,6 +7,8 @@ import 'g2_shape.dart';
 import 'remote_focus.dart';
 
 class RoundedProgressBar extends StatefulWidget {
+  static const hitHeight = 40.0;
+
   const RoundedProgressBar({
     super.key,
     required this.value,
@@ -167,7 +169,7 @@ class _RoundedProgressBarState extends State<RoundedProgressBar> {
                     }
                   : null,
               child: SizedBox(
-                height: 40,
+                height: RoundedProgressBar.hitHeight,
                 child: CustomPaint(
                   painter: _ProgressPainter(
                     value: value,

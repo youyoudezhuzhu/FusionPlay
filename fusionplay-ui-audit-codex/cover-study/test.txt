@@ -17,9 +17,9 @@
 00:00 +15: /workspace/FusionPlay/flutter/test/lyrics_view_test.dart: 空歌词显示图标与提示
 00:00 +16: /workspace/FusionPlay/flutter/test/lyrics_view_test.dart: load 中但已有歌词时优先展示歌词
 00:00 +17: /workspace/FusionPlay/flutter/test/lyrics_view_test.dart: 非同步歌词渲染为可滚动静态列表
-00:00 +18: /workspace/FusionPlay/flutter/test/lyrics_view_test.dart: 同步歌词按时间高亮当前行并随位置切换
-00:00 +19: /workspace/FusionPlay/flutter/test/lyrics_view_test.dart: 逐字歌词按 clock 进度填色，可跨词连续
-00:00 +20: /workspace/FusionPlay/flutter/test/lyrics_view_test.dart: 自动滚动到当前行，手动滚动后暂停并显示「回到当前」
+00:01 +18: /workspace/FusionPlay/flutter/test/lyrics_view_test.dart: 同步歌词按时间高亮当前行并随位置切换
+00:01 +19: /workspace/FusionPlay/flutter/test/lyrics_view_test.dart: 逐字歌词按 clock 进度填色，可跨词连续
+00:01 +20: /workspace/FusionPlay/flutter/test/lyrics_view_test.dart: 自动滚动到当前行，手动滚动后暂停并显示「回到当前」
 00:01 +21: /workspace/FusionPlay/flutter/test/lyrics_view_test.dart: disableAnimations 时高亮不做缩放缓动
 00:01 +22: /workspace/FusionPlay/flutter/test/lyrics_view_test.dart: 窄屏紧凑布局：长行与逐字歌词不溢出
 00:01 +23: /workspace/FusionPlay/flutter/test/player_preview_test.dart: (setUpAll)
@@ -45,50 +45,49 @@ CAPTURE lyrics-960x540 960.0x540.0
 00:03 +40: /workspace/FusionPlay/flutter/test/player_preview_test.dart: render Apple Music landscape previews
 00:03 +41: /workspace/FusionPlay/flutter/test/player_preview_test.dart: render Apple Music landscape previews
 CAPTURE lyrics-800x360 800.0x360.0
-CAPTURE no-lyrics-960x540 960.0x540.0
 00:04 +42: /workspace/FusionPlay/flutter/test/player_preview_test.dart: render Apple Music landscape previews
 00:04 +43: /workspace/FusionPlay/flutter/test/player_preview_test.dart: render Apple Music landscape previews
+CAPTURE no-lyrics-960x540 960.0x540.0
 CAPTURE no-lyrics-800x360 800.0x360.0
-CAPTURE tablet-1280x800 1280.0x800.0
 00:05 +44: /workspace/FusionPlay/flutter/test/player_preview_test.dart: render Apple Music landscape previews
-00:06 +45: /workspace/FusionPlay/flutter/test/player_preview_test.dart: render Apple Music landscape previews
-00:06 +46: /workspace/FusionPlay/flutter/test/player_preview_test.dart: render Apple Music landscape previews
-00:06 +47: /workspace/FusionPlay/flutter/test/player_preview_test.dart: render Apple Music landscape previews
-00:06 +48: /workspace/FusionPlay/flutter/test/player_preview_test.dart: render Apple Music landscape previews
-00:06 +49: /workspace/FusionPlay/flutter/test/player_preview_test.dart: render Apple Music landscape previews
-00:06 +50: /workspace/FusionPlay/flutter/test/player_preview_test.dart: render Apple Music landscape previews
-00:06 +51: /workspace/FusionPlay/flutter/test/player_preview_test.dart: render Apple Music landscape previews
-00:06 +52: /workspace/FusionPlay/flutter/test/player_preview_test.dart: render Apple Music landscape previews
+00:05 +45: /workspace/FusionPlay/flutter/test/player_preview_test.dart: render Apple Music landscape previews
+00:05 +46: /workspace/FusionPlay/flutter/test/player_preview_test.dart: render Apple Music landscape previews
+00:05 +47: /workspace/FusionPlay/flutter/test/player_preview_test.dart: render Apple Music landscape previews
+00:05 +48: /workspace/FusionPlay/flutter/test/player_preview_test.dart: render Apple Music landscape previews
+00:05 +49: /workspace/FusionPlay/flutter/test/player_preview_test.dart: render Apple Music landscape previews
+00:05 +50: /workspace/FusionPlay/flutter/test/player_preview_test.dart: render Apple Music landscape previews
+CAPTURE tablet-1280x800 1280.0x800.0
+00:05 +51: /workspace/FusionPlay/flutter/test/player_preview_test.dart: render Apple Music landscape previews
+00:05 +52: /workspace/FusionPlay/flutter/test/player_preview_test.dart: render Apple Music landscape previews
 00:06 +53: /workspace/FusionPlay/flutter/test/player_preview_test.dart: render Apple Music landscape previews
 00:06 +54: /workspace/FusionPlay/flutter/test/player_preview_test.dart: render Apple Music landscape previews
 00:06 +55: /workspace/FusionPlay/flutter/test/player_preview_test.dart: render Apple Music landscape previews
-CAPTURE loading-960x540 960.0x540.0
 00:06 +56: /workspace/FusionPlay/flutter/test/player_preview_test.dart: render Apple Music landscape previews
-00:07 +57: /workspace/FusionPlay/flutter/test/player_preview_test.dart: render Apple Music landscape previews
-00:07 +58: /workspace/FusionPlay/flutter/test/player_preview_test.dart: render Apple Music landscape previews
-00:07 +59: /workspace/FusionPlay/flutter/test/player_preview_test.dart: render Apple Music landscape previews
-00:07 +60: /workspace/FusionPlay/flutter/test/player_preview_test.dart: render Apple Music landscape previews
-CAPTURE stream-history-840x360 840.0x360.0
+00:06 +57: /workspace/FusionPlay/flutter/test/player_preview_test.dart: render Apple Music landscape previews
+00:06 +58: /workspace/FusionPlay/flutter/test/player_preview_test.dart: render Apple Music landscape previews
+00:06 +59: /workspace/FusionPlay/flutter/test/player_preview_test.dart: render Apple Music landscape previews
+00:06 +60: /workspace/FusionPlay/flutter/test/player_preview_test.dart: render Apple Music landscape previews
+CAPTURE loading-960x540 960.0x540.0
 00:07 +61: /workspace/FusionPlay/flutter/test/player_preview_test.dart: render Apple Music landscape previews
 00:07 +62: /workspace/FusionPlay/flutter/test/player_preview_test.dart: render Apple Music landscape previews
 00:07 +63: /workspace/FusionPlay/flutter/test/player_preview_test.dart: render Apple Music landscape previews
 00:07 +64: /workspace/FusionPlay/flutter/test/player_preview_test.dart: render Apple Music landscape previews
 00:07 +65: /workspace/FusionPlay/flutter/test/player_preview_test.dart: render Apple Music landscape previews
-00:08 +66: /workspace/FusionPlay/flutter/test/player_preview_test.dart: render Apple Music landscape previews
-00:08 +67: /workspace/FusionPlay/flutter/test/player_preview_test.dart: render Apple Music landscape previews
-00:08 +68: /workspace/FusionPlay/flutter/test/player_preview_test.dart: render Apple Music landscape previews
-00:08 +69: /workspace/FusionPlay/flutter/test/player_preview_test.dart: render Apple Music landscape previews
-00:08 +70: /workspace/FusionPlay/flutter/test/player_preview_test.dart: render Apple Music landscape previews
-00:08 +71: /workspace/FusionPlay/flutter/test/player_preview_test.dart: render Apple Music landscape previews
-00:08 +72: /workspace/FusionPlay/flutter/test/player_preview_test.dart: render Apple Music landscape previews
-00:08 +73: /workspace/FusionPlay/flutter/test/player_preview_test.dart: render Apple Music landscape previews
-00:08 +74: /workspace/FusionPlay/flutter/test/player_preview_test.dart: render Apple Music landscape previews
-00:08 +75: /workspace/FusionPlay/flutter/test/player_preview_test.dart: render Apple Music landscape previews
-00:08 +76: /workspace/FusionPlay/flutter/test/player_preview_test.dart: render Apple Music landscape previews
-00:08 +77: /workspace/FusionPlay/flutter/test/player_preview_test.dart: render Apple Music landscape previews
-00:08 +78: /workspace/FusionPlay/flutter/test/player_preview_test.dart: render Apple Music landscape previews
-00:08 +79: /workspace/FusionPlay/flutter/test/player_preview_test.dart: render Apple Music landscape previews
-CAPTURE stream-single-line-840x360 840.0x360.0
+00:07 +66: /workspace/FusionPlay/flutter/test/player_preview_test.dart: render Apple Music landscape previews
+00:07 +67: /workspace/FusionPlay/flutter/test/player_preview_test.dart: render Apple Music landscape previews
+00:07 +68: /workspace/FusionPlay/flutter/test/player_preview_test.dart: render Apple Music landscape previews
+00:07 +69: /workspace/FusionPlay/flutter/test/player_preview_test.dart: render Apple Music landscape previews
+00:07 +70: /workspace/FusionPlay/flutter/test/player_preview_test.dart: render Apple Music landscape previews
+00:07 +71: /workspace/FusionPlay/flutter/test/player_preview_test.dart: render Apple Music landscape previews
+00:07 +72: /workspace/FusionPlay/flutter/test/player_preview_test.dart: render Apple Music landscape previews
+00:07 +73: /workspace/FusionPlay/flutter/test/player_preview_test.dart: render Apple Music landscape previews
+00:07 +74: /workspace/FusionPlay/flutter/test/player_preview_test.dart: render Apple Music landscape previews
+00:07 +75: /workspace/FusionPlay/flutter/test/player_preview_test.dart: render Apple Music landscape previews
+00:07 +76: /workspace/FusionPlay/flutter/test/player_preview_test.dart: render Apple Music landscape previews
+00:07 +77: /workspace/FusionPlay/flutter/test/player_preview_test.dart: render Apple Music landscape previews
+00:07 +78: /workspace/FusionPlay/flutter/test/player_preview_test.dart: render Apple Music landscape previews
+00:07 +79: /workspace/FusionPlay/flutter/test/player_preview_test.dart: render Apple Music landscape previews
+CAPTURE stream-history-840x360 840.0x360.0
 00:08 +80: /workspace/FusionPlay/flutter/test/player_preview_test.dart: render Apple Music landscape previews
 00:08 +81: /workspace/FusionPlay/flutter/test/player_preview_test.dart: render Apple Music landscape previews
 00:08 +82: /workspace/FusionPlay/flutter/test/player_preview_test.dart: render Apple Music landscape previews
@@ -96,20 +95,21 @@ CAPTURE stream-single-line-840x360 840.0x360.0
 00:08 +84: /workspace/FusionPlay/flutter/test/player_preview_test.dart: render Apple Music landscape previews
 00:08 +85: /workspace/FusionPlay/flutter/test/player_preview_test.dart: render Apple Music landscape previews
 00:08 +86: /workspace/FusionPlay/flutter/test/player_preview_test.dart: render Apple Music landscape previews
-CAPTURE lyrics-840x360 840.0x360.0
+CAPTURE stream-single-line-840x360 840.0x360.0
 00:09 +87: /workspace/FusionPlay/flutter/test/player_preview_test.dart: render Apple Music landscape previews
 00:09 +88: /workspace/FusionPlay/flutter/test/player_preview_test.dart: render Apple Music landscape previews
+CAPTURE lyrics-840x360 840.0x360.0
 CAPTURE tv-1920x1080 1920.0x1080.0
-00:10 +89: /workspace/FusionPlay/flutter/test/player_preview_test.dart: render Apple Music landscape previews
+00:09 +89: /workspace/FusionPlay/flutter/test/player_preview_test.dart: render Apple Music landscape previews
 00:10 +90: /workspace/FusionPlay/flutter/test/player_preview_test.dart: render Apple Music landscape previews
-00:11 +90: /workspace/FusionPlay/flutter/test/tv_mode_test.dart: TV 打开设置焦点在 MiPlay 行；非 TV 也不自动聚焦名称输入框
+00:10 +90: /workspace/FusionPlay/flutter/test/tv_mode_test.dart: TV 打开设置焦点在 MiPlay 行；非 TV 也不自动聚焦名称输入框
 
 Warning: A call to tap() with finder "Found 1 widget with key [<'playback-menu-button'>]: [
-  SizedBox-[<'playback-menu-button'>](width: 34.0, height: 34.0, renderObject: RenderConstrainedBox#f79c5 NEEDS-PAINT),
+  SizedBox-[<'playback-menu-button'>](width: 34.0, height: 34.0, renderObject: RenderConstrainedBox#66a4f NEEDS-PAINT),
 ]" derived an Offset (Offset(1569.0, 21.0)) that would not hit test on the specified widget.
 Maybe the widget is actually off-screen, or another widget is obscuring it, or the widget cannot receive pointer events.
-The finder corresponds to this RenderBox: RenderConstrainedBox#f79c5 NEEDS-PAINT
-The hit test result at that offset is: HitTestResult(_RenderColoredBox#91533@Offset(1569.0, 21.0), RenderPointerListener#ae72d@Offset(1569.0, 21.0), RenderSemanticsGestureHandler#e5668@Offset(1569.0, 21.0), RenderStack#9eaeb@Offset(1569.0, 21.0), _RenderLayoutBuilder#df7dd@Offset(1569.0, 21.0), RenderPadding#9f168@Offset(1569.0, 21.0), RenderStack#cfd1a@Offset(1569.0, 21.0), RenderPadding#3e27a@Offset(1569.0, 21.0), RenderPadding#79257@Offset(1569.0, 21.0), RenderStack#bf7a4@Offset(1569.0, 21.0), RenderCustomMultiChildLayoutBox#94e1d@Offset(1569.0, 21.0), _RenderInkFeatures#9addb@Offset(1569.0, 21.0), RenderPhysicalModel#5cac6@Offset(1569.0, 21.0), RenderSemanticsAnnotations#be984@Offset(1569.0, 21.0), RenderStack#1befe@Offset(1569.0, 21.0), RenderSemanticsAnnotations#1b523@Offset(1569.0, 21.0), RenderRepaintBoundary#554cf@Offset(1569.0, 21.0), RenderIgnorePointer#0173c@Offset(1569.0, 21.0), _RenderSnapshotWidget#b3212@Offset(1569.0, 21.0), _RenderSnapshotWidget#f4889@Offset(1569.0, 21.0), _RenderSnapshotWidget#13f13@Offset(1569.0, 21.0), _RenderSnapshotWidget#b43d3@Offset(1569.0, 21.0), RenderRepaintBoundary#47ab5@Offset(1569.0, 21.0), RenderSemanticsAnnotations#6e1af@Offset(1569.0, 21.0), RenderOffstage#ff6fd@Offset(1569.0, 21.0), RenderSemanticsAnnotations#9e057@Offset(1569.0, 21.0), _RenderTheater#10224@Offset(1569.0, 21.0), RenderAbsorbPointer#a46e2@Offset(1569.0, 21.0), RenderPointerListener#04f8d@Offset(1569.0, 21.0), RenderSemanticsAnnotations#97280@Offset(1569.0, 21.0), RenderCustomPaint#602c1@Offset(1569.0, 21.0), RenderSemanticsAnnotations#5a30f@Offset(1569.0, 21.0), RenderSemanticsAnnotations#7dfb3@Offset(1569.0, 21.0), RenderTapRegionSurface#cc2c7@Offset(1569.0, 21.0), RenderSemanticsAnnotations#400fc@Offset(1569.0, 21.0), RenderSemanticsAnnotations#ba769@Offset(1569.0, 21.0), RenderSemanticsAnnotations#4d505@Offset(1569.0, 21.0), HitTestEntry<HitTestTarget>#195ba(_ReusableRenderView#88aea), HitTestEntry<HitTestTarget>#4f2c2(<AutomatedTestWidgetsFlutterBinding>))
+The finder corresponds to this RenderBox: RenderConstrainedBox#66a4f NEEDS-PAINT
+The hit test result at that offset is: HitTestResult(_RenderColoredBox#376d1@Offset(1569.0, 21.0), RenderPointerListener#344c9@Offset(1569.0, 21.0), RenderSemanticsGestureHandler#c0532@Offset(1569.0, 21.0), RenderStack#a9fbd@Offset(1569.0, 21.0), _RenderLayoutBuilder#3bbcf@Offset(1569.0, 21.0), RenderPadding#407a7@Offset(1569.0, 21.0), RenderStack#7d43a@Offset(1569.0, 21.0), RenderPadding#ad1f6@Offset(1569.0, 21.0), RenderPadding#6d1db@Offset(1569.0, 21.0), RenderStack#21ff9@Offset(1569.0, 21.0), RenderCustomMultiChildLayoutBox#9ae9e@Offset(1569.0, 21.0), _RenderInkFeatures#61a63@Offset(1569.0, 21.0), RenderPhysicalModel#67b05@Offset(1569.0, 21.0), RenderSemanticsAnnotations#97791@Offset(1569.0, 21.0), RenderStack#b8920@Offset(1569.0, 21.0), RenderSemanticsAnnotations#7105d@Offset(1569.0, 21.0), RenderRepaintBoundary#aa380@Offset(1569.0, 21.0), RenderIgnorePointer#e6067@Offset(1569.0, 21.0), _RenderSnapshotWidget#dd1d4@Offset(1569.0, 21.0), _RenderSnapshotWidget#566d2@Offset(1569.0, 21.0), _RenderSnapshotWidget#69190@Offset(1569.0, 21.0), _RenderSnapshotWidget#72946@Offset(1569.0, 21.0), RenderRepaintBoundary#ccc05@Offset(1569.0, 21.0), RenderSemanticsAnnotations#7a2d1@Offset(1569.0, 21.0), RenderOffstage#66aff@Offset(1569.0, 21.0), RenderSemanticsAnnotations#434e9@Offset(1569.0, 21.0), _RenderTheater#3c441@Offset(1569.0, 21.0), RenderAbsorbPointer#fd11f@Offset(1569.0, 21.0), RenderPointerListener#74a58@Offset(1569.0, 21.0), RenderSemanticsAnnotations#9eb22@Offset(1569.0, 21.0), RenderCustomPaint#0229e@Offset(1569.0, 21.0), RenderSemanticsAnnotations#23657@Offset(1569.0, 21.0), RenderSemanticsAnnotations#f83dc@Offset(1569.0, 21.0), RenderTapRegionSurface#07450@Offset(1569.0, 21.0), RenderSemanticsAnnotations#7a4d5@Offset(1569.0, 21.0), RenderSemanticsAnnotations#e42d4@Offset(1569.0, 21.0), RenderSemanticsAnnotations#37e7a@Offset(1569.0, 21.0), HitTestEntry<HitTestTarget>#b0f68(_ReusableRenderView#08823), HitTestEntry<HitTestTarget>#ac6c5(<AutomatedTestWidgetsFlutterBinding>))
 #0      WidgetController._getElementPoint (package:flutter_test/src/controller.dart:2077:25)
 #1      WidgetController.getCenter (package:flutter_test/src/controller.dart:1861:12)
 #2      WidgetController.tap (package:flutter_test/src/controller.dart:1041:7)
@@ -125,19 +125,17 @@ The hit test result at that offset is: HitTestResult(_RenderColoredBox#91533@Off
 To silence this warning, pass "warnIfMissed: false" to "tap()".
 To make this warning fatal, set WidgetController.hitTestWarningShouldBeFatal to true.
 
-00:11 +91: /workspace/FusionPlay/flutter/test/player_preview_test.dart: render Apple Music landscape previews
-CAPTURE lyrics-long-title-840x360 840.0x360.0
+00:10 +91: /workspace/FusionPlay/flutter/test/player_preview_test.dart: render Apple Music landscape previews
 00:11 +92: /workspace/FusionPlay/flutter/test/player_preview_test.dart: render Apple Music landscape previews
-CAPTURE lyrics-840x360 840.0x360.0
-00:12 +93: /workspace/FusionPlay/flutter/test/player_preview_test.dart: render Apple Music landscape previews
-00:12 +93: /workspace/FusionPlay/flutter/test/tv_mode_test.dart: TV 设置面板宽度上限 720（仍 ≤ 半屏），非 TV 为 560
+00:11 +93: /workspace/FusionPlay/flutter/test/player_preview_test.dart: render Apple Music landscape previews
+00:11 +93: /workspace/FusionPlay/flutter/test/tv_mode_test.dart: TV 设置面板宽度上限 720（仍 ≤ 半屏），非 TV 为 560
 
 Warning: A call to tap() with finder "Found 1 widget with key [<'playback-menu-button'>]: [
-  SizedBox-[<'playback-menu-button'>](width: 34.0, height: 34.0, renderObject: RenderConstrainedBox#90cf5 NEEDS-PAINT),
+  SizedBox-[<'playback-menu-button'>](width: 34.0, height: 34.0, renderObject: RenderConstrainedBox#ac204 NEEDS-PAINT),
 ]" derived an Offset (Offset(1569.0, 21.0)) that would not hit test on the specified widget.
 Maybe the widget is actually off-screen, or another widget is obscuring it, or the widget cannot receive pointer events.
-The finder corresponds to this RenderBox: RenderConstrainedBox#90cf5 NEEDS-PAINT
-The hit test result at that offset is: HitTestResult(_RenderColoredBox#ae271@Offset(1569.0, 21.0), RenderPointerListener#c004a@Offset(1569.0, 21.0), RenderSemanticsGestureHandler#20bee@Offset(1569.0, 21.0), RenderStack#bfd8f@Offset(1569.0, 21.0), _RenderLayoutBuilder#3b53d@Offset(1569.0, 21.0), RenderPadding#c7ecd@Offset(1569.0, 21.0), RenderStack#d52a3@Offset(1569.0, 21.0), RenderPadding#482dd@Offset(1569.0, 21.0), RenderPadding#6064d@Offset(1569.0, 21.0), RenderStack#e6b9b@Offset(1569.0, 21.0), RenderCustomMultiChildLayoutBox#d747b@Offset(1569.0, 21.0), _RenderInkFeatures#4a8b7@Offset(1569.0, 21.0), RenderPhysicalModel#4c4a7@Offset(1569.0, 21.0), RenderSemanticsAnnotations#13a3a@Offset(1569.0, 21.0), RenderStack#b2861@Offset(1569.0, 21.0), RenderSemanticsAnnotations#113e4@Offset(1569.0, 21.0), RenderRepaintBoundary#09be8@Offset(1569.0, 21.0), RenderIgnorePointer#1ae62@Offset(1569.0, 21.0), _RenderSnapshotWidget#10f4d@Offset(1569.0, 21.0), _RenderSnapshotWidget#2f264@Offset(1569.0, 21.0), _RenderSnapshotWidget#40136@Offset(1569.0, 21.0), _RenderSnapshotWidget#94480@Offset(1569.0, 21.0), RenderRepaintBoundary#bd445@Offset(1569.0, 21.0), RenderSemanticsAnnotations#27116@Offset(1569.0, 21.0), RenderOffstage#f5447@Offset(1569.0, 21.0), RenderSemanticsAnnotations#eb263@Offset(1569.0, 21.0), _RenderTheater#6270e@Offset(1569.0, 21.0), RenderAbsorbPointer#75d52@Offset(1569.0, 21.0), RenderPointerListener#650ba@Offset(1569.0, 21.0), RenderSemanticsAnnotations#034ab@Offset(1569.0, 21.0), RenderCustomPaint#d5bd3@Offset(1569.0, 21.0), RenderSemanticsAnnotations#8cb35@Offset(1569.0, 21.0), RenderSemanticsAnnotations#b5345@Offset(1569.0, 21.0), RenderTapRegionSurface#6fdc1@Offset(1569.0, 21.0), RenderSemanticsAnnotations#6cee7@Offset(1569.0, 21.0), RenderSemanticsAnnotations#50df3@Offset(1569.0, 21.0), RenderSemanticsAnnotations#ee37e@Offset(1569.0, 21.0), HitTestEntry<HitTestTarget>#47bb5(_ReusableRenderView#88aea), HitTestEntry<HitTestTarget>#4cf06(<AutomatedTestWidgetsFlutterBinding>))
+The finder corresponds to this RenderBox: RenderConstrainedBox#ac204 NEEDS-PAINT
+The hit test result at that offset is: HitTestResult(_RenderColoredBox#4e4c1@Offset(1569.0, 21.0), RenderPointerListener#0a7f7@Offset(1569.0, 21.0), RenderSemanticsGestureHandler#69a41@Offset(1569.0, 21.0), RenderStack#5d17c@Offset(1569.0, 21.0), _RenderLayoutBuilder#c9f11@Offset(1569.0, 21.0), RenderPadding#17c67@Offset(1569.0, 21.0), RenderStack#56bef@Offset(1569.0, 21.0), RenderPadding#9c63c@Offset(1569.0, 21.0), RenderPadding#c9e45@Offset(1569.0, 21.0), RenderStack#6a307@Offset(1569.0, 21.0), RenderCustomMultiChildLayoutBox#3711e@Offset(1569.0, 21.0), _RenderInkFeatures#25907@Offset(1569.0, 21.0), RenderPhysicalModel#00357@Offset(1569.0, 21.0), RenderSemanticsAnnotations#dd8ac@Offset(1569.0, 21.0), RenderStack#5adc3@Offset(1569.0, 21.0), RenderSemanticsAnnotations#db5a9@Offset(1569.0, 21.0), RenderRepaintBoundary#be1b2@Offset(1569.0, 21.0), RenderIgnorePointer#5a0f5@Offset(1569.0, 21.0), _RenderSnapshotWidget#96493@Offset(1569.0, 21.0), _RenderSnapshotWidget#6e3cd@Offset(1569.0, 21.0), _RenderSnapshotWidget#527ef@Offset(1569.0, 21.0), _RenderSnapshotWidget#d856f@Offset(1569.0, 21.0), RenderRepaintBoundary#634bb@Offset(1569.0, 21.0), RenderSemanticsAnnotations#3a90b@Offset(1569.0, 21.0), RenderOffstage#17add@Offset(1569.0, 21.0), RenderSemanticsAnnotations#663a1@Offset(1569.0, 21.0), _RenderTheater#34770@Offset(1569.0, 21.0), RenderAbsorbPointer#9ca14@Offset(1569.0, 21.0), RenderPointerListener#9d7f0@Offset(1569.0, 21.0), RenderSemanticsAnnotations#6e164@Offset(1569.0, 21.0), RenderCustomPaint#b08cc@Offset(1569.0, 21.0), RenderSemanticsAnnotations#04d2c@Offset(1569.0, 21.0), RenderSemanticsAnnotations#f95fa@Offset(1569.0, 21.0), RenderTapRegionSurface#4fccc@Offset(1569.0, 21.0), RenderSemanticsAnnotations#d12b0@Offset(1569.0, 21.0), RenderSemanticsAnnotations#2cd0e@Offset(1569.0, 21.0), RenderSemanticsAnnotations#caeba@Offset(1569.0, 21.0), HitTestEntry<HitTestTarget>#14e19(_ReusableRenderView#08823), HitTestEntry<HitTestTarget>#37fd1(<AutomatedTestWidgetsFlutterBinding>))
 #0      WidgetController._getElementPoint (package:flutter_test/src/controller.dart:2077:25)
 #1      WidgetController.getCenter (package:flutter_test/src/controller.dart:1861:12)
 #2      WidgetController.tap (package:flutter_test/src/controller.dart:1041:7)
@@ -153,73 +151,78 @@ The hit test result at that offset is: HitTestResult(_RenderColoredBox#ae271@Off
 To silence this warning, pass "warnIfMissed: false" to "tap()".
 To make this warning fatal, set WidgetController.hitTestWarningShouldBeFatal to true.
 
-00:12 +94: /workspace/FusionPlay/flutter/test/player_preview_test.dart: render Apple Music landscape previews
-CAPTURE no-lyrics-840x360 840.0x360.0
+00:11 +93: /workspace/FusionPlay/flutter/test/player_preview_test.dart: render Apple Music landscape previews
+CAPTURE lyrics-long-title-840x360 840.0x360.0
+00:11 +94: /workspace/FusionPlay/flutter/test/player_preview_test.dart: render Apple Music landscape previews
 00:12 +95: /workspace/FusionPlay/flutter/test/player_preview_test.dart: render Apple Music landscape previews
 00:12 +96: /workspace/FusionPlay/flutter/test/player_preview_test.dart: render Apple Music landscape previews
-00:13 +97: /workspace/FusionPlay/flutter/test/player_preview_test.dart: render Apple Music landscape previews
+00:12 +97: /workspace/FusionPlay/flutter/test/player_preview_test.dart: render Apple Music landscape previews
+CAPTURE lyrics-840x360 840.0x360.0
+00:12 +98: /workspace/FusionPlay/flutter/test/player_preview_test.dart: render Apple Music landscape previews
+CAPTURE no-lyrics-840x360 840.0x360.0
 CAPTURE lyrics-900x400 900.0x400.0
-00:13 +98: /workspace/FusionPlay/flutter/test/player_preview_test.dart: render Apple Music landscape previews
 CAPTURE no-lyrics-900x400 900.0x400.0
+00:14 +99: /workspace/FusionPlay/flutter/test/player_preview_test.dart: render Apple Music landscape previews
+00:14 +100: /workspace/FusionPlay/flutter/test/player_preview_test.dart: render Apple Music landscape previews
+00:14 +101: /workspace/FusionPlay/flutter/test/player_preview_test.dart: render Apple Music landscape previews
+00:14 +102: /workspace/FusionPlay/flutter/test/player_preview_test.dart: render Apple Music landscape previews
 CAPTURE lyrics-980x420 980.0x420.0
-00:15 +99: /workspace/FusionPlay/flutter/test/player_preview_test.dart: render Apple Music landscape previews
+00:15 +103: /workspace/FusionPlay/flutter/test/player_preview_test.dart: render Apple Music landscape previews
+00:15 +104: /workspace/FusionPlay/flutter/test/player_preview_test.dart: render Apple Music landscape previews
+00:15 +105: /workspace/FusionPlay/flutter/test/player_preview_test.dart: render Apple Music landscape previews
+00:15 +106: /workspace/FusionPlay/flutter/test/player_preview_test.dart: render Apple Music landscape previews
+00:15 +107: /workspace/FusionPlay/flutter/test/player_preview_test.dart: render Apple Music landscape previews
 CAPTURE no-lyrics-980x420 980.0x420.0
-00:15 +100: /workspace/FusionPlay/flutter/test/player_preview_test.dart: render Apple Music landscape previews
-00:15 +101: /workspace/FusionPlay/flutter/test/player_preview_test.dart: render Apple Music landscape previews
-00:15 +102: /workspace/FusionPlay/flutter/test/player_preview_test.dart: render Apple Music landscape previews
+00:15 +108: /workspace/FusionPlay/flutter/test/player_preview_test.dart: render Apple Music landscape previews
+00:15 +109: /workspace/FusionPlay/flutter/test/player_preview_test.dart: render Apple Music landscape previews
+00:16 +110: /workspace/FusionPlay/flutter/test/player_preview_test.dart: render Apple Music landscape previews
 CAPTURE lyrics-1008x432 1008.0x432.0
-00:16 +103: /workspace/FusionPlay/flutter/test/player_preview_test.dart: render Apple Music landscape previews
-00:16 +104: /workspace/FusionPlay/flutter/test/player_preview_test.dart: render Apple Music landscape previews
-00:16 +105: /workspace/FusionPlay/flutter/test/player_preview_test.dart: render Apple Music landscape previews
-00:16 +106: /workspace/FusionPlay/flutter/test/player_preview_test.dart: render Apple Music landscape previews
-00:16 +107: /workspace/FusionPlay/flutter/test/player_preview_test.dart: render Apple Music landscape previews
+00:16 +111: /workspace/FusionPlay/flutter/test/player_preview_test.dart: render Apple Music landscape previews
+00:16 +112: /workspace/FusionPlay/flutter/test/player_preview_test.dart: render Apple Music landscape previews
+00:16 +113: /workspace/FusionPlay/flutter/test/player_preview_test.dart: render Apple Music landscape previews
+00:16 +114: /workspace/FusionPlay/flutter/test/player_preview_test.dart: render Apple Music landscape previews
 CAPTURE no-lyrics-1008x432 1008.0x432.0
-00:16 +108: /workspace/FusionPlay/flutter/test/player_preview_test.dart: render Apple Music landscape previews
-00:16 +109: /workspace/FusionPlay/flutter/test/player_preview_test.dart: render Apple Music landscape previews
-00:17 +110: /workspace/FusionPlay/flutter/test/player_preview_test.dart: render Apple Music landscape previews
+00:16 +115: /workspace/FusionPlay/flutter/test/player_preview_test.dart: render Apple Music landscape previews
+00:17 +116: /workspace/FusionPlay/flutter/test/player_preview_test.dart: render Apple Music landscape previews
+00:17 +117: /workspace/FusionPlay/flutter/test/player_preview_test.dart: render Apple Music landscape previews
+00:17 +118: /workspace/FusionPlay/flutter/test/player_preview_test.dart: render Apple Music landscape previews
 CAPTURE lyrics-1080x462 1080.0x462.0
-00:17 +111: /workspace/FusionPlay/flutter/test/player_preview_test.dart: render Apple Music landscape previews
-00:17 +112: /workspace/FusionPlay/flutter/test/player_preview_test.dart: render Apple Music landscape previews
-00:17 +113: /workspace/FusionPlay/flutter/test/player_preview_test.dart: render Apple Music landscape previews
-00:17 +114: /workspace/FusionPlay/flutter/test/player_preview_test.dart: render Apple Music landscape previews
+00:17 +119: /workspace/FusionPlay/flutter/test/player_preview_test.dart: render Apple Music landscape previews
 CAPTURE no-lyrics-1080x462 1080.0x462.0
-00:18 +115: /workspace/FusionPlay/flutter/test/player_preview_test.dart: render Apple Music landscape previews
-00:18 +116: /workspace/FusionPlay/flutter/test/player_preview_test.dart: render Apple Music landscape previews
-00:18 +117: /workspace/FusionPlay/flutter/test/player_preview_test.dart: render Apple Music landscape previews
-00:18 +118: /workspace/FusionPlay/flutter/test/player_preview_test.dart: render Apple Music landscape previews
 CAPTURE lyrics-1280x720 1280.0x720.0
-00:18 +119: /workspace/FusionPlay/flutter/test/player_preview_test.dart: render Apple Music landscape previews
+00:19 +120: /workspace/FusionPlay/flutter/test/player_preview_test.dart: render Apple Music landscape previews
 CAPTURE no-lyrics-1280x720 1280.0x720.0
-00:20 +120: /workspace/FusionPlay/flutter/test/settings_remote_test.dart: 三点菜单打开设置浮层，Escape 逐层关闭
-00:21 +121: /workspace/FusionPlay/flutter/test/settings_remote_test.dart: MiPlay 上键聚焦编辑按钮，点击编辑后才聚焦名称输入框
-00:21 +122: /workspace/FusionPlay/flutter/test/settings_remote_test.dart: MiPlay 上键聚焦编辑按钮，点击编辑后才聚焦名称输入框
-00:21 +123: /workspace/FusionPlay/flutter/test/settings_remote_test.dart: MiPlay 上键聚焦编辑按钮，点击编辑后才聚焦名称输入框
-00:21 +124: /workspace/FusionPlay/flutter/test/settings_remote_test.dart: 名称展示→编辑→取消恢复原名，不触发持久化
-00:21 +125: /workspace/FusionPlay/flutter/test/settings_remote_test.dart: 名称编辑→应用原子调用一次 onReceiverName 并回到展示态
-00:21 +126: /workspace/FusionPlay/flutter/test/settings_remote_test.dart: 日志导出入口与关于应用位于同一卡片并可触发
-00:22 +127: /workspace/FusionPlay/flutter/test/settings_remote_test.dart: select does not open settings while player control has focus
-00:22 +128: /workspace/FusionPlay/flutter/test/settings_remote_test.dart: player focus follows settings progress and play pause space
-00:22 +129: /workspace/FusionPlay/flutter/test/lyrics_player_test.dart: YAQMC 布局：封面、标题、常驻大歌词与玻璃 dock
-00:23 +130: /workspace/FusionPlay/flutter/test/ui_gallery_test.dart: render settings/menu/dialog gallery
-00:23 +131: /workspace/FusionPlay/flutter/test/ui_gallery_test.dart: render settings/menu/dialog gallery
-00:23 +132: /workspace/FusionPlay/flutter/test/ui_gallery_test.dart: render settings/menu/dialog gallery
-00:23 +133: /workspace/FusionPlay/flutter/test/ui_gallery_test.dart: render settings/menu/dialog gallery
-00:23 +134: /workspace/FusionPlay/flutter/test/ui_gallery_test.dart: render settings/menu/dialog gallery
-00:23 +135: /workspace/FusionPlay/flutter/test/ui_gallery_test.dart: render settings/menu/dialog gallery
+00:20 +121: /workspace/FusionPlay/flutter/test/player_preview_test.dart: render Apple Music landscape previews
+00:20 +122: /workspace/FusionPlay/flutter/test/player_preview_test.dart: render Apple Music landscape previews
+00:20 +123: /workspace/FusionPlay/flutter/test/player_preview_test.dart: render Apple Music landscape previews
+00:20 +124: /workspace/FusionPlay/flutter/test/player_preview_test.dart: render Apple Music landscape previews
+00:20 +125: /workspace/FusionPlay/flutter/test/player_preview_test.dart: render Apple Music landscape previews
+00:20 +126: /workspace/FusionPlay/flutter/test/player_preview_test.dart: render Apple Music landscape previews
+00:20 +127: /workspace/FusionPlay/flutter/test/player_preview_test.dart: (tearDownAll)
+00:20 +127: loading /workspace/FusionPlay/flutter/test/airplay_progress_test.dart
+00:21 +127: /workspace/FusionPlay/flutter/test/airplay_progress_test.dart: AirPlay 本地时钟在两次 now-playing 事件之间推进进度
+00:21 +128: /workspace/FusionPlay/flutter/test/airplay_progress_test.dart: AirPlay 本地时钟不会超过总时长，也不会倒退
+00:21 +129: /workspace/FusionPlay/flutter/test/lyrics_player_test.dart: YAQMC 布局：封面、标题、常驻大歌词与玻璃 dock
+00:22 +130: /workspace/FusionPlay/flutter/test/ui_gallery_test.dart: render settings/menu/dialog gallery
+00:22 +131: /workspace/FusionPlay/flutter/test/ui_gallery_test.dart: render settings/menu/dialog gallery
+00:22 +132: /workspace/FusionPlay/flutter/test/ui_gallery_test.dart: render settings/menu/dialog gallery
+00:22 +133: /workspace/FusionPlay/flutter/test/ui_gallery_test.dart: render settings/menu/dialog gallery
+00:22 +134: /workspace/FusionPlay/flutter/test/ui_gallery_test.dart: render settings/menu/dialog gallery
+00:22 +135: /workspace/FusionPlay/flutter/test/ui_gallery_test.dart: render settings/menu/dialog gallery
 00:23 +136: /workspace/FusionPlay/flutter/test/ui_gallery_test.dart: render settings/menu/dialog gallery
 00:23 +137: /workspace/FusionPlay/flutter/test/ui_gallery_test.dart: render settings/menu/dialog gallery
 00:23 +138: /workspace/FusionPlay/flutter/test/ui_gallery_test.dart: render settings/menu/dialog gallery
 00:23 +139: /workspace/FusionPlay/flutter/test/ui_gallery_test.dart: render settings/menu/dialog gallery
 00:23 +140: /workspace/FusionPlay/flutter/test/ui_gallery_test.dart: render settings/menu/dialog gallery
-00:24 +141: /workspace/FusionPlay/flutter/test/ui_gallery_test.dart: render settings/menu/dialog gallery
-00:24 +141: /workspace/FusionPlay/flutter/test/lyrics_player_test.dart: 纵向紧凑布局 420x760 不溢出
+00:23 +141: /workspace/FusionPlay/flutter/test/ui_gallery_test.dart: render settings/menu/dialog gallery
+00:23 +141: /workspace/FusionPlay/flutter/test/lyrics_player_test.dart: 纵向紧凑布局 420x760 不溢出
 
 Warning: A call to drag() with finder "Found 1 widget with key [<'player-layout-horizontal'>]: [
-  LayoutBuilder-[<'player-layout-horizontal'>](renderObject: _RenderLayoutBuilder#c7930),
+  LayoutBuilder-[<'player-layout-horizontal'>](renderObject: _RenderLayoutBuilder#d307a),
 ]" derived an Offset (Offset(210.0, 400.0)) that would not hit test on the specified widget.
 Maybe the widget is actually off-screen, or another widget is obscuring it, or the widget cannot receive pointer events.
-The finder corresponds to this RenderBox: _RenderLayoutBuilder#c7930
-The hit test result at that offset is: HitTestResult(_RenderInkFeatures#73108@Offset(210.0, 400.0), RenderPhysicalModel#ed8a1@Offset(210.0, 400.0), RenderSemanticsAnnotations#f4dca@Offset(210.0, 400.0), RenderRepaintBoundary#f491e@Offset(210.0, 400.0), RenderIgnorePointer#f7df0@Offset(210.0, 400.0), _RenderSnapshotWidget#c6044@Offset(210.0, 400.0), _RenderSnapshotWidget#5d38f@Offset(210.0, 400.0), _RenderSnapshotWidget#a36e4@Offset(210.0, 400.0), _RenderSnapshotWidget#eb7c6@Offset(210.0, 400.0), RenderRepaintBoundary#67037@Offset(210.0, 400.0), RenderSemanticsAnnotations#7035e@Offset(210.0, 400.0), RenderOffstage#ebe22@Offset(210.0, 400.0), RenderSemanticsAnnotations#3df0f@Offset(210.0, 400.0), _RenderTheater#a0189@Offset(210.0, 400.0), RenderAbsorbPointer#40a3a@Offset(210.0, 400.0), RenderPointerListener#d2d61@Offset(210.0, 400.0), RenderSemanticsAnnotations#5d0ae@Offset(210.0, 400.0), RenderCustomPaint#cde94@Offset(210.0, 400.0), RenderSemanticsAnnotations#75ea0@Offset(210.0, 400.0), RenderSemanticsAnnotations#4dcd1@Offset(210.0, 400.0), RenderTapRegionSurface#7f2c1@Offset(210.0, 400.0), RenderSemanticsAnnotations#f0ff1@Offset(210.0, 400.0), RenderSemanticsAnnotations#f311e@Offset(210.0, 400.0), RenderSemanticsAnnotations#6353d@Offset(210.0, 400.0), HitTestEntry<HitTestTarget>#22b45(_ReusableRenderView#442cb), HitTestEntry<HitTestTarget>#c3eb4(<AutomatedTestWidgetsFlutterBinding>))
+The finder corresponds to this RenderBox: _RenderLayoutBuilder#d307a
+The hit test result at that offset is: HitTestResult(_RenderInkFeatures#4699f@Offset(210.0, 400.0), RenderPhysicalModel#b77bd@Offset(210.0, 400.0), RenderSemanticsAnnotations#69bf4@Offset(210.0, 400.0), RenderRepaintBoundary#656c3@Offset(210.0, 400.0), RenderIgnorePointer#c65c2@Offset(210.0, 400.0), _RenderSnapshotWidget#e16f4@Offset(210.0, 400.0), _RenderSnapshotWidget#acd93@Offset(210.0, 400.0), _RenderSnapshotWidget#20cd5@Offset(210.0, 400.0), _RenderSnapshotWidget#9ff87@Offset(210.0, 400.0), RenderRepaintBoundary#dc058@Offset(210.0, 400.0), RenderSemanticsAnnotations#2b958@Offset(210.0, 400.0), RenderOffstage#2dd68@Offset(210.0, 400.0), RenderSemanticsAnnotations#b0a07@Offset(210.0, 400.0), _RenderTheater#486a5@Offset(210.0, 400.0), RenderAbsorbPointer#58059@Offset(210.0, 400.0), RenderPointerListener#cd8d2@Offset(210.0, 400.0), RenderSemanticsAnnotations#45fbd@Offset(210.0, 400.0), RenderCustomPaint#5069a@Offset(210.0, 400.0), RenderSemanticsAnnotations#f1076@Offset(210.0, 400.0), RenderSemanticsAnnotations#7f3da@Offset(210.0, 400.0), RenderTapRegionSurface#ffe93@Offset(210.0, 400.0), RenderSemanticsAnnotations#d8070@Offset(210.0, 400.0), RenderSemanticsAnnotations#cf0bf@Offset(210.0, 400.0), RenderSemanticsAnnotations#84e8e@Offset(210.0, 400.0), HitTestEntry<HitTestTarget>#999d4(_ReusableRenderView#9d661), HitTestEntry<HitTestTarget>#604eb(<AutomatedTestWidgetsFlutterBinding>))
 #0      WidgetController._getElementPoint (package:flutter_test/src/controller.dart:2077:25)
 #1      WidgetController.getCenter (package:flutter_test/src/controller.dart:1861:12)
 #2      WidgetController.drag (package:flutter_test/src/controller.dart:1537:7)
@@ -234,12 +237,12 @@ The hit test result at that offset is: HitTestResult(_RenderInkFeatures#73108@Of
 To silence this warning, pass "warnIfMissed: false" to "drag()".
 To make this warning fatal, set WidgetController.hitTestWarningShouldBeFatal to true.
 
-00:24 +142: /workspace/FusionPlay/flutter/test/ui_gallery_test.dart: render settings/menu/dialog gallery
-00:24 +143: /workspace/FusionPlay/flutter/test/ui_gallery_test.dart: render settings/menu/dialog gallery
-00:24 +144: /workspace/FusionPlay/flutter/test/ui_gallery_test.dart: render settings/menu/dialog gallery
-00:24 +145: /workspace/FusionPlay/flutter/test/ui_gallery_test.dart: render settings/menu/dialog gallery
-00:24 +146: /workspace/FusionPlay/flutter/test/ui_gallery_test.dart: render settings/menu/dialog gallery
-00:24 +147: /workspace/FusionPlay/flutter/test/ui_gallery_test.dart: render settings/menu/dialog gallery
+00:23 +142: /workspace/FusionPlay/flutter/test/ui_gallery_test.dart: render settings/menu/dialog gallery
+00:23 +143: /workspace/FusionPlay/flutter/test/ui_gallery_test.dart: render settings/menu/dialog gallery
+00:23 +144: /workspace/FusionPlay/flutter/test/ui_gallery_test.dart: render settings/menu/dialog gallery
+00:23 +145: /workspace/FusionPlay/flutter/test/ui_gallery_test.dart: render settings/menu/dialog gallery
+00:23 +146: /workspace/FusionPlay/flutter/test/ui_gallery_test.dart: render settings/menu/dialog gallery
+00:23 +147: /workspace/FusionPlay/flutter/test/ui_gallery_test.dart: render settings/menu/dialog gallery
 00:24 +148: /workspace/FusionPlay/flutter/test/ui_gallery_test.dart: render settings/menu/dialog gallery
 00:24 +149: /workspace/FusionPlay/flutter/test/ui_gallery_test.dart: render settings/menu/dialog gallery
 00:24 +150: /workspace/FusionPlay/flutter/test/ui_gallery_test.dart: render settings/menu/dialog gallery
@@ -247,310 +250,311 @@ To make this warning fatal, set WidgetController.hitTestWarningShouldBeFatal to 
 00:24 +152: /workspace/FusionPlay/flutter/test/ui_gallery_test.dart: render settings/menu/dialog gallery
 00:24 +153: /workspace/FusionPlay/flutter/test/ui_gallery_test.dart: render settings/menu/dialog gallery
 00:24 +154: /workspace/FusionPlay/flutter/test/ui_gallery_test.dart: render settings/menu/dialog gallery
-00:25 +155: /workspace/FusionPlay/flutter/test/ui_gallery_test.dart: render settings/menu/dialog gallery
-00:25 +156: /workspace/FusionPlay/flutter/test/ui_gallery_test.dart: render settings/menu/dialog gallery
-00:25 +157: /workspace/FusionPlay/flutter/test/ui_gallery_test.dart: render settings/menu/dialog gallery
-00:25 +158: /workspace/FusionPlay/flutter/test/ui_gallery_test.dart: render settings/menu/dialog gallery
-00:25 +159: /workspace/FusionPlay/flutter/test/ui_gallery_test.dart: render settings/menu/dialog gallery
-00:25 +160: /workspace/FusionPlay/flutter/test/ui_gallery_test.dart: render settings/menu/dialog gallery
+00:24 +155: /workspace/FusionPlay/flutter/test/ui_gallery_test.dart: render settings/menu/dialog gallery
+00:24 +156: /workspace/FusionPlay/flutter/test/ui_gallery_test.dart: render settings/menu/dialog gallery
+00:24 +157: /workspace/FusionPlay/flutter/test/ui_gallery_test.dart: render settings/menu/dialog gallery
+00:24 +158: /workspace/FusionPlay/flutter/test/ui_gallery_test.dart: render settings/menu/dialog gallery
+00:24 +159: /workspace/FusionPlay/flutter/test/ui_gallery_test.dart: render settings/menu/dialog gallery
+00:24 +160: /workspace/FusionPlay/flutter/test/ui_gallery_test.dart: render settings/menu/dialog gallery
 00:25 +161: /workspace/FusionPlay/flutter/test/ui_gallery_test.dart: render settings/menu/dialog gallery
 00:25 +162: /workspace/FusionPlay/flutter/test/ui_gallery_test.dart: render settings/menu/dialog gallery
 00:25 +163: /workspace/FusionPlay/flutter/test/ui_gallery_test.dart: render settings/menu/dialog gallery
 00:25 +164: /workspace/FusionPlay/flutter/test/ui_gallery_test.dart: render settings/menu/dialog gallery
-00:26 +165: /workspace/FusionPlay/flutter/test/ui_gallery_test.dart: render settings/menu/dialog gallery
+00:25 +165: /workspace/FusionPlay/flutter/test/ui_gallery_test.dart: (tearDownAll)
+00:25 +165: /workspace/FusionPlay/flutter/test/artwork_background_test.dart: 封面按上限尺寸解码以约束图片缓存占用
 00:26 +166: /workspace/FusionPlay/flutter/test/artwork_background_test.dart: 背景只让已准备的新封面层淡入
-00:26 +167: /workspace/FusionPlay/flutter/test/artwork_background_test.dart: 关闭高级效果后封面背景不使用模糊
-00:26 +168: /workspace/FusionPlay/flutter/test/artwork_background_test.dart: 封面翻转帧和时序参数与文档一致
-00:26 +169: /workspace/FusionPlay/flutter/test/artwork_background_test.dart: 减少动态效果只执行双阶段透明度过渡
-00:26 +170: /workspace/FusionPlay/flutter/test/artwork_background_test.dart: 上一曲向右翻转而下一曲向左翻转
-00:27 +171: /workspace/FusionPlay/flutter/test/backdrop_update_test.dart: background repaint updates an offset texture without revision
-00:27 +172: /workspace/FusionPlay/flutter/test/backdrop_update_test.dart: background repaint updates an offset texture without revision
-00:27 +173: /workspace/FusionPlay/flutter/test/backdrop_update_test.dart: background repaint updates an offset texture without revision
-00:27 +174: /workspace/FusionPlay/flutter/test/backdrop_update_test.dart: background repaint updates an offset texture without revision
-00:27 +175: /workspace/FusionPlay/flutter/test/backdrop_update_test.dart: background repaint updates an offset texture without revision
-00:27 +176: /workspace/FusionPlay/flutter/test/backdrop_update_test.dart: background repaint updates an offset texture without revision
-00:27 +177: /workspace/FusionPlay/flutter/test/backdrop_update_test.dart: background repaint updates an offset texture without revision
-00:27 +178: /workspace/FusionPlay/flutter/test/backdrop_update_test.dart: background repaint updates an offset texture without revision
-00:28 +179: /workspace/FusionPlay/flutter/test/lyrics_playback_clock_test.dart: 播放时按墙钟外推位置
-00:28 +180: /workspace/FusionPlay/flutter/test/lyrics_playback_clock_test.dart: 小回退样本被单调处理，不产生抖动
-00:28 +181: /workspace/FusionPlay/flutter/test/lyrics_playback_clock_test.dart: 大幅回退样本视为 seek 并重锚
-00:28 +182: /workspace/FusionPlay/flutter/test/lyrics_playback_clock_test.dart: 暂停时冻结位置，恢复播放后继续外推
-00:28 +183: /workspace/FusionPlay/flutter/test/lyrics_playback_clock_test.dart: 换曲（trackKey 变化）直接重锚，不做单调处理
-00:28 +184: /workspace/FusionPlay/flutter/test/lyrics_playback_clock_test.dart: 位置被时长夹取
-00:28 +185: /workspace/FusionPlay/flutter/test/lyrics_playback_clock_test.dart: dispose 后 update 不抛异常
-00:28 +186: /workspace/FusionPlay/flutter/test/glass_shader_compile_test.dart: glass shaders compile
-00:29 +187: /workspace/FusionPlay/flutter/test/audit_capture_test.dart: (setUpAll)
-00:29 +187: /workspace/FusionPlay/flutter/test/audit_capture_test.dart: photographic cover lighting study
-00:32 +188: /workspace/FusionPlay/flutter/test/audit_capture_test.dart: photographic cover lighting study
-00:32 +189: /workspace/FusionPlay/flutter/test/audit_capture_test.dart: photographic cover lighting study
-00:32 +190: /workspace/FusionPlay/flutter/test/audit_capture_test.dart: photographic cover lighting study
-00:32 +191: /workspace/FusionPlay/flutter/test/audit_capture_test.dart: photographic cover lighting study
-00:32 +192: /workspace/FusionPlay/flutter/test/audit_capture_test.dart: photographic cover lighting study
-00:32 +193: /workspace/FusionPlay/flutter/test/audit_capture_test.dart: photographic cover lighting study
-00:32 +194: /workspace/FusionPlay/flutter/test/audit_capture_test.dart: photographic cover lighting study
-00:32 +195: /workspace/FusionPlay/flutter/test/audit_capture_test.dart: photographic cover lighting study
-00:33 +196: /workspace/FusionPlay/flutter/test/audit_capture_test.dart: photographic cover lighting study
-00:33 +197: /workspace/FusionPlay/flutter/test/audit_capture_test.dart: photographic cover lighting study
-00:33 +198: /workspace/FusionPlay/flutter/test/audit_capture_test.dart: photographic cover lighting study
-00:33 +199: /workspace/FusionPlay/flutter/test/audit_capture_test.dart: round2 player captures P01-P20
+00:26 +167: /workspace/FusionPlay/flutter/test/backdrop_update_test.dart: background repaint updates an offset texture without revision
+00:26 +168: /workspace/FusionPlay/flutter/test/backdrop_update_test.dart: background repaint updates an offset texture without revision
+00:26 +169: /workspace/FusionPlay/flutter/test/backdrop_update_test.dart: background repaint updates an offset texture without revision
+00:26 +170: /workspace/FusionPlay/flutter/test/backdrop_update_test.dart: background repaint updates an offset texture without revision
+00:26 +171: /workspace/FusionPlay/flutter/test/backdrop_update_test.dart: background repaint updates an offset texture without revision
+00:27 +172: /workspace/FusionPlay/flutter/test/playback_controls_test.dart: PlaybackControls 解析 根级 controls 优先解析
+00:27 +173: /workspace/FusionPlay/flutter/test/playback_controls_test.dart: PlaybackControls 解析 兼容 playback 内旧 controls 字段
+00:27 +174: /workspace/FusionPlay/flutter/test/playback_controls_test.dart: PlaybackControls 解析 缺省 fallback：小米妙播视为全 true
+00:27 +175: /workspace/FusionPlay/flutter/test/playback_controls_test.dart: PlaybackControls 解析 缺省 fallback：AirPlay/DLNA 只看 remoteControl.commands
+00:27 +176: /workspace/FusionPlay/flutter/test/playback_controls_test.dart: PlaybackControls 解析 无协议旧状态（Windows/占位）保持宽容 fallback
+00:27 +177: /workspace/FusionPlay/flutter/test/playback_controls_test.dart: PlaybackControls 解析 没有任何播放内容时不显示 playback 控制
+00:27 +178: /workspace/FusionPlay/flutter/test/playback_controls_test.dart: PlaybackControls 解析 PlaybackControls 相等性与 copyWith
+00:27 +179: /workspace/FusionPlay/flutter/test/lyrics_playback_clock_test.dart: 播放时按墙钟外推位置
+00:27 +180: /workspace/FusionPlay/flutter/test/lyrics_playback_clock_test.dart: 小回退样本被单调处理，不产生抖动
+00:27 +181: /workspace/FusionPlay/flutter/test/lyrics_playback_clock_test.dart: 大幅回退样本视为 seek 并重锚
+00:27 +182: /workspace/FusionPlay/flutter/test/lyrics_playback_clock_test.dart: 暂停时冻结位置，恢复播放后继续外推
+00:27 +183: /workspace/FusionPlay/flutter/test/lyrics_playback_clock_test.dart: 换曲（trackKey 变化）直接重锚，不做单调处理
+00:27 +184: /workspace/FusionPlay/flutter/test/lyrics_playback_clock_test.dart: 位置被时长夹取
+00:27 +185: /workspace/FusionPlay/flutter/test/lyrics_playback_clock_test.dart: dispose 后 update 不抛异常
+00:27 +186: /workspace/FusionPlay/flutter/test/glass_shader_compile_test.dart: glass shaders compile
+00:28 +187: /workspace/FusionPlay/flutter/test/audit_capture_test.dart: (setUpAll)
+00:28 +187: /workspace/FusionPlay/flutter/test/audit_capture_test.dart: photographic cover lighting study
+00:30 +188: /workspace/FusionPlay/flutter/test/audit_capture_test.dart: photographic cover lighting study
+00:31 +189: /workspace/FusionPlay/flutter/test/audit_capture_test.dart: photographic cover lighting study
+00:31 +190: /workspace/FusionPlay/flutter/test/audit_capture_test.dart: photographic cover lighting study
+00:31 +191: /workspace/FusionPlay/flutter/test/audit_capture_test.dart: photographic cover lighting study
+00:31 +192: /workspace/FusionPlay/flutter/test/audit_capture_test.dart: photographic cover lighting study
+00:31 +193: /workspace/FusionPlay/flutter/test/audit_capture_test.dart: photographic cover lighting study
+00:31 +194: /workspace/FusionPlay/flutter/test/audit_capture_test.dart: photographic cover lighting study
+00:31 +195: /workspace/FusionPlay/flutter/test/audit_capture_test.dart: photographic cover lighting study
+00:31 +196: /workspace/FusionPlay/flutter/test/audit_capture_test.dart: photographic cover lighting study
+00:31 +197: /workspace/FusionPlay/flutter/test/audit_capture_test.dart: photographic cover lighting study
+00:31 +198: /workspace/FusionPlay/flutter/test/audit_capture_test.dart: photographic cover lighting study
+00:32 +199: /workspace/FusionPlay/flutter/test/audit_capture_test.dart: round2 player captures P01-P20
 OVERFLOW|_warmup|980x420|none
 METRIC|_warmup|980x420|cover|22.0|136.6|198.7|313.4|176.8|176.8
-METRIC|_warmup|980x420|title|267.1|129.0|337.7|148.0|70.6|19.0
-METRIC|_warmup|980x420|artist|261.7|148.0|343.0|164.0|81.3|16.0
-METRIC|_warmup|980x420|progress|206.7|168.0|398.0|208.0|191.3|40.0
-METRIC|_warmup|980x420|time|206.7|195.0|229.8|210.0|23.1|15.0
-METRIC|_warmup|980x420|remaining|369.8|195.0|398.0|210.0|28.2|15.0
-METRIC|_warmup|980x420|prev|220.4|236.0|254.4|270.0|34.0|34.0
-METRIC|_warmup|980x420|play|272.4|223.0|332.4|283.0|60.0|60.0
-METRIC|_warmup|980x420|next|350.4|236.0|384.4|270.0|34.0|34.0
-METRIC|_warmup|980x420|volume|206.7|293.0|398.0|321.0|191.3|28.0
+METRIC|_warmup|980x420|title|267.1|129.3|337.7|148.3|70.6|19.0
+METRIC|_warmup|980x420|artist|261.7|148.3|343.0|164.3|81.3|16.0
+METRIC|_warmup|980x420|progress|206.7|168.3|398.0|208.3|191.3|40.0
+METRIC|_warmup|980x420|time|206.7|195.3|229.8|210.3|23.1|15.0
+METRIC|_warmup|980x420|remaining|369.8|195.3|398.0|210.3|28.2|15.0
+METRIC|_warmup|980x420|prev|220.4|230.5|254.4|264.5|34.0|34.0
+METRIC|_warmup|980x420|play|272.4|217.5|332.4|277.5|60.0|60.0
+METRIC|_warmup|980x420|next|350.4|230.5|384.4|264.5|34.0|34.0
+METRIC|_warmup|980x420|volume|206.7|292.7|398.0|320.7|191.3|28.0
 METRIC|_warmup|980x420|controls|22.0|48.0|398.0|402.0|376.0|354.0
-00:34 +200: /workspace/FusionPlay/flutter/test/audit_capture_test.dart: round2 player captures P01-P20
-00:34 +201: /workspace/FusionPlay/flutter/test/audit_capture_test.dart: round2 player captures P01-P20
+00:33 +200: /workspace/FusionPlay/flutter/test/audit_capture_test.dart: round2 player captures P01-P20
+00:33 +201: /workspace/FusionPlay/flutter/test/audit_capture_test.dart: round2 player captures P01-P20
+00:33 +202: /workspace/FusionPlay/flutter/test/audit_capture_test.dart: round2 player captures P01-P20
 OVERFLOW|P01|900x400|none
 METRIC|P01|900x400|cover|21.9|134.1|183.8|295.9|161.8|161.8
-METRIC|P01|900x400|title|243.5|119.0|314.1|138.0|70.6|19.0
-METRIC|P01|900x400|artist|238.2|138.0|319.5|154.0|81.3|16.0
-METRIC|P01|900x400|progress|191.7|158.0|366.0|198.0|174.3|40.0
-METRIC|P01|900x400|time|191.7|185.0|214.8|200.0|23.1|15.0
-METRIC|P01|900x400|remaining|337.8|185.0|366.0|200.0|28.2|15.0
-METRIC|P01|900x400|prev|196.8|226.0|230.8|260.0|34.0|34.0
-METRIC|P01|900x400|play|248.8|213.0|308.8|273.0|60.0|60.0
-METRIC|P01|900x400|next|326.8|226.0|360.8|260.0|34.0|34.0
-METRIC|P01|900x400|volume|191.7|283.0|366.0|311.0|174.3|28.0
+METRIC|P01|900x400|title|243.5|119.3|314.1|138.3|70.6|19.0
+METRIC|P01|900x400|artist|238.2|138.3|319.5|154.3|81.3|16.0
+METRIC|P01|900x400|progress|191.7|158.3|366.0|198.3|174.3|40.0
+METRIC|P01|900x400|time|191.7|185.3|214.8|200.3|23.1|15.0
+METRIC|P01|900x400|remaining|337.8|185.3|366.0|200.3|28.2|15.0
+METRIC|P01|900x400|prev|196.8|220.5|230.8|254.5|34.0|34.0
+METRIC|P01|900x400|play|248.8|207.5|308.8|267.5|60.0|60.0
+METRIC|P01|900x400|next|326.8|220.5|360.8|254.5|34.0|34.0
+METRIC|P01|900x400|volume|191.7|282.7|366.0|310.7|174.3|28.0
 METRIC|P01|900x400|controls|22.0|48.0|366.0|382.0|344.0|334.0
-00:35 +202: /workspace/FusionPlay/flutter/test/audit_capture_test.dart: round2 player captures P01-P20
-00:35 +203: /workspace/FusionPlay/flutter/test/audit_capture_test.dart: round2 player captures P01-P20
-00:35 +204: /workspace/FusionPlay/flutter/test/audit_capture_test.dart: round2 player captures P01-P20
+00:33 +203: /workspace/FusionPlay/flutter/test/audit_capture_test.dart: round2 player captures P01-P20
+00:34 +204: /workspace/FusionPlay/flutter/test/audit_capture_test.dart: round2 player captures P01-P20
+00:34 +205: /workspace/FusionPlay/flutter/test/audit_capture_test.dart: round2 player captures P01-P20
+00:34 +206: /workspace/FusionPlay/flutter/test/audit_capture_test.dart: round2 player captures P01-P20
 OVERFLOW|P02|900x400|none
 METRIC|P02|900x400|cover|105.5|78.2|379.2|351.8|273.7|273.7
-METRIC|P02|900x400|title|449.7|76.0|801.0|111.0|351.3|35.0
-METRIC|P02|900x400|artist|449.7|114.0|801.0|135.0|351.3|21.0
-METRIC|P02|900x400|progress|449.7|155.0|801.0|195.0|351.3|40.0
-METRIC|P02|900x400|time|449.7|186.0|472.8|201.0|23.1|15.0
-METRIC|P02|900x400|remaining|772.8|186.0|801.0|201.0|28.2|15.0
-METRIC|P02|900x400|prev|518.4|241.0|562.4|285.0|44.0|44.0
-METRIC|P02|900x400|play|590.4|228.0|660.4|298.0|70.0|70.0
-METRIC|P02|900x400|next|688.4|241.0|732.4|285.0|44.0|44.0
-METRIC|P02|900x400|volume|449.7|314.0|801.0|354.0|351.3|40.0
-00:36 +205: /workspace/FusionPlay/flutter/test/audit_capture_test.dart: round2 player captures P01-P20
-00:36 +206: /workspace/FusionPlay/flutter/test/audit_capture_test.dart: round2 player captures P01-P20
-00:36 +207: /workspace/FusionPlay/flutter/test/audit_capture_test.dart: round2 player captures P01-P20
-00:36 +208: /workspace/FusionPlay/flutter/test/audit_capture_test.dart: round2 player captures P01-P20
-00:36 +209: /workspace/FusionPlay/flutter/test/audit_capture_test.dart: round2 player captures P01-P20
+METRIC|P02|900x400|title|449.7|80.3|801.0|115.3|351.3|35.0
+METRIC|P02|900x400|artist|449.7|118.3|801.0|139.3|351.3|21.0
+METRIC|P02|900x400|progress|449.7|159.3|801.0|199.3|351.3|40.0
+METRIC|P02|900x400|time|449.7|190.3|472.8|205.3|23.1|15.0
+METRIC|P02|900x400|remaining|772.8|190.3|801.0|205.3|28.2|15.0
+METRIC|P02|900x400|prev|518.4|232.5|562.4|276.5|44.0|44.0
+METRIC|P02|900x400|play|590.4|219.5|660.4|289.5|70.0|70.0
+METRIC|P02|900x400|next|688.4|232.5|732.4|276.5|44.0|44.0
+METRIC|P02|900x400|volume|449.7|309.7|801.0|349.7|351.3|40.0
+00:34 +207: /workspace/FusionPlay/flutter/test/audit_capture_test.dart: round2 player captures P01-P20
+00:34 +208: /workspace/FusionPlay/flutter/test/audit_capture_test.dart: round2 player captures P01-P20
+00:34 +209: /workspace/FusionPlay/flutter/test/audit_capture_test.dart: round2 player captures P01-P20
 OVERFLOW|P03|980x420|none
 METRIC|P03|980x420|cover|22.0|136.6|198.7|313.4|176.8|176.8
-METRIC|P03|980x420|title|267.1|129.0|337.7|148.0|70.6|19.0
-METRIC|P03|980x420|artist|261.7|148.0|343.0|164.0|81.3|16.0
-METRIC|P03|980x420|progress|206.7|168.0|398.0|208.0|191.3|40.0
-METRIC|P03|980x420|time|206.7|195.0|229.8|210.0|23.1|15.0
-METRIC|P03|980x420|remaining|369.8|195.0|398.0|210.0|28.2|15.0
-METRIC|P03|980x420|prev|220.4|236.0|254.4|270.0|34.0|34.0
-METRIC|P03|980x420|play|272.4|223.0|332.4|283.0|60.0|60.0
-METRIC|P03|980x420|next|350.4|236.0|384.4|270.0|34.0|34.0
-METRIC|P03|980x420|volume|206.7|293.0|398.0|321.0|191.3|28.0
+METRIC|P03|980x420|title|267.1|129.3|337.7|148.3|70.6|19.0
+METRIC|P03|980x420|artist|261.7|148.3|343.0|164.3|81.3|16.0
+METRIC|P03|980x420|progress|206.7|168.3|398.0|208.3|191.3|40.0
+METRIC|P03|980x420|time|206.7|195.3|229.8|210.3|23.1|15.0
+METRIC|P03|980x420|remaining|369.8|195.3|398.0|210.3|28.2|15.0
+METRIC|P03|980x420|prev|220.4|230.5|254.4|264.5|34.0|34.0
+METRIC|P03|980x420|play|272.4|217.5|332.4|277.5|60.0|60.0
+METRIC|P03|980x420|next|350.4|230.5|384.4|264.5|34.0|34.0
+METRIC|P03|980x420|volume|206.7|292.7|398.0|320.7|191.3|28.0
 METRIC|P03|980x420|controls|22.0|48.0|398.0|402.0|376.0|354.0
 OVERFLOW|P04|980x420|none
 METRIC|P04|980x420|cover|120.0|80.6|408.9|369.4|288.9|288.9
-METRIC|P04|980x420|title|486.7|86.0|873.8|121.0|387.1|35.0
-METRIC|P04|980x420|artist|486.7|124.0|873.8|145.0|387.1|21.0
-METRIC|P04|980x420|progress|486.7|165.0|873.8|205.0|387.1|40.0
-METRIC|P04|980x420|time|486.7|196.0|509.8|211.0|23.1|15.0
-METRIC|P04|980x420|remaining|845.6|196.0|873.8|211.0|28.2|15.0
-METRIC|P04|980x420|prev|573.3|251.0|617.3|295.0|44.0|44.0
-METRIC|P04|980x420|play|645.3|238.0|715.3|308.0|70.0|70.0
-METRIC|P04|980x420|next|743.3|251.0|787.3|295.0|44.0|44.0
-METRIC|P04|980x420|volume|486.7|324.0|873.8|364.0|387.1|40.0
+METRIC|P04|980x420|title|486.7|90.3|873.8|125.3|387.1|35.0
+METRIC|P04|980x420|artist|486.7|128.3|873.8|149.3|387.1|21.0
+METRIC|P04|980x420|progress|486.7|169.3|873.8|209.3|387.1|40.0
+METRIC|P04|980x420|time|486.7|200.3|509.8|215.3|23.1|15.0
+METRIC|P04|980x420|remaining|845.6|200.3|873.8|215.3|28.2|15.0
+METRIC|P04|980x420|prev|573.3|242.5|617.3|286.5|44.0|44.0
+METRIC|P04|980x420|play|645.3|229.5|715.3|299.5|70.0|70.0
+METRIC|P04|980x420|next|743.3|242.5|787.3|286.5|44.0|44.0
+METRIC|P04|980x420|volume|486.7|319.7|873.8|359.7|387.1|40.0
 OVERFLOW|P05|840x360|none
 METRIC|P05|840x360|cover|22.0|121.0|170.0|269.0|148.0|148.0
-METRIC|P05|840x360|title|224.7|105.0|295.3|124.0|70.6|19.0
-METRIC|P05|840x360|artist|219.4|124.0|300.6|140.0|81.3|16.0
-METRIC|P05|840x360|progress|178.0|144.0|342.0|184.0|164.0|40.0
-METRIC|P05|840x360|time|178.0|171.0|201.1|186.0|23.1|15.0
-METRIC|P05|840x360|remaining|313.8|171.0|342.0|186.0|28.2|15.0
-METRIC|P05|840x360|prev|184.0|206.0|218.0|240.0|34.0|34.0
-METRIC|P05|840x360|play|236.0|199.0|284.0|247.0|48.0|48.0
-METRIC|P05|840x360|next|302.0|206.0|336.0|240.0|34.0|34.0
-METRIC|P05|840x360|volume|178.0|257.0|342.0|285.0|164.0|28.0
+METRIC|P05|840x360|title|224.7|105.3|295.3|124.3|70.6|19.0
+METRIC|P05|840x360|artist|219.4|124.3|300.6|140.3|81.3|16.0
+METRIC|P05|840x360|progress|178.0|144.3|342.0|184.3|164.0|40.0
+METRIC|P05|840x360|time|178.0|171.3|201.1|186.3|23.1|15.0
+METRIC|P05|840x360|remaining|313.8|171.3|342.0|186.3|28.2|15.0
+METRIC|P05|840x360|prev|184.0|200.5|218.0|234.5|34.0|34.0
+METRIC|P05|840x360|play|236.0|193.5|284.0|241.5|48.0|48.0
+METRIC|P05|840x360|next|302.0|200.5|336.0|234.5|34.0|34.0
+METRIC|P05|840x360|volume|178.0|256.7|342.0|284.7|164.0|28.0
 METRIC|P05|840x360|controls|22.0|48.0|342.0|342.0|320.0|294.0
 OVERFLOW|P06|840x360|none
 METRIC|P06|840x360|cover|113.3|79.8|343.7|310.2|230.5|230.5
-METRIC|P06|840x360|title|401.4|99.5|760.4|123.5|359.0|24.0
-METRIC|P06|840x360|artist|401.4|126.5|760.4|143.5|359.0|17.0
-METRIC|P06|840x360|progress|401.4|145.5|760.4|185.5|359.0|40.0
-METRIC|P06|840x360|time|401.4|172.5|424.5|187.5|23.1|15.0
-METRIC|P06|840x360|remaining|732.2|172.5|760.4|187.5|28.2|15.0
-METRIC|P06|840x360|prev|504.9|214.5|538.9|248.5|34.0|34.0
-METRIC|P06|840x360|play|556.9|207.5|604.9|255.5|48.0|48.0
-METRIC|P06|840x360|next|622.9|214.5|656.9|248.5|34.0|34.0
-METRIC|P06|840x360|volume|401.4|262.5|760.4|290.5|359.0|28.0
+METRIC|P06|840x360|title|401.4|99.8|760.4|123.8|359.0|24.0
+METRIC|P06|840x360|artist|401.4|126.8|760.4|143.8|359.0|17.0
+METRIC|P06|840x360|progress|401.4|145.8|760.4|185.8|359.0|40.0
+METRIC|P06|840x360|time|401.4|172.8|424.5|187.8|23.1|15.0
+METRIC|P06|840x360|remaining|732.2|172.8|760.4|187.8|28.2|15.0
+METRIC|P06|840x360|prev|504.9|204.0|538.9|238.0|34.0|34.0
+METRIC|P06|840x360|play|556.9|197.0|604.9|245.0|48.0|48.0
+METRIC|P06|840x360|next|622.9|204.0|656.9|238.0|34.0|34.0
+METRIC|P06|840x360|volume|401.4|262.2|760.4|290.2|359.0|28.0
 OVERFLOW|P07|620x320|none
-METRIC|P07|620x320|cover|106.0|49.0|170.0|113.0|64.0|64.0
-METRIC|P07|620x320|title|97.1|119.0|178.9|139.0|81.8|20.0
-METRIC|P07|620x320|artist|97.4|139.0|178.6|155.0|81.3|16.0
-METRIC|P07|620x320|progress|22.0|156.0|254.0|196.0|232.0|40.0
-METRIC|P07|620x320|time|22.0|183.0|45.1|198.0|23.1|15.0
-METRIC|P07|620x320|remaining|225.8|183.0|254.0|198.0|28.2|15.0
-METRIC|P07|620x320|prev|62.0|225.0|96.0|259.0|34.0|34.0
-METRIC|P07|620x320|play|114.0|218.0|162.0|266.0|48.0|48.0
-METRIC|P07|620x320|next|180.0|225.0|214.0|259.0|34.0|34.0
-METRIC|P07|620x320|volume|22.0|273.0|254.0|301.0|232.0|28.0
+METRIC|P07|620x320|cover|106.0|49.3|170.0|113.3|64.0|64.0
+METRIC|P07|620x320|title|97.1|119.3|178.9|139.3|81.8|20.0
+METRIC|P07|620x320|artist|97.4|139.3|178.6|155.3|81.3|16.0
+METRIC|P07|620x320|progress|22.0|156.3|254.0|196.3|232.0|40.0
+METRIC|P07|620x320|time|22.0|183.3|45.1|198.3|23.1|15.0
+METRIC|P07|620x320|remaining|225.8|183.3|254.0|198.3|28.2|15.0
+METRIC|P07|620x320|prev|62.0|214.5|96.0|248.5|34.0|34.0
+METRIC|P07|620x320|play|114.0|207.5|162.0|255.5|48.0|48.0
+METRIC|P07|620x320|next|180.0|214.5|214.0|248.5|34.0|34.0
+METRIC|P07|620x320|volume|22.0|272.7|254.0|300.7|232.0|28.0
 METRIC|P07|620x320|controls|22.0|48.0|254.0|302.0|232.0|254.0
 OVERFLOW|P08|620x320|none
 METRIC|P08|620x320|cover|68.5|75.8|266.9|274.2|198.3|198.3
-METRIC|P08|620x320|title|299.6|79.5|560.2|103.5|260.6|24.0
-METRIC|P08|620x320|artist|299.6|106.5|560.2|123.5|260.6|17.0
-METRIC|P08|620x320|progress|299.6|125.5|560.2|165.5|260.6|40.0
-METRIC|P08|620x320|time|299.6|152.5|322.7|167.5|23.1|15.0
-METRIC|P08|620x320|remaining|532.0|152.5|560.2|167.5|28.2|15.0
-METRIC|P08|620x320|prev|353.9|194.5|387.9|228.5|34.0|34.0
-METRIC|P08|620x320|play|405.9|187.5|453.9|235.5|48.0|48.0
-METRIC|P08|620x320|next|471.9|194.5|505.9|228.5|34.0|34.0
-METRIC|P08|620x320|volume|299.6|242.5|560.2|270.5|260.6|28.0
+METRIC|P08|620x320|title|299.6|79.8|560.2|103.8|260.6|24.0
+METRIC|P08|620x320|artist|299.6|106.8|560.2|123.8|260.6|17.0
+METRIC|P08|620x320|progress|299.6|125.8|560.2|165.8|260.6|40.0
+METRIC|P08|620x320|time|299.6|152.8|322.7|167.8|23.1|15.0
+METRIC|P08|620x320|remaining|532.0|152.8|560.2|167.8|28.2|15.0
+METRIC|P08|620x320|prev|353.9|184.0|387.9|218.0|34.0|34.0
+METRIC|P08|620x320|play|405.9|177.0|453.9|225.0|48.0|48.0
+METRIC|P08|620x320|next|471.9|184.0|505.9|218.0|34.0|34.0
+METRIC|P08|620x320|volume|299.6|242.2|560.2|270.2|260.6|28.0
 OVERFLOW|P09|1280x800|none
-METRIC|P09|1280x800|cover|108.7|122.7|431.3|445.3|322.6|322.6
-METRIC|P09|1280x800|title|215.8|457.3|324.2|484.3|108.4|27.0
-METRIC|P09|1280x800|artist|218.7|484.3|321.3|504.3|102.5|20.0
-METRIC|P09|1280x800|progress|30.0|508.3|510.0|548.3|480.0|40.0
-METRIC|P09|1280x800|time|30.0|539.3|53.1|554.3|23.1|15.0
-METRIC|P09|1280x800|remaining|481.8|539.3|510.0|554.3|28.2|15.0
-METRIC|P09|1280x800|prev|163.0|594.3|207.0|638.3|44.0|44.0
-METRIC|P09|1280x800|play|235.0|581.3|305.0|651.3|70.0|70.0
-METRIC|P09|1280x800|next|333.0|594.3|377.0|638.3|44.0|44.0
-METRIC|P09|1280x800|volume|40.0|667.3|500.0|707.3|460.0|40.0
+METRIC|P09|1280x800|cover|108.7|127.0|431.3|449.6|322.6|322.6
+METRIC|P09|1280x800|title|215.8|461.6|324.2|488.6|108.4|27.0
+METRIC|P09|1280x800|artist|218.7|488.6|321.3|508.6|102.5|20.0
+METRIC|P09|1280x800|progress|30.0|512.5|510.0|552.5|480.0|40.0
+METRIC|P09|1280x800|time|30.0|543.5|53.1|558.5|23.1|15.0
+METRIC|P09|1280x800|remaining|481.8|543.5|510.0|558.5|28.2|15.0
+METRIC|P09|1280x800|prev|163.0|585.8|207.0|629.8|44.0|44.0
+METRIC|P09|1280x800|play|235.0|572.8|305.0|642.8|70.0|70.0
+METRIC|P09|1280x800|next|333.0|585.8|377.0|629.8|44.0|44.0
+METRIC|P09|1280x800|volume|40.0|662.9|500.0|702.9|460.0|40.0
 METRIC|P09|1280x800|controls|30.0|56.0|510.0|774.0|480.0|718.0
 OVERFLOW|P10|1280x800|none
 METRIC|P10|1280x800|cover|175.2|223.9|557.5|606.1|382.3|382.3
-METRIC|P10|1280x800|title|628.7|276.0|1112.0|311.0|483.3|35.0
-METRIC|P10|1280x800|artist|628.7|314.0|1112.0|335.0|483.3|21.0
-METRIC|P10|1280x800|progress|628.7|355.0|1112.0|395.0|483.3|40.0
-METRIC|P10|1280x800|time|628.7|386.0|651.8|401.0|23.1|15.0
-METRIC|P10|1280x800|remaining|1083.8|386.0|1112.0|401.0|28.2|15.0
-METRIC|P10|1280x800|prev|763.4|441.0|807.4|485.0|44.0|44.0
-METRIC|P10|1280x800|play|835.4|428.0|905.4|498.0|70.0|70.0
-METRIC|P10|1280x800|next|933.4|441.0|977.4|485.0|44.0|44.0
-METRIC|P10|1280x800|volume|628.7|514.0|1112.0|554.0|483.3|40.0
+METRIC|P10|1280x800|title|628.7|280.3|1112.0|315.3|483.3|35.0
+METRIC|P10|1280x800|artist|628.7|318.3|1112.0|339.3|483.3|21.0
+METRIC|P10|1280x800|progress|628.7|359.3|1112.0|399.3|483.3|40.0
+METRIC|P10|1280x800|time|628.7|390.3|651.8|405.3|23.1|15.0
+METRIC|P10|1280x800|remaining|1083.8|390.3|1112.0|405.3|28.2|15.0
+METRIC|P10|1280x800|prev|763.4|432.5|807.4|476.5|44.0|44.0
+METRIC|P10|1280x800|play|835.4|419.5|905.4|489.5|70.0|70.0
+METRIC|P10|1280x800|next|933.4|432.5|977.4|476.5|44.0|44.0
+METRIC|P10|1280x800|volume|628.7|509.7|1112.0|549.7|483.3|40.0
 OVERFLOW|P11|1920x1080|none
-METRIC|P11|1920x1080|cover|255.5|196.5|698.5|639.5|443.0|443.0
-METRIC|P11|1920x1080|title|422.8|651.5|531.2|678.5|108.4|27.0
-METRIC|P11|1920x1080|artist|425.7|678.5|528.3|698.5|102.5|20.0
-METRIC|P11|1920x1080|progress|173.0|702.5|781.0|742.5|608.0|40.0
-METRIC|P11|1920x1080|time|173.0|733.5|196.1|748.5|23.1|15.0
-METRIC|P11|1920x1080|remaining|752.8|733.5|781.0|748.5|28.2|15.0
-METRIC|P11|1920x1080|prev|352.0|788.5|408.0|844.5|56.0|56.0
-METRIC|P11|1920x1080|play|436.0|775.5|518.0|857.5|82.0|82.0
-METRIC|P11|1920x1080|next|546.0|788.5|602.0|844.5|56.0|56.0
-METRIC|P11|1920x1080|volume|197.0|873.5|757.0|913.5|560.0|40.0
+METRIC|P11|1920x1080|cover|255.5|200.8|698.5|643.8|443.0|443.0
+METRIC|P11|1920x1080|title|422.8|655.8|531.2|682.8|108.4|27.0
+METRIC|P11|1920x1080|artist|425.7|682.8|528.3|702.8|102.5|20.0
+METRIC|P11|1920x1080|progress|173.0|706.8|781.0|746.8|608.0|40.0
+METRIC|P11|1920x1080|time|173.0|737.8|196.1|752.8|23.1|15.0
+METRIC|P11|1920x1080|remaining|752.8|737.8|781.0|752.8|28.2|15.0
+METRIC|P11|1920x1080|prev|352.0|780.0|408.0|836.0|56.0|56.0
+METRIC|P11|1920x1080|play|436.0|767.0|518.0|849.0|82.0|82.0
+METRIC|P11|1920x1080|next|546.0|780.0|602.0|836.0|56.0|56.0
+METRIC|P11|1920x1080|volume|197.0|869.1|757.0|909.1|560.0|40.0
 METRIC|P11|1920x1080|controls|173.0|56.0|781.0|1054.0|608.0|998.0
 OVERFLOW|P12|1920x1080|none
 METRIC|P12|1920x1080|cover|495.2|363.9|877.5|746.1|382.3|382.3
-METRIC|P12|1920x1080|title|948.7|410.0|1432.0|445.0|483.3|35.0
-METRIC|P12|1920x1080|artist|948.7|448.0|1432.0|469.0|483.3|21.0
-METRIC|P12|1920x1080|progress|948.7|489.0|1432.0|529.0|483.3|40.0
-METRIC|P12|1920x1080|time|948.7|520.0|971.8|535.0|23.1|15.0
-METRIC|P12|1920x1080|remaining|1403.8|520.0|1432.0|535.0|28.2|15.0
-METRIC|P12|1920x1080|prev|1065.4|575.0|1121.4|631.0|56.0|56.0
-METRIC|P12|1920x1080|play|1149.4|562.0|1231.4|644.0|82.0|82.0
-METRIC|P12|1920x1080|next|1259.4|575.0|1315.4|631.0|56.0|56.0
-METRIC|P12|1920x1080|volume|948.7|660.0|1432.0|700.0|483.3|40.0
+METRIC|P12|1920x1080|title|948.7|414.3|1432.0|449.3|483.3|35.0
+METRIC|P12|1920x1080|artist|948.7|452.3|1432.0|473.3|483.3|21.0
+METRIC|P12|1920x1080|progress|948.7|493.3|1432.0|533.3|483.3|40.0
+METRIC|P12|1920x1080|time|948.7|524.3|971.8|539.3|23.1|15.0
+METRIC|P12|1920x1080|remaining|1403.8|524.3|1432.0|539.3|28.2|15.0
+METRIC|P12|1920x1080|prev|1065.4|566.5|1121.4|622.5|56.0|56.0
+METRIC|P12|1920x1080|play|1149.4|553.5|1231.4|635.5|82.0|82.0
+METRIC|P12|1920x1080|next|1259.4|566.5|1315.4|622.5|56.0|56.0
+METRIC|P12|1920x1080|volume|948.7|655.7|1432.0|695.7|483.3|40.0
 OVERFLOW|P13|899x400|none
 METRIC|P13|899x400|cover|22.0|134.2|183.5|295.8|161.5|161.5
-METRIC|P13|899x400|title|243.2|119.0|313.8|138.0|70.6|19.0
-METRIC|P13|899x400|artist|237.9|138.0|319.2|154.0|81.3|16.0
-METRIC|P13|899x400|progress|191.5|158.0|365.6|198.0|174.1|40.0
-METRIC|P13|899x400|time|191.5|185.0|214.6|200.0|23.1|15.0
-METRIC|P13|899x400|remaining|337.4|185.0|365.6|200.0|28.2|15.0
-METRIC|P13|899x400|prev|196.5|226.0|230.5|260.0|34.0|34.0
-METRIC|P13|899x400|play|248.5|213.0|308.5|273.0|60.0|60.0
-METRIC|P13|899x400|next|326.5|226.0|360.5|260.0|34.0|34.0
-METRIC|P13|899x400|volume|191.5|283.0|365.6|311.0|174.1|28.0
+METRIC|P13|899x400|title|243.2|119.3|313.8|138.3|70.6|19.0
+METRIC|P13|899x400|artist|237.9|138.3|319.2|154.3|81.3|16.0
+METRIC|P13|899x400|progress|191.5|158.3|365.6|198.3|174.1|40.0
+METRIC|P13|899x400|time|191.5|185.3|214.6|200.3|23.1|15.0
+METRIC|P13|899x400|remaining|337.4|185.3|365.6|200.3|28.2|15.0
+METRIC|P13|899x400|prev|196.5|220.5|230.5|254.5|34.0|34.0
+METRIC|P13|899x400|play|248.5|207.5|308.5|267.5|60.0|60.0
+METRIC|P13|899x400|next|326.5|220.5|360.5|254.5|34.0|34.0
+METRIC|P13|899x400|volume|191.5|282.7|365.6|310.7|174.1|28.0
 METRIC|P13|899x400|controls|22.0|48.0|365.6|382.0|343.6|334.0
 OVERFLOW|P14|900x349|none
 METRIC|P14|900x349|cover|21.9|108.6|183.8|270.4|161.8|161.8
-METRIC|P14|900x349|title|243.5|99.5|314.1|118.5|70.6|19.0
-METRIC|P14|900x349|artist|238.2|118.5|319.5|134.5|81.3|16.0
-METRIC|P14|900x349|progress|191.7|138.5|366.0|178.5|174.3|40.0
-METRIC|P14|900x349|time|191.7|165.5|214.8|180.5|23.1|15.0
-METRIC|P14|900x349|remaining|337.8|165.5|366.0|180.5|28.2|15.0
-METRIC|P14|900x349|prev|202.8|200.5|236.8|234.5|34.0|34.0
-METRIC|P14|900x349|play|254.8|193.5|302.8|241.5|48.0|48.0
-METRIC|P14|900x349|next|320.8|200.5|354.8|234.5|34.0|34.0
-METRIC|P14|900x349|volume|191.7|251.5|366.0|279.5|174.3|28.0
+METRIC|P14|900x349|title|243.5|99.8|314.1|118.8|70.6|19.0
+METRIC|P14|900x349|artist|238.2|118.8|319.5|134.8|81.3|16.0
+METRIC|P14|900x349|progress|191.7|138.8|366.0|178.8|174.3|40.0
+METRIC|P14|900x349|time|191.7|165.8|214.8|180.8|23.1|15.0
+METRIC|P14|900x349|remaining|337.8|165.8|366.0|180.8|28.2|15.0
+METRIC|P14|900x349|prev|202.8|195.0|236.8|229.0|34.0|34.0
+METRIC|P14|900x349|play|254.8|188.0|302.8|236.0|48.0|48.0
+METRIC|P14|900x349|next|320.8|195.0|354.8|229.0|34.0|34.0
+METRIC|P14|900x349|volume|191.7|251.2|366.0|279.2|174.3|28.0
 METRIC|P14|900x349|controls|22.0|48.0|366.0|331.0|344.0|283.0
 OVERFLOW|P15|900x350|none
 METRIC|P15|900x350|cover|21.8|109.0|183.9|271.0|162.1|162.1
-METRIC|P15|900x350|title|243.5|100.0|314.1|119.0|70.6|19.0
-METRIC|P15|900x350|artist|238.2|119.0|319.5|135.0|81.3|16.0
-METRIC|P15|900x350|progress|191.7|139.0|366.0|179.0|174.3|40.0
-METRIC|P15|900x350|time|191.7|166.0|214.8|181.0|23.1|15.0
-METRIC|P15|900x350|remaining|337.8|166.0|366.0|181.0|28.2|15.0
-METRIC|P15|900x350|prev|202.8|201.0|236.8|235.0|34.0|34.0
-METRIC|P15|900x350|play|254.8|194.0|302.8|242.0|48.0|48.0
-METRIC|P15|900x350|next|320.8|201.0|354.8|235.0|34.0|34.0
-METRIC|P15|900x350|volume|191.7|252.0|366.0|280.0|174.3|28.0
+METRIC|P15|900x350|title|243.5|100.3|314.1|119.3|70.6|19.0
+METRIC|P15|900x350|artist|238.2|119.3|319.5|135.3|81.3|16.0
+METRIC|P15|900x350|progress|191.7|139.3|366.0|179.3|174.3|40.0
+METRIC|P15|900x350|time|191.7|166.3|214.8|181.3|23.1|15.0
+METRIC|P15|900x350|remaining|337.8|166.3|366.0|181.3|28.2|15.0
+METRIC|P15|900x350|prev|202.8|195.5|236.8|229.5|34.0|34.0
+METRIC|P15|900x350|play|254.8|188.5|302.8|236.5|48.0|48.0
+METRIC|P15|900x350|next|320.8|195.5|354.8|229.5|34.0|34.0
+METRIC|P15|900x350|volume|191.7|251.7|366.0|279.7|174.3|28.0
 METRIC|P15|900x350|controls|22.0|48.0|366.0|332.0|344.0|284.0
 OVERFLOW|P16|900x460|none
 METRIC|P16|900x460|cover|21.7|163.8|184.0|326.2|162.3|162.3
-METRIC|P16|900x460|title|243.5|149.0|314.1|168.0|70.6|19.0
-METRIC|P16|900x460|artist|238.2|168.0|319.5|184.0|81.3|16.0
-METRIC|P16|900x460|progress|191.7|188.0|366.0|228.0|174.3|40.0
-METRIC|P16|900x460|time|191.7|215.0|214.8|230.0|23.1|15.0
-METRIC|P16|900x460|remaining|337.8|215.0|366.0|230.0|28.2|15.0
-METRIC|P16|900x460|prev|196.8|256.0|230.8|290.0|34.0|34.0
-METRIC|P16|900x460|play|248.8|243.0|308.8|303.0|60.0|60.0
-METRIC|P16|900x460|next|326.8|256.0|360.8|290.0|34.0|34.0
-METRIC|P16|900x460|volume|191.7|313.0|366.0|341.0|174.3|28.0
+METRIC|P16|900x460|title|243.5|149.3|314.1|168.3|70.6|19.0
+METRIC|P16|900x460|artist|238.2|168.3|319.5|184.3|81.3|16.0
+METRIC|P16|900x460|progress|191.7|188.3|366.0|228.3|174.3|40.0
+METRIC|P16|900x460|time|191.7|215.3|214.8|230.3|23.1|15.0
+METRIC|P16|900x460|remaining|337.8|215.3|366.0|230.3|28.2|15.0
+METRIC|P16|900x460|prev|196.8|250.5|230.8|284.5|34.0|34.0
+METRIC|P16|900x460|play|248.8|237.5|308.8|297.5|60.0|60.0
+METRIC|P16|900x460|next|326.8|250.5|360.8|284.5|34.0|34.0
+METRIC|P16|900x460|volume|191.7|312.7|366.0|340.7|174.3|28.0
 METRIC|P16|900x460|controls|22.0|48.0|366.0|442.0|344.0|394.0
 OVERFLOW|P17|900x461|none
 METRIC|P17|900x461|cover|21.5|164.2|184.1|326.8|162.6|162.6
-METRIC|P17|900x461|title|243.5|149.5|314.1|168.5|70.6|19.0
-METRIC|P17|900x461|artist|238.2|168.5|319.5|184.5|81.3|16.0
-METRIC|P17|900x461|progress|191.7|188.5|366.0|228.5|174.3|40.0
-METRIC|P17|900x461|time|191.7|215.5|214.8|230.5|23.1|15.0
-METRIC|P17|900x461|remaining|337.8|215.5|366.0|230.5|28.2|15.0
-METRIC|P17|900x461|prev|196.8|256.5|230.8|290.5|34.0|34.0
-METRIC|P17|900x461|play|248.8|243.5|308.8|303.5|60.0|60.0
-METRIC|P17|900x461|next|326.8|256.5|360.8|290.5|34.0|34.0
-METRIC|P17|900x461|volume|191.7|313.5|366.0|341.5|174.3|28.0
+METRIC|P17|900x461|title|243.5|149.8|314.1|168.8|70.6|19.0
+METRIC|P17|900x461|artist|238.2|168.8|319.5|184.8|81.3|16.0
+METRIC|P17|900x461|progress|191.7|188.8|366.0|228.8|174.3|40.0
+METRIC|P17|900x461|time|191.7|215.8|214.8|230.8|23.1|15.0
+METRIC|P17|900x461|remaining|337.8|215.8|366.0|230.8|28.2|15.0
+METRIC|P17|900x461|prev|196.8|251.0|230.8|285.0|34.0|34.0
+METRIC|P17|900x461|play|248.8|238.0|308.8|298.0|60.0|60.0
+METRIC|P17|900x461|next|326.8|251.0|360.8|285.0|34.0|34.0
+METRIC|P17|900x461|volume|191.7|313.2|366.0|341.2|174.3|28.0
 METRIC|P17|900x461|controls|22.0|48.0|366.0|443.0|344.0|395.0
 OVERFLOW|P18|980x420|none
 METRIC|P18|980x420|cover|21.4|136.0|199.3|314.0|178.0|178.0
-METRIC|P18|980x420|title|206.7|129.0|398.0|148.0|191.3|19.0
-METRIC|P18|980x420|artist|206.7|148.0|398.0|164.0|191.3|16.0
-METRIC|P18|980x420|progress|206.7|168.0|398.0|208.0|191.3|40.0
-METRIC|P18|980x420|time|206.7|195.0|229.8|210.0|23.1|15.0
-METRIC|P18|980x420|remaining|369.8|195.0|398.0|210.0|28.2|15.0
-METRIC|P18|980x420|prev|220.4|236.0|254.4|270.0|34.0|34.0
-METRIC|P18|980x420|play|272.4|223.0|332.4|283.0|60.0|60.0
-METRIC|P18|980x420|next|350.4|236.0|384.4|270.0|34.0|34.0
-METRIC|P18|980x420|volume|206.7|293.0|398.0|321.0|191.3|28.0
+METRIC|P18|980x420|title|206.7|129.3|398.0|148.3|191.3|19.0
+METRIC|P18|980x420|artist|206.7|148.3|398.0|164.3|191.3|16.0
+METRIC|P18|980x420|progress|206.7|168.3|398.0|208.3|191.3|40.0
+METRIC|P18|980x420|time|206.7|195.3|229.8|210.3|23.1|15.0
+METRIC|P18|980x420|remaining|369.8|195.3|398.0|210.3|28.2|15.0
+METRIC|P18|980x420|prev|220.4|230.5|254.4|264.5|34.0|34.0
+METRIC|P18|980x420|play|272.4|217.5|332.4|277.5|60.0|60.0
+METRIC|P18|980x420|next|350.4|230.5|384.4|264.5|34.0|34.0
+METRIC|P18|980x420|volume|206.7|292.7|398.0|320.7|191.3|28.0
 METRIC|P18|980x420|controls|22.0|48.0|398.0|402.0|376.0|354.0
 OVERFLOW|P19|980x420|none
 METRIC|P19|980x420|cover|120.0|80.6|408.9|369.4|288.9|288.9
-METRIC|P19|980x420|title|486.7|86.0|873.8|121.0|387.1|35.0
-METRIC|P19|980x420|artist|486.7|124.0|873.8|145.0|387.1|21.0
-METRIC|P19|980x420|progress|486.7|165.0|873.8|205.0|387.1|40.0
-METRIC|P19|980x420|time|486.7|196.0|509.8|211.0|23.1|15.0
-METRIC|P19|980x420|remaining|845.6|196.0|873.8|211.0|28.2|15.0
-METRIC|P19|980x420|prev|573.3|251.0|617.3|295.0|44.0|44.0
-METRIC|P19|980x420|play|645.3|238.0|715.3|308.0|70.0|70.0
-METRIC|P19|980x420|next|743.3|251.0|787.3|295.0|44.0|44.0
-METRIC|P19|980x420|volume|486.7|324.0|873.8|364.0|387.1|40.0
+METRIC|P19|980x420|title|486.7|90.3|873.8|125.3|387.1|35.0
+METRIC|P19|980x420|artist|486.7|128.3|873.8|149.3|387.1|21.0
+METRIC|P19|980x420|progress|486.7|169.3|873.8|209.3|387.1|40.0
+METRIC|P19|980x420|time|486.7|200.3|509.8|215.3|23.1|15.0
+METRIC|P19|980x420|remaining|845.6|200.3|873.8|215.3|28.2|15.0
+METRIC|P19|980x420|prev|573.3|242.5|617.3|286.5|44.0|44.0
+METRIC|P19|980x420|play|645.3|229.5|715.3|299.5|70.0|70.0
+METRIC|P19|980x420|next|743.3|242.5|787.3|286.5|44.0|44.0
+METRIC|P19|980x420|volume|486.7|319.7|873.8|359.7|387.1|40.0
 OVERFLOW|P20|980x420|none
 METRIC|P20|980x420|cover|22.0|136.6|198.7|313.4|176.7|176.7
-METRIC|P20|980x420|title|267.1|129.0|337.7|148.0|70.6|19.0
-METRIC|P20|980x420|artist|261.7|148.0|343.0|164.0|81.3|16.0
-METRIC|P20|980x420|progress|206.7|168.0|398.0|208.0|191.3|40.0
-METRIC|P20|980x420|time|206.7|195.0|229.8|210.0|23.1|15.0
-METRIC|P20|980x420|remaining|369.8|195.0|398.0|210.0|28.2|15.0
-METRIC|P20|980x420|prev|220.4|236.0|254.4|270.0|34.0|34.0
-METRIC|P20|980x420|play|272.4|223.0|332.4|283.0|60.0|60.0
-METRIC|P20|980x420|next|350.4|236.0|384.4|270.0|34.0|34.0
-METRIC|P20|980x420|volume|206.7|293.0|398.0|321.0|191.3|28.0
+METRIC|P20|980x420|title|267.1|129.3|337.7|148.3|70.6|19.0
+METRIC|P20|980x420|artist|261.7|148.3|343.0|164.3|81.3|16.0
+METRIC|P20|980x420|progress|206.7|168.3|398.0|208.3|191.3|40.0
+METRIC|P20|980x420|time|206.7|195.3|229.8|210.3|23.1|15.0
+METRIC|P20|980x420|remaining|369.8|195.3|398.0|210.3|28.2|15.0
+METRIC|P20|980x420|prev|220.4|230.5|254.4|264.5|34.0|34.0
+METRIC|P20|980x420|play|272.4|217.5|332.4|277.5|60.0|60.0
+METRIC|P20|980x420|next|350.4|230.5|384.4|264.5|34.0|34.0
+METRIC|P20|980x420|volume|206.7|292.7|398.0|320.7|191.3|28.0
 METRIC|P20|980x420|controls|22.0|48.0|398.0|402.0|376.0|354.0
-00:51 +210: /workspace/FusionPlay/flutter/test/audit_capture_test.dart: round2 glass overlays
-00:59 +211: /workspace/FusionPlay/flutter/test/audit_capture_test.dart: portrait lyrics retain controls and scrolling space
-01:00 +212: /workspace/FusionPlay/flutter/test/audit_capture_test.dart: capture update routes through Navigator
-01:01 +213: /workspace/FusionPlay/flutter/test/audit_capture_test.dart: player adapts to large type and different pixel ratios
-01:02 +214: /workspace/FusionPlay/flutter/test/audit_capture_test.dart: (tearDownAll)
-01:02 +214: All tests passed!
+00:49 +210: /workspace/FusionPlay/flutter/test/audit_capture_test.dart: round2 glass overlays
+00:58 +211: /workspace/FusionPlay/flutter/test/audit_capture_test.dart: portrait lyrics retain controls and scrolling space
+00:58 +212: /workspace/FusionPlay/flutter/test/audit_capture_test.dart: capture update routes through Navigator
+01:00 +213: /workspace/FusionPlay/flutter/test/audit_capture_test.dart: player adapts to large type and different pixel ratios
+01:01 +214: /workspace/FusionPlay/flutter/test/audit_capture_test.dart: (tearDownAll)
+01:01 +214: All tests passed!

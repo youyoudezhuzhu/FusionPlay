@@ -204,6 +204,13 @@ Future<void> _capturePlayer(
   final play = rect(find.byKey(const ValueKey('playback-play-pause-button')));
   final next = rect(find.byKey(const ValueKey('playback-next-button')));
   final volume = rect(find.byKey(const ValueKey('player-volume-capsule')));
+  if (progress != null && volume != null) {
+    expect(progress.width, greaterThan(40), reason: id);
+    final midpoint = (progress.center.dy + volume.center.dy) / 2;
+    for (final button in [prev, play, next].nonNulls) {
+      expect(button.center.dy, closeTo(midpoint, 1), reason: id);
+    }
+  }
   final controls = rect(find.byKey(const ValueKey('player-controls-column')));
   for (final e in {
     'cover': cover,
