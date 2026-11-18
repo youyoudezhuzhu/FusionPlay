@@ -199,6 +199,59 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
+  testWidgets('有歌词横屏：左栏纵向居中，歌词独占右栏', (tester) async {
+    for (final size in const [
+      Size(620, 320),
+      Size(840, 360),
+      Size(900, 349),
+      Size(900, 350),
+      Size(900, 400),
+      Size(900, 460),
+      Size(900, 461),
+      Size(980, 420),
+      Size(1280, 597),
+      Size(1280, 800),
+      Size(1920, 1080),
+    ]) {
+      await _pumpPlayer(
+        tester,
+        _state(lyrics: _lyrics()),
+        reduceMotion: true,
+        size: size,
+      );
+      final cover = tester.getRect(find.byType(ArtworkCard));
+      final column = [
+        cover,
+        tester.getRect(find.text('Track')),
+        tester.getRect(find.text('Artist')),
+        for (final key in [
+          'player-progress-bar',
+          'playback-play-pause-button',
+          'player-volume-capsule',
+        ])
+          tester.getRect(find.byKey(ValueKey(key))),
+      ];
+      final lyrics = tester.getRect(
+        find.byKey(const ValueKey('player-lyrics-view')),
+      );
+      for (var i = 0; i < column.length; i++) {
+        expect(
+          column[i].center.dx,
+          closeTo(cover.center.dx, 1),
+          reason: '$size',
+        );
+        expect(column[i].right, lessThan(lyrics.left), reason: '$size');
+        if (i > 0)
+          expect(
+            column[i].top,
+            greaterThanOrEqualTo(column[i - 1].bottom - .1),
+            reason: '$size',
+          );
+      }
+      expect(tester.takeException(), isNull);
+    }
+  });
+
   testWidgets('相同歌词状态下三种来源的封面和操作区位置一致', (tester) async {
     for (final lyrics in [false, true]) {
       List<Rect>? reference;

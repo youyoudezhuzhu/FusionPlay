@@ -733,15 +733,7 @@ class _PlayerViewState extends State<PlayerView> {
   ({double left, double gap, double right}) _liquid21PanelWidths(
     Size available,
   ) {
-    final minLeft = math.min(
-      260.0,
-      available.width * (available.width < 600 ? .46 : .40),
-    );
-    final maxLeft = math.max(minLeft, available.width * .46);
-    // Wider than 16:9: the left panel can take a little more room, but the
-    // lyrics column must keep a readable minimum width.
-    final preferred = available.width * .40;
-    final left = preferred.clamp(minLeft, maxLeft).toDouble();
+    final left = available.width * .47;
     final gap = (available.width * .022).clamp(12.0, 28.0).toDouble();
     return (
       left: left,
@@ -812,97 +804,28 @@ class _PlayerViewState extends State<PlayerView> {
       final compact = panelHeight < 560 || panelWidth < 300;
       final dense = compact && panelHeight < 330;
       final padding = compact ? 8.0 : 16.0;
-      // Budget for the actual compact controls: title (~21), artist (~15),
-      // timeline (40 + time labels), transport (~56), volume (28-30),
-      // and symmetric gaps. Avoid the previous 248px over-reservation,
-      // which shrank the cover disproportionately on 21:9 phones.
-      final controlsBudget = dense ? 204.0 : (compact ? 220.0 : 286.0);
-      final cover = math
-          .min(
-            panelWidth - padding * 2,
-            math.max(64.0, panelHeight - padding * 2 - controlsBudget),
-          )
-          .clamp(64.0, 500.0)
-          .toDouble();
       final playback = widget.state.playback;
       final (title, artist) = _displayMetadata(playback);
       final artistLine = _cleanArtist(artist);
-      // On short ultrawide displays, stacking artwork above all controls
-      // limits the cover to ~114px at 900x400. Use the available horizontal
-      // space instead; the right column has its own centered control stack.
-      final innerWidth = panelWidth - padding * 2;
-      // Reserve the complete compact transport row before allocating artwork.
-      final wide = MediaQuery.sizeOf(context).width >= 1500;
-      final transportWidth = compact ? 164.0 : (wide ? 250.0 : 214.0);
-      final sideCover = math.min(
-        innerWidth - transportWidth - 8,
-        math.min(innerWidth * .47, panelHeight - padding * 2),
-      );
-      // A stacked cover anchors the lyrics column when the controls below
-      // leave room for a full-size face. Shallow phones keep the compact row.
-      final stackedArt = math.min(cover, panelHeight * .43);
-      if (sideCover >= 96 && cover < sideCover * 1.32) {
-        final artworkSize = sideCover;
-        return Padding(
-          padding: EdgeInsets.all(padding),
-          child: Row(
-            key: const ValueKey('player-controls-column'),
-            children: [
-              SizedBox(
-                width: artworkSize,
-                child: Center(
-                  child: _breathingArtwork(
-                    size: artworkSize,
-                    child: _artworkCard(artworkSize, radius: 16),
-                  ),
-                ),
-              ),
-              const SizedBox(width: 8),
-              Expanded(
-                child: Column(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    Text(
-                      title,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      textAlign: TextAlign.center,
-                      style: TextStyle(
-                        fontSize: compact ? 17 : 24,
-                        height: 1.12,
-                        color: Colors.white,
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
-                    if (artistLine != null && artistLine.isNotEmpty)
-                      Text(
-                        artistLine,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        textAlign: TextAlign.center,
-                        style: TextStyle(
-                          fontSize: compact ? 11 : 14,
-                          color: Colors.white.withValues(alpha: .64),
-                        ),
-                      ),
-                    const SizedBox(height: 4),
-                    _playbackControls(compact: compact, gap: 5),
-                  ],
-                ),
-              ),
-            ],
-          ),
-        );
-      }
       return Padding(
         padding: EdgeInsets.all(padding),
         child: Column(
           key: const ValueKey('player-controls-column'),
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            _breathingArtwork(
-              size: stackedArt,
-              child: _artworkCard(stackedArt, radius: stackedArt * .10),
+            Flexible(
+              child: LayoutBuilder(
+                builder: (context, space) {
+                  final size = math.min(
+                    space.maxHeight,
+                    math.min(space.maxWidth, panelHeight * .44),
+                  );
+                  return _breathingArtwork(
+                    size: size,
+                    child: _artworkCard(size, radius: size * .10),
+                  );
+                },
+              ),
             ),
             SizedBox(height: compact ? 6 : 12),
             Text(
@@ -930,9 +853,13 @@ class _PlayerViewState extends State<PlayerView> {
                 ),
               ),
             SizedBox(height: compact ? 1 : 4),
-            _playbackControls(
-              compact: compact,
-              gap: dense ? 7 : (compact ? 10 : 16),
+            SizedBox(
+              width: (panelWidth * .68).clamp(210.0, 560.0),
+              child: _playbackControls(
+                compact: compact,
+                gap: dense ? 4 : (compact ? 7 : 12),
+                fillVolumeWidth: true,
+              ),
             ),
           ],
         ),
