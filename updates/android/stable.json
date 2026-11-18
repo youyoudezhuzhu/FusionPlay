@@ -2,14 +2,14 @@
   "schema_version": 1,
   "channel": "stable",
   "published": true,
-  "version_name": "1.7.5",
-  "version_code": 10705,
-  "sha256": "6e34b787e90c01f264886737d7013f2a3bf029b5df6131a07e9749dbd3016108",
+  "version_name": "1.7.6",
+  "version_code": 10706,
+  "sha256": "7a26f0e5133746b938c87b703f4a9cd472d5d04f74753fa1262f1290509ecb25",
   "signer_sha256": "4836fb96c2ef76fd81ac385455f1b0154af77fadae1b45bbb752b192499dc12f",
-  "apk_url": "https://youyoudezhuzhu.github.io/FusionPlay/update/android/dl/latest.apk?v=10705",
-  "apk_url_alt": "https://github.com/youyoudezhuzhu/FusionPlay/releases/download/android-v1.7.5/FusionPlay-Android-1.7.5.apk",
-  "apk_size": 12686292,
-  "source_commit": "e7cc13dbbf20857a8d7a1bd84ccc06f05024d950",
-  "notes": "## FusionPlay Android 1.7.5\n\n- 横屏有歌词时，封面、曲名和歌手、进度条、播放按钮、音量条在左栏垂直居中排列，右栏显示歌词。\n- AirPlay 2 播放期间，妙播的曲目信息可先缓存。妙播开始播放时，Android 等待原生核心确认接管后再请求恢复妙播输出。\n- 已有活动播放来源时，过滤后台 AirPlay 或妙播发送的系统音量更新。\n\n本版本已通过 Flutter 布局与播放页回归，以及 Android 接管逻辑测试。两台发送设备实际交替投送时的切换延迟和声音重叠仍待真机验证。",
-  "published_at": "2026-11-18T12:43:07Z"
+  "apk_url": "https://youyoudezhuzhu.github.io/FusionPlay/update/android/dl/latest.apk?v=10706",
+  "apk_url_alt": "https://github.com/youyoudezhuzhu/FusionPlay/releases/download/android-v1.7.6/FusionPlay-Android-1.7.6.apk",
+  "apk_size": 12690568,
+  "source_commit": "fa9173aa64df9d5d05dd38653d74240b13284499",
+  "notes": "## FusionPlay Android 1.7.6\n\n- 适配网易云音乐通过 AirPlay 发送逐句歌词的格式。播放器根据曲目信息拆分歌名和歌手，并在歌词栏更新当前句。\n- 修复 DLNA 网络播放器与系统媒体会话重复申请音频焦点的问题，避免播放刚开始就被暂停。跨来源接管时，将暂停操作限定在旧来源。\n- 优化 AirPlay 进度条。换句时保持播放时钟连续，过滤轻微的位置回报抖动，并改善拖动定位后的进度确认。",
+  "published_at": "2026-11-18T14:06:45Z"
 }
