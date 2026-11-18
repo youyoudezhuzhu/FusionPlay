@@ -45,49 +45,50 @@ CAPTURE lyrics-960x540 960.0x540.0
 00:03 +40: /workspace/FusionPlay/flutter/test/player_preview_test.dart: render Apple Music landscape previews
 00:03 +41: /workspace/FusionPlay/flutter/test/player_preview_test.dart: render Apple Music landscape previews
 CAPTURE lyrics-800x360 800.0x360.0
+CAPTURE no-lyrics-960x540 960.0x540.0
 00:04 +42: /workspace/FusionPlay/flutter/test/player_preview_test.dart: render Apple Music landscape previews
 00:04 +43: /workspace/FusionPlay/flutter/test/player_preview_test.dart: render Apple Music landscape previews
-CAPTURE no-lyrics-960x540 960.0x540.0
 CAPTURE no-lyrics-800x360 800.0x360.0
-00:05 +44: /workspace/FusionPlay/flutter/test/player_preview_test.dart: render Apple Music landscape previews
-00:05 +45: /workspace/FusionPlay/flutter/test/player_preview_test.dart: render Apple Music landscape previews
-00:05 +46: /workspace/FusionPlay/flutter/test/player_preview_test.dart: render Apple Music landscape previews
-00:05 +47: /workspace/FusionPlay/flutter/test/player_preview_test.dart: render Apple Music landscape previews
-00:05 +48: /workspace/FusionPlay/flutter/test/player_preview_test.dart: render Apple Music landscape previews
-00:05 +49: /workspace/FusionPlay/flutter/test/player_preview_test.dart: render Apple Music landscape previews
-00:05 +50: /workspace/FusionPlay/flutter/test/player_preview_test.dart: render Apple Music landscape previews
 CAPTURE tablet-1280x800 1280.0x800.0
+00:05 +44: /workspace/FusionPlay/flutter/test/player_preview_test.dart: render Apple Music landscape previews
+00:06 +45: /workspace/FusionPlay/flutter/test/player_preview_test.dart: render Apple Music landscape previews
+00:06 +46: /workspace/FusionPlay/flutter/test/player_preview_test.dart: render Apple Music landscape previews
+00:06 +47: /workspace/FusionPlay/flutter/test/player_preview_test.dart: render Apple Music landscape previews
+00:06 +48: /workspace/FusionPlay/flutter/test/player_preview_test.dart: render Apple Music landscape previews
+00:06 +49: /workspace/FusionPlay/flutter/test/player_preview_test.dart: render Apple Music landscape previews
+00:06 +50: /workspace/FusionPlay/flutter/test/player_preview_test.dart: render Apple Music landscape previews
 00:06 +51: /workspace/FusionPlay/flutter/test/player_preview_test.dart: render Apple Music landscape previews
 00:06 +52: /workspace/FusionPlay/flutter/test/player_preview_test.dart: render Apple Music landscape previews
 00:06 +53: /workspace/FusionPlay/flutter/test/player_preview_test.dart: render Apple Music landscape previews
 00:06 +54: /workspace/FusionPlay/flutter/test/player_preview_test.dart: render Apple Music landscape previews
 00:06 +55: /workspace/FusionPlay/flutter/test/player_preview_test.dart: render Apple Music landscape previews
-00:06 +56: /workspace/FusionPlay/flutter/test/player_preview_test.dart: render Apple Music landscape previews
-00:06 +57: /workspace/FusionPlay/flutter/test/player_preview_test.dart: render Apple Music landscape previews
-00:06 +58: /workspace/FusionPlay/flutter/test/player_preview_test.dart: render Apple Music landscape previews
-00:06 +59: /workspace/FusionPlay/flutter/test/player_preview_test.dart: render Apple Music landscape previews
-00:06 +60: /workspace/FusionPlay/flutter/test/player_preview_test.dart: render Apple Music landscape previews
 CAPTURE loading-960x540 960.0x540.0
+00:06 +56: /workspace/FusionPlay/flutter/test/player_preview_test.dart: render Apple Music landscape previews
+00:07 +57: /workspace/FusionPlay/flutter/test/player_preview_test.dart: render Apple Music landscape previews
+00:07 +58: /workspace/FusionPlay/flutter/test/player_preview_test.dart: render Apple Music landscape previews
+00:07 +59: /workspace/FusionPlay/flutter/test/player_preview_test.dart: render Apple Music landscape previews
+00:07 +60: /workspace/FusionPlay/flutter/test/player_preview_test.dart: render Apple Music landscape previews
+CAPTURE stream-history-840x360 840.0x360.0
 00:07 +61: /workspace/FusionPlay/flutter/test/player_preview_test.dart: render Apple Music landscape previews
 00:07 +62: /workspace/FusionPlay/flutter/test/player_preview_test.dart: render Apple Music landscape previews
 00:07 +63: /workspace/FusionPlay/flutter/test/player_preview_test.dart: render Apple Music landscape previews
 00:07 +64: /workspace/FusionPlay/flutter/test/player_preview_test.dart: render Apple Music landscape previews
 00:07 +65: /workspace/FusionPlay/flutter/test/player_preview_test.dart: render Apple Music landscape previews
-00:07 +66: /workspace/FusionPlay/flutter/test/player_preview_test.dart: render Apple Music landscape previews
-00:07 +67: /workspace/FusionPlay/flutter/test/player_preview_test.dart: render Apple Music landscape previews
-00:07 +68: /workspace/FusionPlay/flutter/test/player_preview_test.dart: render Apple Music landscape previews
-00:07 +69: /workspace/FusionPlay/flutter/test/player_preview_test.dart: render Apple Music landscape previews
-00:07 +70: /workspace/FusionPlay/flutter/test/player_preview_test.dart: render Apple Music landscape previews
-00:07 +71: /workspace/FusionPlay/flutter/test/player_preview_test.dart: render Apple Music landscape previews
-00:07 +72: /workspace/FusionPlay/flutter/test/player_preview_test.dart: render Apple Music landscape previews
-00:07 +73: /workspace/FusionPlay/flutter/test/player_preview_test.dart: render Apple Music landscape previews
-00:07 +74: /workspace/FusionPlay/flutter/test/player_preview_test.dart: render Apple Music landscape previews
-00:07 +75: /workspace/FusionPlay/flutter/test/player_preview_test.dart: render Apple Music landscape previews
-00:07 +76: /workspace/FusionPlay/flutter/test/player_preview_test.dart: render Apple Music landscape previews
-00:07 +77: /workspace/FusionPlay/flutter/test/player_preview_test.dart: render Apple Music landscape previews
-00:07 +78: /workspace/FusionPlay/flutter/test/player_preview_test.dart: render Apple Music landscape previews
-00:07 +79: /workspace/FusionPlay/flutter/test/player_preview_test.dart: render Apple Music landscape previews
-CAPTURE stream-history-840x360 840.0x360.0
+00:08 +66: /workspace/FusionPlay/flutter/test/player_preview_test.dart: render Apple Music landscape previews
+00:08 +67: /workspace/FusionPlay/flutter/test/player_preview_test.dart: render Apple Music landscape previews
+00:08 +68: /workspace/FusionPlay/flutter/test/player_preview_test.dart: render Apple Music landscape previews
+00:08 +69: /workspace/FusionPlay/flutter/test/player_preview_test.dart: render Apple Music landscape previews
+00:08 +70: /workspace/FusionPlay/flutter/test/player_preview_test.dart: render Apple Music landscape previews
+00:08 +71: /workspace/FusionPlay/flutter/test/player_preview_test.dart: render Apple Music landscape previews
+00:08 +72: /workspace/FusionPlay/flutter/test/player_preview_test.dart: render Apple Music landscape previews
+00:08 +73: /workspace/FusionPlay/flutter/test/player_preview_test.dart: render Apple Music landscape previews
+00:08 +74: /workspace/FusionPlay/flutter/test/player_preview_test.dart: render Apple Music landscape previews
+00:08 +75: /workspace/FusionPlay/flutter/test/player_preview_test.dart: render Apple Music landscape previews
+00:08 +76: /workspace/FusionPlay/flutter/test/player_preview_test.dart: render Apple Music landscape previews
+00:08 +77: /workspace/FusionPlay/flutter/test/player_preview_test.dart: render Apple Music landscape previews
+00:08 +78: /workspace/FusionPlay/flutter/test/player_preview_test.dart: render Apple Music landscape previews
+00:08 +79: /workspace/FusionPlay/flutter/test/player_preview_test.dart: render Apple Music landscape previews
+CAPTURE stream-single-line-840x360 840.0x360.0
 00:08 +80: /workspace/FusionPlay/flutter/test/player_preview_test.dart: render Apple Music landscape previews
 00:08 +81: /workspace/FusionPlay/flutter/test/player_preview_test.dart: render Apple Music landscape previews
 00:08 +82: /workspace/FusionPlay/flutter/test/player_preview_test.dart: render Apple Music landscape previews
@@ -95,21 +96,20 @@ CAPTURE stream-history-840x360 840.0x360.0
 00:08 +84: /workspace/FusionPlay/flutter/test/player_preview_test.dart: render Apple Music landscape previews
 00:08 +85: /workspace/FusionPlay/flutter/test/player_preview_test.dart: render Apple Music landscape previews
 00:08 +86: /workspace/FusionPlay/flutter/test/player_preview_test.dart: render Apple Music landscape previews
-CAPTURE stream-single-line-840x360 840.0x360.0
+CAPTURE lyrics-840x360 840.0x360.0
 00:09 +87: /workspace/FusionPlay/flutter/test/player_preview_test.dart: render Apple Music landscape previews
 00:09 +88: /workspace/FusionPlay/flutter/test/player_preview_test.dart: render Apple Music landscape previews
-CAPTURE lyrics-840x360 840.0x360.0
 CAPTURE tv-1920x1080 1920.0x1080.0
-00:09 +89: /workspace/FusionPlay/flutter/test/player_preview_test.dart: render Apple Music landscape previews
+00:10 +89: /workspace/FusionPlay/flutter/test/player_preview_test.dart: render Apple Music landscape previews
 00:10 +90: /workspace/FusionPlay/flutter/test/player_preview_test.dart: render Apple Music landscape previews
-00:10 +90: /workspace/FusionPlay/flutter/test/tv_mode_test.dart: TV 打开设置焦点在 MiPlay 行；非 TV 也不自动聚焦名称输入框
+00:11 +90: /workspace/FusionPlay/flutter/test/tv_mode_test.dart: TV 打开设置焦点在 MiPlay 行；非 TV 也不自动聚焦名称输入框
 
 Warning: A call to tap() with finder "Found 1 widget with key [<'playback-menu-button'>]: [
-  SizedBox-[<'playback-menu-button'>](width: 34.0, height: 34.0, renderObject: RenderConstrainedBox#9a74c NEEDS-PAINT),
+  SizedBox-[<'playback-menu-button'>](width: 34.0, height: 34.0, renderObject: RenderConstrainedBox#f79c5 NEEDS-PAINT),
 ]" derived an Offset (Offset(1569.0, 21.0)) that would not hit test on the specified widget.
 Maybe the widget is actually off-screen, or another widget is obscuring it, or the widget cannot receive pointer events.
-The finder corresponds to this RenderBox: RenderConstrainedBox#9a74c NEEDS-PAINT
-The hit test result at that offset is: HitTestResult(_RenderColoredBox#b5f3c@Offset(1569.0, 21.0), RenderPointerListener#5c527@Offset(1569.0, 21.0), RenderSemanticsGestureHandler#d3e20@Offset(1569.0, 21.0), RenderStack#7335e@Offset(1569.0, 21.0), _RenderLayoutBuilder#04616@Offset(1569.0, 21.0), RenderPadding#a6d4b@Offset(1569.0, 21.0), RenderStack#a797d@Offset(1569.0, 21.0), RenderPadding#9c6ce@Offset(1569.0, 21.0), RenderPadding#c1fc4@Offset(1569.0, 21.0), RenderStack#b1983@Offset(1569.0, 21.0), RenderCustomMultiChildLayoutBox#aa3f6@Offset(1569.0, 21.0), _RenderInkFeatures#59e06@Offset(1569.0, 21.0), RenderPhysicalModel#db3fb@Offset(1569.0, 21.0), RenderSemanticsAnnotations#575a0@Offset(1569.0, 21.0), RenderStack#49015@Offset(1569.0, 21.0), RenderSemanticsAnnotations#86bdc@Offset(1569.0, 21.0), RenderRepaintBoundary#51a12@Offset(1569.0, 21.0), RenderIgnorePointer#4b085@Offset(1569.0, 21.0), _RenderSnapshotWidget#833db@Offset(1569.0, 21.0), _RenderSnapshotWidget#dd3c5@Offset(1569.0, 21.0), _RenderSnapshotWidget#613f2@Offset(1569.0, 21.0), _RenderSnapshotWidget#57523@Offset(1569.0, 21.0), RenderRepaintBoundary#43c0c@Offset(1569.0, 21.0), RenderSemanticsAnnotations#6673b@Offset(1569.0, 21.0), RenderOffstage#e79b4@Offset(1569.0, 21.0), RenderSemanticsAnnotations#1b0b6@Offset(1569.0, 21.0), _RenderTheater#7553d@Offset(1569.0, 21.0), RenderAbsorbPointer#1e236@Offset(1569.0, 21.0), RenderPointerListener#9e38b@Offset(1569.0, 21.0), RenderSemanticsAnnotations#a6641@Offset(1569.0, 21.0), RenderCustomPaint#21c8a@Offset(1569.0, 21.0), RenderSemanticsAnnotations#ce933@Offset(1569.0, 21.0), RenderSemanticsAnnotations#11c27@Offset(1569.0, 21.0), RenderTapRegionSurface#aa488@Offset(1569.0, 21.0), RenderSemanticsAnnotations#d2a69@Offset(1569.0, 21.0), RenderSemanticsAnnotations#c202a@Offset(1569.0, 21.0), RenderSemanticsAnnotations#f0c02@Offset(1569.0, 21.0), HitTestEntry<HitTestTarget>#73f5f(_ReusableRenderView#58b8a), HitTestEntry<HitTestTarget>#5db0a(<AutomatedTestWidgetsFlutterBinding>))
+The finder corresponds to this RenderBox: RenderConstrainedBox#f79c5 NEEDS-PAINT
+The hit test result at that offset is: HitTestResult(_RenderColoredBox#91533@Offset(1569.0, 21.0), RenderPointerListener#ae72d@Offset(1569.0, 21.0), RenderSemanticsGestureHandler#e5668@Offset(1569.0, 21.0), RenderStack#9eaeb@Offset(1569.0, 21.0), _RenderLayoutBuilder#df7dd@Offset(1569.0, 21.0), RenderPadding#9f168@Offset(1569.0, 21.0), RenderStack#cfd1a@Offset(1569.0, 21.0), RenderPadding#3e27a@Offset(1569.0, 21.0), RenderPadding#79257@Offset(1569.0, 21.0), RenderStack#bf7a4@Offset(1569.0, 21.0), RenderCustomMultiChildLayoutBox#94e1d@Offset(1569.0, 21.0), _RenderInkFeatures#9addb@Offset(1569.0, 21.0), RenderPhysicalModel#5cac6@Offset(1569.0, 21.0), RenderSemanticsAnnotations#be984@Offset(1569.0, 21.0), RenderStack#1befe@Offset(1569.0, 21.0), RenderSemanticsAnnotations#1b523@Offset(1569.0, 21.0), RenderRepaintBoundary#554cf@Offset(1569.0, 21.0), RenderIgnorePointer#0173c@Offset(1569.0, 21.0), _RenderSnapshotWidget#b3212@Offset(1569.0, 21.0), _RenderSnapshotWidget#f4889@Offset(1569.0, 21.0), _RenderSnapshotWidget#13f13@Offset(1569.0, 21.0), _RenderSnapshotWidget#b43d3@Offset(1569.0, 21.0), RenderRepaintBoundary#47ab5@Offset(1569.0, 21.0), RenderSemanticsAnnotations#6e1af@Offset(1569.0, 21.0), RenderOffstage#ff6fd@Offset(1569.0, 21.0), RenderSemanticsAnnotations#9e057@Offset(1569.0, 21.0), _RenderTheater#10224@Offset(1569.0, 21.0), RenderAbsorbPointer#a46e2@Offset(1569.0, 21.0), RenderPointerListener#04f8d@Offset(1569.0, 21.0), RenderSemanticsAnnotations#97280@Offset(1569.0, 21.0), RenderCustomPaint#602c1@Offset(1569.0, 21.0), RenderSemanticsAnnotations#5a30f@Offset(1569.0, 21.0), RenderSemanticsAnnotations#7dfb3@Offset(1569.0, 21.0), RenderTapRegionSurface#cc2c7@Offset(1569.0, 21.0), RenderSemanticsAnnotations#400fc@Offset(1569.0, 21.0), RenderSemanticsAnnotations#ba769@Offset(1569.0, 21.0), RenderSemanticsAnnotations#4d505@Offset(1569.0, 21.0), HitTestEntry<HitTestTarget>#195ba(_ReusableRenderView#88aea), HitTestEntry<HitTestTarget>#4f2c2(<AutomatedTestWidgetsFlutterBinding>))
 #0      WidgetController._getElementPoint (package:flutter_test/src/controller.dart:2077:25)
 #1      WidgetController.getCenter (package:flutter_test/src/controller.dart:1861:12)
 #2      WidgetController.tap (package:flutter_test/src/controller.dart:1041:7)
@@ -125,18 +125,19 @@ The hit test result at that offset is: HitTestResult(_RenderColoredBox#b5f3c@Off
 To silence this warning, pass "warnIfMissed: false" to "tap()".
 To make this warning fatal, set WidgetController.hitTestWarningShouldBeFatal to true.
 
-00:10 +91: /workspace/FusionPlay/flutter/test/player_preview_test.dart: render Apple Music landscape previews
-00:11 +92: /workspace/FusionPlay/flutter/test/player_preview_test.dart: render Apple Music landscape previews
+00:11 +91: /workspace/FusionPlay/flutter/test/player_preview_test.dart: render Apple Music landscape previews
 CAPTURE lyrics-long-title-840x360 840.0x360.0
-00:11 +93: /workspace/FusionPlay/flutter/test/player_preview_test.dart: render Apple Music landscape previews
-00:11 +93: /workspace/FusionPlay/flutter/test/tv_mode_test.dart: TV 设置面板宽度上限 720（仍 ≤ 半屏），非 TV 为 560
+00:11 +92: /workspace/FusionPlay/flutter/test/player_preview_test.dart: render Apple Music landscape previews
+CAPTURE lyrics-840x360 840.0x360.0
+00:12 +93: /workspace/FusionPlay/flutter/test/player_preview_test.dart: render Apple Music landscape previews
+00:12 +93: /workspace/FusionPlay/flutter/test/tv_mode_test.dart: TV 设置面板宽度上限 720（仍 ≤ 半屏），非 TV 为 560
 
 Warning: A call to tap() with finder "Found 1 widget with key [<'playback-menu-button'>]: [
-  SizedBox-[<'playback-menu-button'>](width: 34.0, height: 34.0, renderObject: RenderConstrainedBox#a0da0 NEEDS-PAINT),
+  SizedBox-[<'playback-menu-button'>](width: 34.0, height: 34.0, renderObject: RenderConstrainedBox#90cf5 NEEDS-PAINT),
 ]" derived an Offset (Offset(1569.0, 21.0)) that would not hit test on the specified widget.
 Maybe the widget is actually off-screen, or another widget is obscuring it, or the widget cannot receive pointer events.
-The finder corresponds to this RenderBox: RenderConstrainedBox#a0da0 NEEDS-PAINT
-The hit test result at that offset is: HitTestResult(_RenderColoredBox#1590f@Offset(1569.0, 21.0), RenderPointerListener#48ab9@Offset(1569.0, 21.0), RenderSemanticsGestureHandler#228cb@Offset(1569.0, 21.0), RenderStack#25296@Offset(1569.0, 21.0), _RenderLayoutBuilder#388f6@Offset(1569.0, 21.0), RenderPadding#4a617@Offset(1569.0, 21.0), RenderStack#ef294@Offset(1569.0, 21.0), RenderPadding#c8707@Offset(1569.0, 21.0), RenderPadding#30049@Offset(1569.0, 21.0), RenderStack#7c7a4@Offset(1569.0, 21.0), RenderCustomMultiChildLayoutBox#4c7a3@Offset(1569.0, 21.0), _RenderInkFeatures#1824f@Offset(1569.0, 21.0), RenderPhysicalModel#0565e@Offset(1569.0, 21.0), RenderSemanticsAnnotations#a9819@Offset(1569.0, 21.0), RenderStack#36c40@Offset(1569.0, 21.0), RenderSemanticsAnnotations#5bab4@Offset(1569.0, 21.0), RenderRepaintBoundary#abd8a@Offset(1569.0, 21.0), RenderIgnorePointer#2acb5@Offset(1569.0, 21.0), _RenderSnapshotWidget#b3e11@Offset(1569.0, 21.0), _RenderSnapshotWidget#e9344@Offset(1569.0, 21.0), _RenderSnapshotWidget#4da09@Offset(1569.0, 21.0), _RenderSnapshotWidget#7bd8b@Offset(1569.0, 21.0), RenderRepaintBoundary#0f765@Offset(1569.0, 21.0), RenderSemanticsAnnotations#c5b8f@Offset(1569.0, 21.0), RenderOffstage#858e2@Offset(1569.0, 21.0), RenderSemanticsAnnotations#45a48@Offset(1569.0, 21.0), _RenderTheater#7c1eb@Offset(1569.0, 21.0), RenderAbsorbPointer#be361@Offset(1569.0, 21.0), RenderPointerListener#87040@Offset(1569.0, 21.0), RenderSemanticsAnnotations#4d62d@Offset(1569.0, 21.0), RenderCustomPaint#c22f0@Offset(1569.0, 21.0), RenderSemanticsAnnotations#2d8b8@Offset(1569.0, 21.0), RenderSemanticsAnnotations#d9c5a@Offset(1569.0, 21.0), RenderTapRegionSurface#5af9f@Offset(1569.0, 21.0), RenderSemanticsAnnotations#379d7@Offset(1569.0, 21.0), RenderSemanticsAnnotations#0cbdc@Offset(1569.0, 21.0), RenderSemanticsAnnotations#e0cd2@Offset(1569.0, 21.0), HitTestEntry<HitTestTarget>#c7525(_ReusableRenderView#58b8a), HitTestEntry<HitTestTarget>#2d897(<AutomatedTestWidgetsFlutterBinding>))
+The finder corresponds to this RenderBox: RenderConstrainedBox#90cf5 NEEDS-PAINT
+The hit test result at that offset is: HitTestResult(_RenderColoredBox#ae271@Offset(1569.0, 21.0), RenderPointerListener#c004a@Offset(1569.0, 21.0), RenderSemanticsGestureHandler#20bee@Offset(1569.0, 21.0), RenderStack#bfd8f@Offset(1569.0, 21.0), _RenderLayoutBuilder#3b53d@Offset(1569.0, 21.0), RenderPadding#c7ecd@Offset(1569.0, 21.0), RenderStack#d52a3@Offset(1569.0, 21.0), RenderPadding#482dd@Offset(1569.0, 21.0), RenderPadding#6064d@Offset(1569.0, 21.0), RenderStack#e6b9b@Offset(1569.0, 21.0), RenderCustomMultiChildLayoutBox#d747b@Offset(1569.0, 21.0), _RenderInkFeatures#4a8b7@Offset(1569.0, 21.0), RenderPhysicalModel#4c4a7@Offset(1569.0, 21.0), RenderSemanticsAnnotations#13a3a@Offset(1569.0, 21.0), RenderStack#b2861@Offset(1569.0, 21.0), RenderSemanticsAnnotations#113e4@Offset(1569.0, 21.0), RenderRepaintBoundary#09be8@Offset(1569.0, 21.0), RenderIgnorePointer#1ae62@Offset(1569.0, 21.0), _RenderSnapshotWidget#10f4d@Offset(1569.0, 21.0), _RenderSnapshotWidget#2f264@Offset(1569.0, 21.0), _RenderSnapshotWidget#40136@Offset(1569.0, 21.0), _RenderSnapshotWidget#94480@Offset(1569.0, 21.0), RenderRepaintBoundary#bd445@Offset(1569.0, 21.0), RenderSemanticsAnnotations#27116@Offset(1569.0, 21.0), RenderOffstage#f5447@Offset(1569.0, 21.0), RenderSemanticsAnnotations#eb263@Offset(1569.0, 21.0), _RenderTheater#6270e@Offset(1569.0, 21.0), RenderAbsorbPointer#75d52@Offset(1569.0, 21.0), RenderPointerListener#650ba@Offset(1569.0, 21.0), RenderSemanticsAnnotations#034ab@Offset(1569.0, 21.0), RenderCustomPaint#d5bd3@Offset(1569.0, 21.0), RenderSemanticsAnnotations#8cb35@Offset(1569.0, 21.0), RenderSemanticsAnnotations#b5345@Offset(1569.0, 21.0), RenderTapRegionSurface#6fdc1@Offset(1569.0, 21.0), RenderSemanticsAnnotations#6cee7@Offset(1569.0, 21.0), RenderSemanticsAnnotations#50df3@Offset(1569.0, 21.0), RenderSemanticsAnnotations#ee37e@Offset(1569.0, 21.0), HitTestEntry<HitTestTarget>#47bb5(_ReusableRenderView#88aea), HitTestEntry<HitTestTarget>#4cf06(<AutomatedTestWidgetsFlutterBinding>))
 #0      WidgetController._getElementPoint (package:flutter_test/src/controller.dart:2077:25)
 #1      WidgetController.getCenter (package:flutter_test/src/controller.dart:1861:12)
 #2      WidgetController.tap (package:flutter_test/src/controller.dart:1041:7)
@@ -152,58 +153,57 @@ The hit test result at that offset is: HitTestResult(_RenderColoredBox#1590f@Off
 To silence this warning, pass "warnIfMissed: false" to "tap()".
 To make this warning fatal, set WidgetController.hitTestWarningShouldBeFatal to true.
 
-00:11 +94: /workspace/FusionPlay/flutter/test/player_preview_test.dart: render Apple Music landscape previews
-00:12 +95: /workspace/FusionPlay/flutter/test/player_preview_test.dart: render Apple Music landscape previews
-CAPTURE lyrics-840x360 840.0x360.0
-00:12 +96: /workspace/FusionPlay/flutter/test/player_preview_test.dart: render Apple Music landscape previews
-00:12 +97: /workspace/FusionPlay/flutter/test/player_preview_test.dart: render Apple Music landscape previews
-00:12 +98: /workspace/FusionPlay/flutter/test/player_preview_test.dart: render Apple Music landscape previews
+00:12 +94: /workspace/FusionPlay/flutter/test/player_preview_test.dart: render Apple Music landscape previews
 CAPTURE no-lyrics-840x360 840.0x360.0
+00:12 +95: /workspace/FusionPlay/flutter/test/player_preview_test.dart: render Apple Music landscape previews
+00:12 +96: /workspace/FusionPlay/flutter/test/player_preview_test.dart: render Apple Music landscape previews
+00:13 +97: /workspace/FusionPlay/flutter/test/player_preview_test.dart: render Apple Music landscape previews
 CAPTURE lyrics-900x400 900.0x400.0
+00:13 +98: /workspace/FusionPlay/flutter/test/player_preview_test.dart: render Apple Music landscape previews
 CAPTURE no-lyrics-900x400 900.0x400.0
-00:14 +99: /workspace/FusionPlay/flutter/test/player_preview_test.dart: render Apple Music landscape previews
-00:14 +100: /workspace/FusionPlay/flutter/test/player_preview_test.dart: render Apple Music landscape previews
 CAPTURE lyrics-980x420 980.0x420.0
-00:14 +101: /workspace/FusionPlay/flutter/test/player_preview_test.dart: render Apple Music landscape previews
-00:14 +102: /workspace/FusionPlay/flutter/test/player_preview_test.dart: render Apple Music landscape previews
-00:15 +103: /workspace/FusionPlay/flutter/test/player_preview_test.dart: render Apple Music landscape previews
-00:15 +104: /workspace/FusionPlay/flutter/test/player_preview_test.dart: render Apple Music landscape previews
-00:15 +105: /workspace/FusionPlay/flutter/test/player_preview_test.dart: render Apple Music landscape previews
-00:15 +106: /workspace/FusionPlay/flutter/test/player_preview_test.dart: render Apple Music landscape previews
-00:15 +107: /workspace/FusionPlay/flutter/test/player_preview_test.dart: render Apple Music landscape previews
+00:15 +99: /workspace/FusionPlay/flutter/test/player_preview_test.dart: render Apple Music landscape previews
 CAPTURE no-lyrics-980x420 980.0x420.0
-00:15 +108: /workspace/FusionPlay/flutter/test/player_preview_test.dart: render Apple Music landscape previews
-00:15 +109: /workspace/FusionPlay/flutter/test/player_preview_test.dart: render Apple Music landscape previews
+00:15 +100: /workspace/FusionPlay/flutter/test/player_preview_test.dart: render Apple Music landscape previews
+00:15 +101: /workspace/FusionPlay/flutter/test/player_preview_test.dart: render Apple Music landscape previews
+00:15 +102: /workspace/FusionPlay/flutter/test/player_preview_test.dart: render Apple Music landscape previews
 CAPTURE lyrics-1008x432 1008.0x432.0
-00:16 +110: /workspace/FusionPlay/flutter/test/player_preview_test.dart: render Apple Music landscape previews
-00:16 +111: /workspace/FusionPlay/flutter/test/player_preview_test.dart: render Apple Music landscape previews
-00:16 +112: /workspace/FusionPlay/flutter/test/player_preview_test.dart: render Apple Music landscape previews
+00:16 +103: /workspace/FusionPlay/flutter/test/player_preview_test.dart: render Apple Music landscape previews
+00:16 +104: /workspace/FusionPlay/flutter/test/player_preview_test.dart: render Apple Music landscape previews
+00:16 +105: /workspace/FusionPlay/flutter/test/player_preview_test.dart: render Apple Music landscape previews
+00:16 +106: /workspace/FusionPlay/flutter/test/player_preview_test.dart: render Apple Music landscape previews
+00:16 +107: /workspace/FusionPlay/flutter/test/player_preview_test.dart: render Apple Music landscape previews
 CAPTURE no-lyrics-1008x432 1008.0x432.0
-00:16 +113: /workspace/FusionPlay/flutter/test/player_preview_test.dart: render Apple Music landscape previews
-00:16 +114: /workspace/FusionPlay/flutter/test/player_preview_test.dart: render Apple Music landscape previews
-00:17 +115: /workspace/FusionPlay/flutter/test/player_preview_test.dart: render Apple Music landscape previews
-00:17 +116: /workspace/FusionPlay/flutter/test/player_preview_test.dart: render Apple Music landscape previews
+00:16 +108: /workspace/FusionPlay/flutter/test/player_preview_test.dart: render Apple Music landscape previews
+00:16 +109: /workspace/FusionPlay/flutter/test/player_preview_test.dart: render Apple Music landscape previews
+00:17 +110: /workspace/FusionPlay/flutter/test/player_preview_test.dart: render Apple Music landscape previews
 CAPTURE lyrics-1080x462 1080.0x462.0
-00:17 +117: /workspace/FusionPlay/flutter/test/player_preview_test.dart: render Apple Music landscape previews
-00:17 +118: /workspace/FusionPlay/flutter/test/player_preview_test.dart: render Apple Music landscape previews
-00:17 +119: /workspace/FusionPlay/flutter/test/player_preview_test.dart: render Apple Music landscape previews
+00:17 +111: /workspace/FusionPlay/flutter/test/player_preview_test.dart: render Apple Music landscape previews
+00:17 +112: /workspace/FusionPlay/flutter/test/player_preview_test.dart: render Apple Music landscape previews
+00:17 +113: /workspace/FusionPlay/flutter/test/player_preview_test.dart: render Apple Music landscape previews
+00:17 +114: /workspace/FusionPlay/flutter/test/player_preview_test.dart: render Apple Music landscape previews
 CAPTURE no-lyrics-1080x462 1080.0x462.0
+00:18 +115: /workspace/FusionPlay/flutter/test/player_preview_test.dart: render Apple Music landscape previews
+00:18 +116: /workspace/FusionPlay/flutter/test/player_preview_test.dart: render Apple Music landscape previews
+00:18 +117: /workspace/FusionPlay/flutter/test/player_preview_test.dart: render Apple Music landscape previews
+00:18 +118: /workspace/FusionPlay/flutter/test/player_preview_test.dart: render Apple Music landscape previews
 CAPTURE lyrics-1280x720 1280.0x720.0
+00:18 +119: /workspace/FusionPlay/flutter/test/player_preview_test.dart: render Apple Music landscape previews
 CAPTURE no-lyrics-1280x720 1280.0x720.0
-00:20 +120: /workspace/FusionPlay/flutter/test/player_preview_test.dart: render Apple Music landscape previews
-00:20 +121: /workspace/FusionPlay/flutter/test/player_preview_test.dart: render Apple Music landscape previews
-00:20 +122: /workspace/FusionPlay/flutter/test/player_preview_test.dart: render Apple Music landscape previews
-00:20 +123: /workspace/FusionPlay/flutter/test/settings_remote_test.dart: 名称编辑→应用原子调用一次 onReceiverName 并回到展示态
-00:20 +124: /workspace/FusionPlay/flutter/test/settings_remote_test.dart: 日志导出入口与关于应用位于同一卡片并可触发
-00:21 +125: /workspace/FusionPlay/flutter/test/settings_remote_test.dart: select does not open settings while player control has focus
-00:21 +126: /workspace/FusionPlay/flutter/test/settings_remote_test.dart: player focus follows settings progress and play pause space
-00:21 +127: /workspace/FusionPlay/flutter/test/airplay_progress_test.dart: AirPlay 本地时钟在两次 now-playing 事件之间推进进度
-00:21 +128: /workspace/FusionPlay/flutter/test/airplay_progress_test.dart: AirPlay 本地时钟不会超过总时长，也不会倒退
-00:21 +129: /workspace/FusionPlay/flutter/test/lyrics_player_test.dart: YAQMC 布局：封面、标题、常驻大歌词与玻璃 dock
-00:22 +130: /workspace/FusionPlay/flutter/test/ui_gallery_test.dart: render settings/menu/dialog gallery
-00:22 +131: /workspace/FusionPlay/flutter/test/ui_gallery_test.dart: render settings/menu/dialog gallery
-00:22 +132: /workspace/FusionPlay/flutter/test/ui_gallery_test.dart: render settings/menu/dialog gallery
-00:22 +133: /workspace/FusionPlay/flutter/test/ui_gallery_test.dart: render settings/menu/dialog gallery
+00:20 +120: /workspace/FusionPlay/flutter/test/settings_remote_test.dart: 三点菜单打开设置浮层，Escape 逐层关闭
+00:21 +121: /workspace/FusionPlay/flutter/test/settings_remote_test.dart: MiPlay 上键聚焦编辑按钮，点击编辑后才聚焦名称输入框
+00:21 +122: /workspace/FusionPlay/flutter/test/settings_remote_test.dart: MiPlay 上键聚焦编辑按钮，点击编辑后才聚焦名称输入框
+00:21 +123: /workspace/FusionPlay/flutter/test/settings_remote_test.dart: MiPlay 上键聚焦编辑按钮，点击编辑后才聚焦名称输入框
+00:21 +124: /workspace/FusionPlay/flutter/test/settings_remote_test.dart: 名称展示→编辑→取消恢复原名，不触发持久化
+00:21 +125: /workspace/FusionPlay/flutter/test/settings_remote_test.dart: 名称编辑→应用原子调用一次 onReceiverName 并回到展示态
+00:21 +126: /workspace/FusionPlay/flutter/test/settings_remote_test.dart: 日志导出入口与关于应用位于同一卡片并可触发
+00:22 +127: /workspace/FusionPlay/flutter/test/settings_remote_test.dart: select does not open settings while player control has focus
+00:22 +128: /workspace/FusionPlay/flutter/test/settings_remote_test.dart: player focus follows settings progress and play pause space
+00:22 +129: /workspace/FusionPlay/flutter/test/lyrics_player_test.dart: YAQMC 布局：封面、标题、常驻大歌词与玻璃 dock
+00:23 +130: /workspace/FusionPlay/flutter/test/ui_gallery_test.dart: render settings/menu/dialog gallery
+00:23 +131: /workspace/FusionPlay/flutter/test/ui_gallery_test.dart: render settings/menu/dialog gallery
+00:23 +132: /workspace/FusionPlay/flutter/test/ui_gallery_test.dart: render settings/menu/dialog gallery
+00:23 +133: /workspace/FusionPlay/flutter/test/ui_gallery_test.dart: render settings/menu/dialog gallery
 00:23 +134: /workspace/FusionPlay/flutter/test/ui_gallery_test.dart: render settings/menu/dialog gallery
 00:23 +135: /workspace/FusionPlay/flutter/test/ui_gallery_test.dart: render settings/menu/dialog gallery
 00:23 +136: /workspace/FusionPlay/flutter/test/ui_gallery_test.dart: render settings/menu/dialog gallery
@@ -211,15 +211,15 @@ CAPTURE no-lyrics-1280x720 1280.0x720.0
 00:23 +138: /workspace/FusionPlay/flutter/test/ui_gallery_test.dart: render settings/menu/dialog gallery
 00:23 +139: /workspace/FusionPlay/flutter/test/ui_gallery_test.dart: render settings/menu/dialog gallery
 00:23 +140: /workspace/FusionPlay/flutter/test/ui_gallery_test.dart: render settings/menu/dialog gallery
-00:23 +141: /workspace/FusionPlay/flutter/test/ui_gallery_test.dart: render settings/menu/dialog gallery
-00:23 +141: /workspace/FusionPlay/flutter/test/lyrics_player_test.dart: 纵向紧凑布局 420x760 不溢出
+00:24 +141: /workspace/FusionPlay/flutter/test/ui_gallery_test.dart: render settings/menu/dialog gallery
+00:24 +141: /workspace/FusionPlay/flutter/test/lyrics_player_test.dart: 纵向紧凑布局 420x760 不溢出
 
 Warning: A call to drag() with finder "Found 1 widget with key [<'player-layout-horizontal'>]: [
-  LayoutBuilder-[<'player-layout-horizontal'>](renderObject: _RenderLayoutBuilder#be447),
+  LayoutBuilder-[<'player-layout-horizontal'>](renderObject: _RenderLayoutBuilder#c7930),
 ]" derived an Offset (Offset(210.0, 400.0)) that would not hit test on the specified widget.
 Maybe the widget is actually off-screen, or another widget is obscuring it, or the widget cannot receive pointer events.
-The finder corresponds to this RenderBox: _RenderLayoutBuilder#be447
-The hit test result at that offset is: HitTestResult(_RenderInkFeatures#56c75@Offset(210.0, 400.0), RenderPhysicalModel#0992c@Offset(210.0, 400.0), RenderSemanticsAnnotations#2cb53@Offset(210.0, 400.0), RenderRepaintBoundary#14a04@Offset(210.0, 400.0), RenderIgnorePointer#31b44@Offset(210.0, 400.0), _RenderSnapshotWidget#281af@Offset(210.0, 400.0), _RenderSnapshotWidget#62770@Offset(210.0, 400.0), _RenderSnapshotWidget#cc7f1@Offset(210.0, 400.0), _RenderSnapshotWidget#003b6@Offset(210.0, 400.0), RenderRepaintBoundary#1067f@Offset(210.0, 400.0), RenderSemanticsAnnotations#c9099@Offset(210.0, 400.0), RenderOffstage#d14a3@Offset(210.0, 400.0), RenderSemanticsAnnotations#12a12@Offset(210.0, 400.0), _RenderTheater#f5933@Offset(210.0, 400.0), RenderAbsorbPointer#447d4@Offset(210.0, 400.0), RenderPointerListener#50faa@Offset(210.0, 400.0), RenderSemanticsAnnotations#bdbe9@Offset(210.0, 400.0), RenderCustomPaint#a3571@Offset(210.0, 400.0), RenderSemanticsAnnotations#ec32f@Offset(210.0, 400.0), RenderSemanticsAnnotations#abebb@Offset(210.0, 400.0), RenderTapRegionSurface#13d97@Offset(210.0, 400.0), RenderSemanticsAnnotations#e941f@Offset(210.0, 400.0), RenderSemanticsAnnotations#a9ed1@Offset(210.0, 400.0), RenderSemanticsAnnotations#1a566@Offset(210.0, 400.0), HitTestEntry<HitTestTarget>#d0354(_ReusableRenderView#1f290), HitTestEntry<HitTestTarget>#1679d(<AutomatedTestWidgetsFlutterBinding>))
+The finder corresponds to this RenderBox: _RenderLayoutBuilder#c7930
+The hit test result at that offset is: HitTestResult(_RenderInkFeatures#73108@Offset(210.0, 400.0), RenderPhysicalModel#ed8a1@Offset(210.0, 400.0), RenderSemanticsAnnotations#f4dca@Offset(210.0, 400.0), RenderRepaintBoundary#f491e@Offset(210.0, 400.0), RenderIgnorePointer#f7df0@Offset(210.0, 400.0), _RenderSnapshotWidget#c6044@Offset(210.0, 400.0), _RenderSnapshotWidget#5d38f@Offset(210.0, 400.0), _RenderSnapshotWidget#a36e4@Offset(210.0, 400.0), _RenderSnapshotWidget#eb7c6@Offset(210.0, 400.0), RenderRepaintBoundary#67037@Offset(210.0, 400.0), RenderSemanticsAnnotations#7035e@Offset(210.0, 400.0), RenderOffstage#ebe22@Offset(210.0, 400.0), RenderSemanticsAnnotations#3df0f@Offset(210.0, 400.0), _RenderTheater#a0189@Offset(210.0, 400.0), RenderAbsorbPointer#40a3a@Offset(210.0, 400.0), RenderPointerListener#d2d61@Offset(210.0, 400.0), RenderSemanticsAnnotations#5d0ae@Offset(210.0, 400.0), RenderCustomPaint#cde94@Offset(210.0, 400.0), RenderSemanticsAnnotations#75ea0@Offset(210.0, 400.0), RenderSemanticsAnnotations#4dcd1@Offset(210.0, 400.0), RenderTapRegionSurface#7f2c1@Offset(210.0, 400.0), RenderSemanticsAnnotations#f0ff1@Offset(210.0, 400.0), RenderSemanticsAnnotations#f311e@Offset(210.0, 400.0), RenderSemanticsAnnotations#6353d@Offset(210.0, 400.0), HitTestEntry<HitTestTarget>#22b45(_ReusableRenderView#442cb), HitTestEntry<HitTestTarget>#c3eb4(<AutomatedTestWidgetsFlutterBinding>))
 #0      WidgetController._getElementPoint (package:flutter_test/src/controller.dart:2077:25)
 #1      WidgetController.getCenter (package:flutter_test/src/controller.dart:1861:12)
 #2      WidgetController.drag (package:flutter_test/src/controller.dart:1537:7)
@@ -234,12 +234,12 @@ The hit test result at that offset is: HitTestResult(_RenderInkFeatures#56c75@Of
 To silence this warning, pass "warnIfMissed: false" to "drag()".
 To make this warning fatal, set WidgetController.hitTestWarningShouldBeFatal to true.
 
-00:23 +142: /workspace/FusionPlay/flutter/test/ui_gallery_test.dart: render settings/menu/dialog gallery
-00:23 +143: /workspace/FusionPlay/flutter/test/ui_gallery_test.dart: render settings/menu/dialog gallery
-00:23 +144: /workspace/FusionPlay/flutter/test/ui_gallery_test.dart: render settings/menu/dialog gallery
-00:23 +145: /workspace/FusionPlay/flutter/test/ui_gallery_test.dart: render settings/menu/dialog gallery
-00:23 +146: /workspace/FusionPlay/flutter/test/ui_gallery_test.dart: render settings/menu/dialog gallery
-00:23 +147: /workspace/FusionPlay/flutter/test/ui_gallery_test.dart: render settings/menu/dialog gallery
+00:24 +142: /workspace/FusionPlay/flutter/test/ui_gallery_test.dart: render settings/menu/dialog gallery
+00:24 +143: /workspace/FusionPlay/flutter/test/ui_gallery_test.dart: render settings/menu/dialog gallery
+00:24 +144: /workspace/FusionPlay/flutter/test/ui_gallery_test.dart: render settings/menu/dialog gallery
+00:24 +145: /workspace/FusionPlay/flutter/test/ui_gallery_test.dart: render settings/menu/dialog gallery
+00:24 +146: /workspace/FusionPlay/flutter/test/ui_gallery_test.dart: render settings/menu/dialog gallery
+00:24 +147: /workspace/FusionPlay/flutter/test/ui_gallery_test.dart: render settings/menu/dialog gallery
 00:24 +148: /workspace/FusionPlay/flutter/test/ui_gallery_test.dart: render settings/menu/dialog gallery
 00:24 +149: /workspace/FusionPlay/flutter/test/ui_gallery_test.dart: render settings/menu/dialog gallery
 00:24 +150: /workspace/FusionPlay/flutter/test/ui_gallery_test.dart: render settings/menu/dialog gallery
@@ -247,53 +247,52 @@ To make this warning fatal, set WidgetController.hitTestWarningShouldBeFatal to 
 00:24 +152: /workspace/FusionPlay/flutter/test/ui_gallery_test.dart: render settings/menu/dialog gallery
 00:24 +153: /workspace/FusionPlay/flutter/test/ui_gallery_test.dart: render settings/menu/dialog gallery
 00:24 +154: /workspace/FusionPlay/flutter/test/ui_gallery_test.dart: render settings/menu/dialog gallery
-00:24 +155: /workspace/FusionPlay/flutter/test/ui_gallery_test.dart: render settings/menu/dialog gallery
-00:24 +156: /workspace/FusionPlay/flutter/test/ui_gallery_test.dart: render settings/menu/dialog gallery
-00:24 +157: /workspace/FusionPlay/flutter/test/ui_gallery_test.dart: render settings/menu/dialog gallery
-00:24 +158: /workspace/FusionPlay/flutter/test/ui_gallery_test.dart: render settings/menu/dialog gallery
-00:24 +159: /workspace/FusionPlay/flutter/test/ui_gallery_test.dart: render settings/menu/dialog gallery
-00:24 +160: /workspace/FusionPlay/flutter/test/ui_gallery_test.dart: render settings/menu/dialog gallery
+00:25 +155: /workspace/FusionPlay/flutter/test/ui_gallery_test.dart: render settings/menu/dialog gallery
+00:25 +156: /workspace/FusionPlay/flutter/test/ui_gallery_test.dart: render settings/menu/dialog gallery
+00:25 +157: /workspace/FusionPlay/flutter/test/ui_gallery_test.dart: render settings/menu/dialog gallery
+00:25 +158: /workspace/FusionPlay/flutter/test/ui_gallery_test.dart: render settings/menu/dialog gallery
+00:25 +159: /workspace/FusionPlay/flutter/test/ui_gallery_test.dart: render settings/menu/dialog gallery
+00:25 +160: /workspace/FusionPlay/flutter/test/ui_gallery_test.dart: render settings/menu/dialog gallery
 00:25 +161: /workspace/FusionPlay/flutter/test/ui_gallery_test.dart: render settings/menu/dialog gallery
 00:25 +162: /workspace/FusionPlay/flutter/test/ui_gallery_test.dart: render settings/menu/dialog gallery
 00:25 +163: /workspace/FusionPlay/flutter/test/ui_gallery_test.dart: render settings/menu/dialog gallery
 00:25 +164: /workspace/FusionPlay/flutter/test/ui_gallery_test.dart: render settings/menu/dialog gallery
-00:25 +165: /workspace/FusionPlay/flutter/test/ui_gallery_test.dart: (tearDownAll)
-00:25 +165: /workspace/FusionPlay/flutter/test/artwork_background_test.dart: 封面按上限尺寸解码以约束图片缓存占用
-00:25 +166: /workspace/FusionPlay/flutter/test/artwork_background_test.dart: 背景只让已准备的新封面层淡入
+00:26 +165: /workspace/FusionPlay/flutter/test/ui_gallery_test.dart: render settings/menu/dialog gallery
+00:26 +166: /workspace/FusionPlay/flutter/test/artwork_background_test.dart: 背景只让已准备的新封面层淡入
 00:26 +167: /workspace/FusionPlay/flutter/test/artwork_background_test.dart: 关闭高级效果后封面背景不使用模糊
 00:26 +168: /workspace/FusionPlay/flutter/test/artwork_background_test.dart: 封面翻转帧和时序参数与文档一致
 00:26 +169: /workspace/FusionPlay/flutter/test/artwork_background_test.dart: 减少动态效果只执行双阶段透明度过渡
 00:26 +170: /workspace/FusionPlay/flutter/test/artwork_background_test.dart: 上一曲向右翻转而下一曲向左翻转
-00:26 +171: /workspace/FusionPlay/flutter/test/backdrop_update_test.dart: background repaint updates an offset texture without revision
-00:27 +172: /workspace/FusionPlay/flutter/test/playback_controls_test.dart: PlaybackControls 解析 根级 controls 优先解析
-00:27 +173: /workspace/FusionPlay/flutter/test/playback_controls_test.dart: PlaybackControls 解析 兼容 playback 内旧 controls 字段
-00:27 +174: /workspace/FusionPlay/flutter/test/playback_controls_test.dart: PlaybackControls 解析 缺省 fallback：小米妙播视为全 true
-00:27 +175: /workspace/FusionPlay/flutter/test/playback_controls_test.dart: PlaybackControls 解析 缺省 fallback：AirPlay/DLNA 只看 remoteControl.commands
-00:27 +176: /workspace/FusionPlay/flutter/test/playback_controls_test.dart: PlaybackControls 解析 无协议旧状态（Windows/占位）保持宽容 fallback
-00:27 +177: /workspace/FusionPlay/flutter/test/playback_controls_test.dart: PlaybackControls 解析 没有任何播放内容时不显示 playback 控制
-00:27 +178: /workspace/FusionPlay/flutter/test/playback_controls_test.dart: PlaybackControls 解析 PlaybackControls 相等性与 copyWith
-00:27 +179: /workspace/FusionPlay/flutter/test/lyrics_playback_clock_test.dart: 播放时按墙钟外推位置
-00:27 +180: /workspace/FusionPlay/flutter/test/lyrics_playback_clock_test.dart: 小回退样本被单调处理，不产生抖动
-00:27 +181: /workspace/FusionPlay/flutter/test/lyrics_playback_clock_test.dart: 大幅回退样本视为 seek 并重锚
-00:27 +182: /workspace/FusionPlay/flutter/test/lyrics_playback_clock_test.dart: 暂停时冻结位置，恢复播放后继续外推
-00:27 +183: /workspace/FusionPlay/flutter/test/lyrics_playback_clock_test.dart: 换曲（trackKey 变化）直接重锚，不做单调处理
-00:27 +184: /workspace/FusionPlay/flutter/test/lyrics_playback_clock_test.dart: 位置被时长夹取
-00:27 +185: /workspace/FusionPlay/flutter/test/lyrics_playback_clock_test.dart: dispose 后 update 不抛异常
-00:27 +186: /workspace/FusionPlay/flutter/test/glass_shader_compile_test.dart: glass shaders compile
-00:28 +187: /workspace/FusionPlay/flutter/test/audit_capture_test.dart: (setUpAll)
-00:28 +187: /workspace/FusionPlay/flutter/test/audit_capture_test.dart: photographic cover lighting study
-00:31 +188: /workspace/FusionPlay/flutter/test/audit_capture_test.dart: photographic cover lighting study
-00:31 +189: /workspace/FusionPlay/flutter/test/audit_capture_test.dart: photographic cover lighting study
-00:31 +190: /workspace/FusionPlay/flutter/test/audit_capture_test.dart: photographic cover lighting study
-00:31 +191: /workspace/FusionPlay/flutter/test/audit_capture_test.dart: photographic cover lighting study
-00:31 +192: /workspace/FusionPlay/flutter/test/audit_capture_test.dart: photographic cover lighting study
-00:31 +193: /workspace/FusionPlay/flutter/test/audit_capture_test.dart: photographic cover lighting study
-00:31 +194: /workspace/FusionPlay/flutter/test/audit_capture_test.dart: photographic cover lighting study
-00:31 +195: /workspace/FusionPlay/flutter/test/audit_capture_test.dart: photographic cover lighting study
-00:31 +196: /workspace/FusionPlay/flutter/test/audit_capture_test.dart: photographic cover lighting study
-00:31 +197: /workspace/FusionPlay/flutter/test/audit_capture_test.dart: photographic cover lighting study
-00:31 +198: /workspace/FusionPlay/flutter/test/audit_capture_test.dart: photographic cover lighting study
-00:32 +199: /workspace/FusionPlay/flutter/test/audit_capture_test.dart: round2 player captures P01-P20
+00:27 +171: /workspace/FusionPlay/flutter/test/backdrop_update_test.dart: background repaint updates an offset texture without revision
+00:27 +172: /workspace/FusionPlay/flutter/test/backdrop_update_test.dart: background repaint updates an offset texture without revision
+00:27 +173: /workspace/FusionPlay/flutter/test/backdrop_update_test.dart: background repaint updates an offset texture without revision
+00:27 +174: /workspace/FusionPlay/flutter/test/backdrop_update_test.dart: background repaint updates an offset texture without revision
+00:27 +175: /workspace/FusionPlay/flutter/test/backdrop_update_test.dart: background repaint updates an offset texture without revision
+00:27 +176: /workspace/FusionPlay/flutter/test/backdrop_update_test.dart: background repaint updates an offset texture without revision
+00:27 +177: /workspace/FusionPlay/flutter/test/backdrop_update_test.dart: background repaint updates an offset texture without revision
+00:27 +178: /workspace/FusionPlay/flutter/test/backdrop_update_test.dart: background repaint updates an offset texture without revision
+00:28 +179: /workspace/FusionPlay/flutter/test/lyrics_playback_clock_test.dart: 播放时按墙钟外推位置
+00:28 +180: /workspace/FusionPlay/flutter/test/lyrics_playback_clock_test.dart: 小回退样本被单调处理，不产生抖动
+00:28 +181: /workspace/FusionPlay/flutter/test/lyrics_playback_clock_test.dart: 大幅回退样本视为 seek 并重锚
+00:28 +182: /workspace/FusionPlay/flutter/test/lyrics_playback_clock_test.dart: 暂停时冻结位置，恢复播放后继续外推
+00:28 +183: /workspace/FusionPlay/flutter/test/lyrics_playback_clock_test.dart: 换曲（trackKey 变化）直接重锚，不做单调处理
+00:28 +184: /workspace/FusionPlay/flutter/test/lyrics_playback_clock_test.dart: 位置被时长夹取
+00:28 +185: /workspace/FusionPlay/flutter/test/lyrics_playback_clock_test.dart: dispose 后 update 不抛异常
+00:28 +186: /workspace/FusionPlay/flutter/test/glass_shader_compile_test.dart: glass shaders compile
+00:29 +187: /workspace/FusionPlay/flutter/test/audit_capture_test.dart: (setUpAll)
+00:29 +187: /workspace/FusionPlay/flutter/test/audit_capture_test.dart: photographic cover lighting study
+00:32 +188: /workspace/FusionPlay/flutter/test/audit_capture_test.dart: photographic cover lighting study
+00:32 +189: /workspace/FusionPlay/flutter/test/audit_capture_test.dart: photographic cover lighting study
+00:32 +190: /workspace/FusionPlay/flutter/test/audit_capture_test.dart: photographic cover lighting study
+00:32 +191: /workspace/FusionPlay/flutter/test/audit_capture_test.dart: photographic cover lighting study
+00:32 +192: /workspace/FusionPlay/flutter/test/audit_capture_test.dart: photographic cover lighting study
+00:32 +193: /workspace/FusionPlay/flutter/test/audit_capture_test.dart: photographic cover lighting study
+00:32 +194: /workspace/FusionPlay/flutter/test/audit_capture_test.dart: photographic cover lighting study
+00:32 +195: /workspace/FusionPlay/flutter/test/audit_capture_test.dart: photographic cover lighting study
+00:33 +196: /workspace/FusionPlay/flutter/test/audit_capture_test.dart: photographic cover lighting study
+00:33 +197: /workspace/FusionPlay/flutter/test/audit_capture_test.dart: photographic cover lighting study
+00:33 +198: /workspace/FusionPlay/flutter/test/audit_capture_test.dart: photographic cover lighting study
+00:33 +199: /workspace/FusionPlay/flutter/test/audit_capture_test.dart: round2 player captures P01-P20
 OVERFLOW|_warmup|980x420|none
 METRIC|_warmup|980x420|cover|22.0|136.6|198.7|313.4|176.8|176.8
 METRIC|_warmup|980x420|title|267.1|129.0|337.7|148.0|70.6|19.0
@@ -306,8 +305,8 @@ METRIC|_warmup|980x420|play|272.4|223.0|332.4|283.0|60.0|60.0
 METRIC|_warmup|980x420|next|350.4|236.0|384.4|270.0|34.0|34.0
 METRIC|_warmup|980x420|volume|206.7|293.0|398.0|321.0|191.3|28.0
 METRIC|_warmup|980x420|controls|22.0|48.0|398.0|402.0|376.0|354.0
-00:33 +200: /workspace/FusionPlay/flutter/test/audit_capture_test.dart: round2 player captures P01-P20
-00:33 +201: /workspace/FusionPlay/flutter/test/audit_capture_test.dart: round2 player captures P01-P20
+00:34 +200: /workspace/FusionPlay/flutter/test/audit_capture_test.dart: round2 player captures P01-P20
+00:34 +201: /workspace/FusionPlay/flutter/test/audit_capture_test.dart: round2 player captures P01-P20
 OVERFLOW|P01|900x400|none
 METRIC|P01|900x400|cover|21.9|134.1|183.8|295.9|161.8|161.8
 METRIC|P01|900x400|title|243.5|119.0|314.1|138.0|70.6|19.0
@@ -320,10 +319,9 @@ METRIC|P01|900x400|play|248.8|213.0|308.8|273.0|60.0|60.0
 METRIC|P01|900x400|next|326.8|226.0|360.8|260.0|34.0|34.0
 METRIC|P01|900x400|volume|191.7|283.0|366.0|311.0|174.3|28.0
 METRIC|P01|900x400|controls|22.0|48.0|366.0|382.0|344.0|334.0
-00:33 +202: /workspace/FusionPlay/flutter/test/audit_capture_test.dart: round2 player captures P01-P20
-00:34 +203: /workspace/FusionPlay/flutter/test/audit_capture_test.dart: round2 player captures P01-P20
-00:34 +204: /workspace/FusionPlay/flutter/test/audit_capture_test.dart: round2 player captures P01-P20
-00:34 +205: /workspace/FusionPlay/flutter/test/audit_capture_test.dart: round2 player captures P01-P20
+00:35 +202: /workspace/FusionPlay/flutter/test/audit_capture_test.dart: round2 player captures P01-P20
+00:35 +203: /workspace/FusionPlay/flutter/test/audit_capture_test.dart: round2 player captures P01-P20
+00:35 +204: /workspace/FusionPlay/flutter/test/audit_capture_test.dart: round2 player captures P01-P20
 OVERFLOW|P02|900x400|none
 METRIC|P02|900x400|cover|105.5|78.2|379.2|351.8|273.7|273.7
 METRIC|P02|900x400|title|449.7|76.0|801.0|111.0|351.3|35.0
@@ -335,10 +333,11 @@ METRIC|P02|900x400|prev|518.4|241.0|562.4|285.0|44.0|44.0
 METRIC|P02|900x400|play|590.4|228.0|660.4|298.0|70.0|70.0
 METRIC|P02|900x400|next|688.4|241.0|732.4|285.0|44.0|44.0
 METRIC|P02|900x400|volume|449.7|314.0|801.0|354.0|351.3|40.0
-00:34 +206: /workspace/FusionPlay/flutter/test/audit_capture_test.dart: round2 player captures P01-P20
-00:34 +207: /workspace/FusionPlay/flutter/test/audit_capture_test.dart: round2 player captures P01-P20
-00:34 +208: /workspace/FusionPlay/flutter/test/audit_capture_test.dart: round2 player captures P01-P20
-00:34 +209: /workspace/FusionPlay/flutter/test/audit_capture_test.dart: round2 player captures P01-P20
+00:36 +205: /workspace/FusionPlay/flutter/test/audit_capture_test.dart: round2 player captures P01-P20
+00:36 +206: /workspace/FusionPlay/flutter/test/audit_capture_test.dart: round2 player captures P01-P20
+00:36 +207: /workspace/FusionPlay/flutter/test/audit_capture_test.dart: round2 player captures P01-P20
+00:36 +208: /workspace/FusionPlay/flutter/test/audit_capture_test.dart: round2 player captures P01-P20
+00:36 +209: /workspace/FusionPlay/flutter/test/audit_capture_test.dart: round2 player captures P01-P20
 OVERFLOW|P03|980x420|none
 METRIC|P03|980x420|cover|22.0|136.6|198.7|313.4|176.8|176.8
 METRIC|P03|980x420|title|267.1|129.0|337.7|148.0|70.6|19.0
@@ -549,9 +548,9 @@ METRIC|P20|980x420|play|272.4|223.0|332.4|283.0|60.0|60.0
 METRIC|P20|980x420|next|350.4|236.0|384.4|270.0|34.0|34.0
 METRIC|P20|980x420|volume|206.7|293.0|398.0|321.0|191.3|28.0
 METRIC|P20|980x420|controls|22.0|48.0|398.0|402.0|376.0|354.0
-00:49 +210: /workspace/FusionPlay/flutter/test/audit_capture_test.dart: round2 glass overlays
-00:57 +211: /workspace/FusionPlay/flutter/test/audit_capture_test.dart: portrait lyrics retain controls and scrolling space
-00:58 +212: /workspace/FusionPlay/flutter/test/audit_capture_test.dart: capture update routes through Navigator
-00:59 +213: /workspace/FusionPlay/flutter/test/audit_capture_test.dart: player adapts to large type and different pixel ratios
-01:00 +214: /workspace/FusionPlay/flutter/test/audit_capture_test.dart: (tearDownAll)
-01:00 +214: All tests passed!
+00:51 +210: /workspace/FusionPlay/flutter/test/audit_capture_test.dart: round2 glass overlays
+00:59 +211: /workspace/FusionPlay/flutter/test/audit_capture_test.dart: portrait lyrics retain controls and scrolling space
+01:00 +212: /workspace/FusionPlay/flutter/test/audit_capture_test.dart: capture update routes through Navigator
+01:01 +213: /workspace/FusionPlay/flutter/test/audit_capture_test.dart: player adapts to large type and different pixel ratios
+01:02 +214: /workspace/FusionPlay/flutter/test/audit_capture_test.dart: (tearDownAll)
+01:02 +214: All tests passed!

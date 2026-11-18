@@ -72,16 +72,24 @@ class PlayerBackdrop extends StatelessWidget {
     fit: StackFit.expand,
     children: [
       ArtworkBackground(source: source, hasPlayback: hasPlayback),
-      // Dark readability gradient over the artwork (YAQMC-style restraint).
       DecoratedBox(
         decoration: BoxDecoration(
-          gradient: LinearGradient(
-            begin: Alignment.topLeft,
-            end: Alignment.bottomRight,
-            colors: source != null && source!.isNotEmpty
-                ? const [Color(0x58101624), Color(0x70121826)]
-                : const [Color(0xCC101316), Color(0xF0101316)],
-          ),
+          gradient: source?.trim().isNotEmpty == true
+              ? const RadialGradient(
+                  center: Alignment(.12, -.05),
+                  radius: 1.05,
+                  colors: [
+                    Color(0x96121728),
+                    Color(0x31101725),
+                    Color(0x60101725),
+                  ],
+                  stops: [0, .79, 1],
+                )
+              : const LinearGradient(
+                  begin: Alignment.topLeft,
+                  end: Alignment.bottomRight,
+                  colors: [Color(0xCC101316), Color(0xF0101316)],
+                ),
         ),
       ),
     ],
@@ -169,7 +177,11 @@ class _ArtworkBackgroundLayer extends StatelessWidget {
         !(MediaQuery.maybeOf(context)?.disableAnimations ?? false);
     final artworkImage = provider == null
         ? null
-        : Image(image: provider!, fit: BoxFit.cover, gaplessPlayback: true);
+        : Image(
+            image: provider!,
+            fit: advancedEffectsEnabled ? BoxFit.fill : BoxFit.cover,
+            gaplessPlayback: true,
+          );
     return DecoratedBox(
       decoration: BoxDecoration(
         color: provider == null && !hasPlayback
@@ -192,13 +204,24 @@ class _ArtworkBackgroundLayer extends StatelessWidget {
         children: [
           if (artworkImage != null)
             advancedEffectsEnabled
-                ? ImageFiltered(
-                    imageFilter: ImageFilter.blur(
-                      sigmaX: 48,
-                      sigmaY: 48,
-                      tileMode: TileMode.clamp,
-                    ),
-                    child: artworkImage,
+                ? LayoutBuilder(
+                    builder: (context, bounds) {
+                      final shortSide = bounds.biggest.shortestSide;
+                      final blur = (shortSide * .061)
+                          .clamp(16.0, 65.0)
+                          .toDouble();
+                      // Spread the whole artwork palette across the viewport.
+                      // Reflect only the backdrop so its brightest features
+                      // need not sit directly behind their sharp equivalents.
+                      return ImageFiltered(
+                        imageFilter: ImageFilter.blur(
+                          sigmaX: blur * 1.45,
+                          sigmaY: blur,
+                          tileMode: TileMode.clamp,
+                        ),
+                        child: Transform.flip(flipX: true, child: artworkImage),
+                      );
+                    },
                   )
                 : artworkImage,
           if (provider != null)
@@ -216,8 +239,6 @@ class _ArtworkBackgroundLayer extends StatelessWidget {
                 ),
               ),
             ),
-          if (provider != null)
-            const ColoredBox(color: Color.fromRGBO(255, 255, 255, .05)),
         ],
       ),
     );
