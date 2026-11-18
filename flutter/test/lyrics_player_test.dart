@@ -908,9 +908,11 @@ void main() {
     bar.onChangeEnd!(.025);
     await report(12000, '第三句');
     expect(find.text('0:04'), findsOneWidget);
-    await report(4500, '第三句');
+    await tester.pump(const Duration(seconds: 2));
+    expect(find.text('0:06'), findsOneWidget);
+    await report(6500, '第三句');
     await tester.pump(const Duration(seconds: 1));
-    expect(find.text('0:05'), findsOneWidget);
+    expect(find.text('0:07'), findsOneWidget);
     await report(0, '新曲', id: 'b');
     expect(find.text('0:00'), findsOneWidget);
   });

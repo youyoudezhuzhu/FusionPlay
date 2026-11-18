@@ -1,7 +1,6 @@
 import 'dart:async';
 import 'dart:math' as math;
 
-import 'package:clock/clock.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
@@ -133,7 +132,8 @@ class _PlayerViewState extends State<PlayerView> {
   // changes), so interpolate between them with the local monotonic wall clock.
   Timer? _progressTicker;
   int _progressAnchorMs = 0;
-  final Stopwatch _progressElapsed = clock.stopwatch()..start();
+  final Stopwatch _progressElapsed =
+      WidgetsBinding.instance.samplingClock.stopwatch()..start();
   int _displayedPositionMs = 0;
   static const _progressToleranceMs = 1500;
   // NetEase (and some other AirPlay senders) put the current lyric line in the
@@ -523,14 +523,16 @@ class _PlayerViewState extends State<PlayerView> {
     final updated = next.positionMs != old.positionMs;
     final pending = pendingSeekTargetMs;
     if (pending != null) {
+      final expected = _isAirPlayPlayback ? _displayedPositionMs : pending;
       if (!updated ||
-          (next.positionMs - pending).abs() > _progressToleranceMs) {
+          ((next.positionMs - pending).abs() > _progressToleranceMs &&
+              (next.positionMs - expected).abs() > _progressToleranceMs)) {
+        if (next.isPlaying != old.isPlaying)
+          _anchorProgress(_displayedPositionMs);
         return;
       }
       pendingSeekTimer?.cancel();
       pendingSeekTargetMs = null;
-      _anchorProgress(next.positionMs);
-      return;
     }
     if (updated) {
       final previous = _displayedPositionMs;
@@ -551,11 +553,7 @@ class _PlayerViewState extends State<PlayerView> {
 
   void _tickProgress() {
     final playback = widget.state.playback;
-    if (!mounted ||
-        !playback.isPlaying ||
-        !_isAirPlayPlayback ||
-        seeking ||
-        pendingSeekTargetMs != null) {
+    if (!mounted || !playback.isPlaying || !_isAirPlayPlayback || seeking) {
       return;
     }
     final next = airPlayInterpolatedPositionMs(
@@ -569,7 +567,7 @@ class _PlayerViewState extends State<PlayerView> {
   }
 
   int get _visiblePositionMs {
-    if (seeking || pendingSeekTargetMs != null) {
+    if (seeking || (!_isAirPlayPlayback && pendingSeekTargetMs != null)) {
       return (seekPositionMs ?? widget.state.playback.positionMs).round();
     }
     return _isAirPlayPlayback
