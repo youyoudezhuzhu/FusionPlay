@@ -211,12 +211,16 @@ internal object AppStateTransitions {
             val artist = event.artist.nonBlankOrNull()
             val album = event.album.nonBlankOrNull()
             val genre = event.genre.nonBlankOrNull()
-            val trackChanged =
+            val trackChanged = if (event.trackId != null && playback.trackIdentity != null) {
+                event.trackId != playback.trackIdentity
+            } else {
                 title != null &&
                     playback.title != null &&
                     title != playback.title
+            }
             if (trackChanged) {
                 playback.copy(
+                    trackIdentity = event.trackId,
                     title = title,
                     artist = artist,
                     album = album,
@@ -227,6 +231,7 @@ internal object AppStateTransitions {
                 )
             } else {
                 playback.copy(
+                    trackIdentity = event.trackId ?: playback.trackIdentity,
                     title = title ?: playback.title,
                     artist = artist ?: playback.artist,
                     album = album ?: playback.album,
@@ -483,7 +488,10 @@ internal object AppStateTransitions {
                 title = event.title ?: previous.title.takeIf { sameMedia },
                 artist = event.artist ?: previous.artist.takeIf { sameMedia },
                 album = event.album ?: previous.album.takeIf { sameMedia },
-                coverArt = event.artworkUrl
+                coverArt = event.artworkUrl?.let { artwork ->
+                    if (artwork.startsWith("data:image/", ignoreCase = true)) artwork
+                    else OfflineLyricsResolver.resolveMetadataUri(artwork, event.url)?.toString()
+                }
                     ?: previous.coverArt.takeIf { sameMedia },
                 mediaUrl = event.url,
                 mediaKind = event.mediaKind,

@@ -610,6 +610,7 @@ impl DmrController {
         }
         if let Some(lease) = lease {
             self.events.emit(CoreEvent::NowPlaying {
+                track_id: None,
                 source: "dlna",
                 epoch: lease.epoch(),
                 title: None,
@@ -898,6 +899,7 @@ impl DmrController {
             lyrics_uri: metadata.lyrics_uri.as_deref(),
         });
         self.events.emit(CoreEvent::NowPlaying {
+            track_id: None,
             source: "dlna",
             epoch: lease.epoch(),
             title: metadata.title.as_deref(),

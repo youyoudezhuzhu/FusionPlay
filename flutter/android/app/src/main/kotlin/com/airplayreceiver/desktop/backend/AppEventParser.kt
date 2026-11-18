@@ -110,6 +110,7 @@ object AppEventParser {
             )
 
             "now_playing", "metadata" -> AppEvent.NowPlaying(
+                trackId = payload.string("track_id"),
                 title = payload.string("title", "track", "name"),
                 artist = payload.string("artist", "album_artist"),
                 album = payload.string("album"),

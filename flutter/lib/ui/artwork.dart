@@ -11,7 +11,8 @@ import '../theme/fusion_theme.dart';
 
 const _artworkProviderCacheLimit = 4;
 const _artworkDecodeSize = 1024;
-const _maximumDataArtworkCharacters = 12 * 1024 * 1024;
+// Matches the Android MiPlay reducer’s maximum encoded artwork length.
+const _maximumDataArtworkCharacters = 22 * 1024 * 1024;
 const artworkClearGracePeriod = Duration(milliseconds: 1200);
 final _artworkProviderCache = <String, ImageProvider<Object>>{};
 

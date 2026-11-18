@@ -141,6 +141,17 @@ class _PlayerViewState extends State<PlayerView> {
   // changing AirPlay title and treat the captured titles as lyrics.
   final List<_AirPlayTitleCapture> _airPlayTitleCaptures = [];
   bool _airPlayTitleLyrics = false;
+  static const _airPlayArtistSeparators = [
+    ' - ',
+    ' – ',
+    ' — ',
+    ' / ',
+    '｜',
+    '|',
+    '·',
+  ];
+  String? _lastAirPlayId;
+  int? _lastAirPlayEpoch;
   String? _lastAirPlayTitle;
   String? _lastAirPlayArtist;
   String? _lastAirPlayAlbum;
@@ -197,7 +208,11 @@ class _PlayerViewState extends State<PlayerView> {
       (playback.protocol ?? '').toLowerCase().contains('airplay');
 
   void _observeAirPlayTitle(PlaybackSnapshot playback) {
-    if (!_isAirPlayProtocol(playback)) {
+    final artistField = playback.artist ?? '';
+    final titleSender = _airPlayArtistSeparators.any(artistField.contains);
+    if (!_isAirPlayProtocol(playback) ||
+        playback.lyrics?.hasLyrics == true ||
+        !titleSender) {
       _airPlayTitleCaptures.clear();
       _airPlayTitleLyrics = false;
       _lastAirPlayTitle = null;
@@ -207,7 +222,12 @@ class _PlayerViewState extends State<PlayerView> {
     }
     final artist = playback.artist?.trim();
     final album = playback.album?.trim();
-    if (artist != _lastAirPlayArtist || album != _lastAirPlayAlbum) {
+    if (artist != _lastAirPlayArtist ||
+        album != _lastAirPlayAlbum ||
+        playback.trackIdentity != _lastAirPlayId ||
+        playback.sourceEpoch != _lastAirPlayEpoch) {
+      _lastAirPlayId = playback.trackIdentity;
+      _lastAirPlayEpoch = playback.sourceEpoch;
       // New track: restart the title/lyrics history.
       _airPlayTitleCaptures.clear();
       _airPlayTitleLyrics = false;
@@ -343,7 +363,7 @@ class _PlayerViewState extends State<PlayerView> {
       final album = playback.album?.trim();
       return (album != null && album.isNotEmpty ? album : 'AirPlay', null);
     }
-    for (final separator in const [' - ', ' – ', ' — ', ' / ', '｜', '|', '·']) {
+    for (final separator in _airPlayArtistSeparators) {
       final index = artist.indexOf(separator);
       if (index > 0 && index < artist.length - separator.length) {
         final title = artist.substring(0, index).trim();

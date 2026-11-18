@@ -1176,6 +1176,7 @@ impl ReceiverAudioHandler {
             self.events.emit(CoreEvent::NowPlaying {
                 source: "airplay",
                 epoch: lease.epoch(),
+                track_id: metadata.persistent_id.as_deref(),
                 title: metadata.title.as_deref(),
                 artist: metadata.artist.as_deref(),
                 album: metadata.album.as_deref(),
@@ -1600,6 +1601,7 @@ fn merge_track_metadata(
     }
 
     let sanitized = TrackMetadata {
+        persistent_id: incoming.persistent_id.clone(),
         title: text(&incoming.title),
         artist: text(&incoming.artist),
         album: text(&incoming.album),
@@ -1611,6 +1613,9 @@ fn merge_track_metadata(
         unknown_tags: Vec::new(),
     };
     let identity_changed = current.is_some_and(|current| {
+        if let Some((new, old)) = sanitized.persistent_id.as_ref().zip(current.persistent_id.as_ref()) {
+            return new != old;
+        }
         let title_changed = sanitized
             .title
             .as_ref()
@@ -1633,6 +1638,9 @@ fn merge_track_metadata(
     }
 
     let mut merged = current.cloned().unwrap_or_default();
+    if sanitized.persistent_id.is_some() {
+        merged.persistent_id = sanitized.persistent_id;
+    }
     if sanitized.title.is_some() {
         merged.title = sanitized.title;
     }
@@ -1795,6 +1803,7 @@ impl AudioHandler for ReceiverAudioHandler {
             self.events.emit(CoreEvent::NowPlaying {
                 source: "airplay",
                 epoch: lease.epoch(),
+                track_id: metadata.persistent_id.as_deref(),
                 title: metadata.title.as_deref(),
                 artist: metadata.artist.as_deref(),
                 album: metadata.album.as_deref(),
@@ -2853,6 +2862,7 @@ mod tests {
             duration_ms: Some(180_000),
             track_number: Some(3),
             disc_number: Some(1),
+            persistent_id: None,
             unknown_tags: Vec::new(),
         };
         let incoming = TrackMetadata {

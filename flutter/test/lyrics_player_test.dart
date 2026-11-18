@@ -720,6 +720,46 @@ void main() {
     await tester.pump();
     expect(tester.takeException(), isNull);
   });
+  testWidgets('AirPlay 同专辑连播不把三首曲名当歌词', (tester) async {
+    for (final title in ['第一首', '第二首', '第三首']) {
+      final state = _stateFromMap({
+        'playback': {
+          'protocol': 'AirPlay',
+          'title': title,
+          'artist': '同一歌手',
+          'album': '同一专辑',
+          'sourceEpoch': 7,
+        },
+      });
+      await _pumpPlayer(tester, state);
+      expect(find.text(title), findsOneWidget);
+      expect(find.byKey(const ValueKey('player-lyrics-view')), findsNothing);
+    }
+  });
+
+  testWidgets('AirPlay 曲目标识切换时丢弃上一首的标题歌词', (tester) async {
+    for (final (id, title) in [
+      ('old', 'a'),
+      ('old', 'b'),
+      ('old', 'c'),
+      ('new', '新歌'),
+    ]) {
+      await _pumpPlayer(
+        tester,
+        _stateFromMap({
+          'playback': {
+            'protocol': 'AirPlay',
+            'title': title,
+            'artist': '歌曲 - 作者',
+            'album': '同一专辑',
+            'trackIdentity': id,
+          },
+        }),
+      );
+    }
+    expect(find.text('新歌'), findsOneWidget);
+    expect(find.byKey(const ValueKey('player-lyrics-view')), findsNothing);
+  });
   testWidgets('AirPlay 标题持续变化时按歌词双栏显示并移除空态', (tester) async {
     AppState airPlay(String title) => _stateFromMap({
       'playback': {

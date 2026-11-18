@@ -100,6 +100,7 @@ sealed interface AppEvent {
         override val rawJson: String,
         val source: String? = null,
         val epoch: Long? = null,
+        val trackId: String? = null,
     ) : AppEvent {
         override val type = "now_playing"
     }

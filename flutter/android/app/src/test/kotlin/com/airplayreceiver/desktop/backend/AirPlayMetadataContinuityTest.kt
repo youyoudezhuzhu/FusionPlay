@@ -6,6 +6,32 @@ import org.junit.Test
 
 class AirPlayMetadataContinuityTest {
     @Test
+    fun stableDmapIdKeepsProgressThroughTitleLines() {
+        val current = AppState(
+            activeMediaSource = MediaSource.AIRPLAY,
+            playback = PlaybackSnapshot(protocol = "AirPlay", title = "Line A",
+                trackIdentity = "abcd", positionMs = 42000, sourceEpoch = 7),
+        )
+        val event = AppEventParser.parse(
+            """{"type":"now_playing","source":"airplay","epoch":7,"track_id":"abcd","title":"Line B"}"""
+        ) as AppEvent.NowPlaying
+        val next = AppStateTransitions.nowPlaying(current, event)
+        assertEquals("Line B", next.playback.title)
+        assertEquals(42000L, next.playback.positionMs)
+        assertEquals(0L, AppStateTransitions.nowPlaying(next, event.copy(trackId = "def0")).playback.positionMs)
+    }
+
+    @Test
+    fun dlnaRelativeCoverResolvesWithEmbeddedLyrics() {
+        val event = AppEventParser.parse(
+            """{"type":"dlna_media","source":"dlna","url":"https://example.test/music/a.mp3","title":"Track","artwork_url":"../art/a.jpg","lyrics_text":"[00:01.00]Line A"}"""
+        ) as AppEvent.DlnaMedia
+        val next = AppStateTransitions.dlnaMedia(AppState(activeMediaSource = MediaSource.DLNA), event)
+        assertEquals("https://example.test/art/a.jpg", next.playback.coverArt)
+        assertEquals("Line A", next.playback.lyrics?.lines?.first()?.text)
+    }
+
+    @Test
     fun trackTakeoverKeepsVisualMetadataAndControlsUntilFreshEventsArrive() {
         val playback = PlaybackSnapshot(
             title = "Old title",
