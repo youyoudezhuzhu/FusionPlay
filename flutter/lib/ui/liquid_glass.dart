@@ -388,6 +388,7 @@ class _RefractiveSurfaceState extends State<_RefractiveSurface> {
 
   @override
   void dispose() {
+    _shader?.dispose();
     _globalRect.dispose();
     super.dispose();
   }

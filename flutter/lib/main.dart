@@ -761,7 +761,7 @@ class _FusionPlayHomeState extends State<FusionPlayHome> {
           _handleBackShortcut();
         },
         child: Scaffold(
-          backgroundColor: const Color(0xFF101316),
+          backgroundColor: Colors.transparent,
           body: playerSurface,
         ),
       ),

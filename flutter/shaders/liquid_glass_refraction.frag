@@ -36,7 +36,7 @@ void main() {
   vec2 fragPx = FlutterFragCoord().xy;
   float dpr = max(uDpr, 1.0);
   vec2 sizePx = max(uSize, vec2(1.0));
-  vec2 local = fragPx / dpr;
+  vec2 local = fragPx; // Canvas-local logical coordinates.
   vec2 halfSize = sizePx * 0.5;
   vec2 p = local - halfSize;
 
