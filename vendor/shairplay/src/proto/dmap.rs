@@ -7,7 +7,7 @@
 #[derive(Debug, Clone, Default)]
 pub struct TrackMetadata {
     /// Receiver confirmed a sender using minm for live lyrics and asar for credits.
-    pub title_lyrics: bool,
+    pub lyric_credit: Option<(String, String)>,
     /// Stable DMAP item identifier (mper), encoded as hex for JSON clients.
     pub persistent_id: Option<String>,
     /// Track title (`minm`).

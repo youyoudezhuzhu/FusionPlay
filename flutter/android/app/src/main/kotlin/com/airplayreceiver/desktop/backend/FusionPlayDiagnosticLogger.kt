@@ -244,6 +244,7 @@ class FusionPlayDiagnosticLogger(
                 details["reason"] = event.reason
             }
             is AppEvent.NowPlaying -> {
+                details["title_lyric_present"] = !event.lyricLine.isNullOrBlank()
                 details["title_present"] = !event.title.isNullOrBlank()
                 details["title_length"] = event.title?.length
                 details["artist_present"] = !event.artist.isNullOrBlank()

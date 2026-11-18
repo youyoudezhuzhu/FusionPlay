@@ -859,6 +859,41 @@ void main() {
     expect(find.text('新歌'), findsOneWidget);
     expect(find.byKey(const ValueKey('player-lyrics-view')), findsNothing);
   });
+  testWidgets('网易云 AirPlay 的规范化字段在同一连接中逐句显示，换歌清空历史', (tester) async {
+    Future<void> line(String song, String text) async {
+      await _pumpPlayer(
+        tester,
+        _stateFromMap({
+          'playback': {
+            'protocol': 'airplay',
+            'sourceEpoch': 7,
+            'title': song,
+            'artist': '周杰伦',
+            'lyrics': {
+              'origin': 'airplay_title',
+              'synced': false,
+              'lines': [
+                {'text': text},
+              ],
+            },
+          },
+        }),
+        reduceMotion: true,
+      );
+    }
+
+    await line('晴天', '故事的小黄花');
+    await line('晴天', '从出生那年就飘着');
+    expect(find.text('晴天'), findsOneWidget);
+    expect(find.text('周杰伦'), findsOneWidget);
+    expect(find.text('故事的小黄花'), findsOneWidget);
+    expect(find.text('从出生那年就飘着'), findsOneWidget);
+    await line('下一首', '新的一句');
+    expect(find.text('故事的小黄花'), findsNothing);
+    expect(find.text('从出生那年就飘着'), findsNothing);
+    expect(find.text('新的一句'), findsOneWidget);
+  });
+
   testWidgets('AirPlay 标题持续变化时按歌词双栏显示并移除空态', (tester) async {
     AppState airPlay(String title) => _stateFromMap({
       'playback': {

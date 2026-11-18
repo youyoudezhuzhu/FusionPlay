@@ -211,8 +211,10 @@ internal object AppStateTransitions {
             val artist = event.artist.nonBlankOrNull()
             val album = event.album.nonBlankOrNull()
             val genre = event.genre.nonBlankOrNull()
-            val trackChanged = event.trackChanged ?: if (event.trackId != null && playback.trackIdentity != null) {
+            val trackChanged = if (event.trackId != null && playback.trackIdentity != null) {
                 event.trackId != playback.trackIdentity
+            } else if (event.trackChanged != null) {
+                event.trackChanged
             } else {
                 title != null &&
                     playback.title != null &&
