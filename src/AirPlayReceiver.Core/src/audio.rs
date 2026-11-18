@@ -1637,10 +1637,10 @@ fn merge_track_metadata(
     };
     let split = sanitized.artist.as_deref().and_then(song_credit);
     // A normal metadata packet can precede the lyric stream. Match both known
-    // strings exactly, including punctuation within them, in either order.
+    // strings, including punctuation within them, in either order.
     let compatible = current.filter(|old| {
-        consistent(&old.persistent_id, &sanitized.persistent_id)
-            && consistent(&old.album, &sanitized.album)
+        consistent(&old.album, &sanitized.album)
+            && consistent(&old.disc_number, &sanitized.disc_number)
             && consistent(&old.track_number, &sanitized.track_number)
             && consistent(&old.duration_ms, &sanitized.duration_ms)
     });
@@ -1648,15 +1648,34 @@ fn merge_track_metadata(
         let field = sanitized.artist.as_deref()?;
         let song = old.title.as_deref()?;
         let artist = old.artist.as_deref()?;
+        // Preserve the display credit exactly as sent in the opening packet,
+        // even if the compound field changes casing or trims spaces.
+        let compact = |value: &str| value.chars()
+            .filter(|ch| !ch.is_whitespace())
+            .flat_map(char::to_lowercase)
+            .collect::<String>();
+        let field = compact(field);
+        let song_key = compact(song);
+        let artist_key = compact(artist);
         let joins = |left: &str, right: &str| {
-            field.strip_prefix(left).and_then(|s| s.strip_suffix(right))
-                .is_some_and(|sep| !sep.is_empty() && sep.chars().count() <= 5
-                    && sep.chars().all(|c| c.is_whitespace() || c.is_ascii_punctuation()
-                        || "·•｜－／—–：、".contains(c)))
+            field.strip_prefix(left).and_then(|rest| rest.strip_suffix(right))
+                .is_some_and(|sep| sep.chars().all(|c| !c.is_alphanumeric() || c == '丨'))
         };
-        (joins(song, artist) || joins(artist, song)).then(|| (song.to_owned(), artist.to_owned()))
+        (joins(&song_key, &artist_key) || joins(&artist_key, &song_key))
+            .then(|| (song.to_owned(), artist.to_owned()))
     });
-    let continuation = compatible.filter(|old| consistent(&old.artist, &sanitized.artist));
+    // Some senders assign a new item id to each displayed line. Only override
+    // that signal when this packet explicitly carries the recognized credit.
+    let explicit_credit = anchored.is_some() || compatible.is_some_and(|old| {
+        old.lyric_credit.is_some() && sanitized.artist.is_some() && sanitized.artist == old.artist
+    });
+    if explicit_credit {
+        sanitized.persistent_id = current.and_then(|old| old.persistent_id.clone());
+    }
+    let continuation = compatible.filter(|old| {
+        consistent(&old.persistent_id, &sanitized.persistent_id)
+            && consistent(&old.artist, &sanitized.artist)
+    });
     let inherited = continuation.and_then(|old| old.lyric_credit.clone());
     let inferred = continuation.and_then(|old| {
         let changed = old.title.as_ref().zip(sanitized.title.as_ref()).is_some_and(|(a,b)| a != b);
@@ -2925,7 +2944,7 @@ mod tests {
             artist: Some("A/B".into()),
             ..TrackMetadata::default()
         };
-        for credit in ["Song - Remix-A/B", "A/B·Song - Remix", "Song - Remix A/B"] {
+        for credit in ["Song - Remix-A/B", "A/B·Song - Remix", "Song - Remix A/B", "a/b丨Song-Remix"] {
             let packet = TrackMetadata {
                 title: Some("First lyric".into()), artist: Some(credit.into()), ..TrackMetadata::default()
             };
@@ -2939,6 +2958,36 @@ mod tests {
             assert_eq!(event["artist"], "A/B");
             assert_eq!(event["lyric_line"], "Second lyric");
         }
+    }
+
+    #[test]
+    fn per_line_ids_with_explicit_credit_preserve_the_opening_track() {
+        let mut meta = TrackMetadata {
+            title: Some("夜曲".into()), artist: Some("演唱者".into()),
+            album: Some("Album".into()), duration_ms: Some(311_000),
+            persistent_id: Some("song".into()), ..Default::default()
+        };
+        for (line, id) in [("第一句", "one"), ("第二句", "two")] {
+            let packet = TrackMetadata {
+                title: Some(line.into()), artist: Some("演唱者丨夜曲".into()),
+                persistent_id: Some(id.into()), ..Default::default()
+            };
+            let (next, changed) = merge_track_metadata(Some(&meta), &packet);
+            assert!(!changed);
+            let event = serde_json::to_value(super::airplay_now_playing(&next, 1, Some(changed))).unwrap();
+            assert_eq!(event["track_id"], "song");
+            assert_eq!(event["title"], "夜曲");
+            assert_eq!(event["lyric_line"], line);
+            assert_eq!(event["duration_ms"], 311_000);
+            meta = next;
+        }
+        let different = TrackMetadata {
+            title: Some("新歌".into()), artist: Some("演唱者".into()),
+            persistent_id: Some("next-song".into()), ..Default::default()
+        };
+        let (next, changed) = merge_track_metadata(Some(&meta), &different);
+        assert!(changed);
+        assert!(next.lyric_credit.is_none());
     }
 
     #[test]
