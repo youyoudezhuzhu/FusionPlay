@@ -26,22 +26,22 @@ class FloatingAlbumArt extends StatelessWidget {
         clipBehavior: Clip.none,
         children: [
           // A soft, blurred ellipse-like spread. No solid black offset card.
+          // Wide, low-opacity diffusion: no hard edge and no solid plinth.
           Container(
-            width: size * .90,
-            height: size * .90,
+            width: size * .92,
+            height: size * .92,
             decoration: BoxDecoration(
-              borderRadius: BorderRadius.circular(size * .09),
+              borderRadius: BorderRadius.circular(size * .10),
               boxShadow: [
                 BoxShadow(
-                  color: Colors.black.withValues(alpha: .18),
-                  blurRadius: size * .09,
-                  spreadRadius: size * .015,
-                  offset: Offset(0, size * .025),
+                  color: Colors.black.withValues(alpha: .16),
+                  blurRadius: size * .16,
+                  spreadRadius: 0,
+                  offset: Offset(0, size * .05),
                 ),
                 BoxShadow(
-                  color: Colors.white.withValues(alpha: .055),
-                  blurRadius: size * .045,
-                  spreadRadius: size * .008,
+                  color: Colors.white.withValues(alpha: .05),
+                  blurRadius: size * .08,
                 ),
               ],
             ),
@@ -57,8 +57,8 @@ class FloatingAlbumArt extends StatelessWidget {
               decoration: BoxDecoration(
                 borderRadius: BorderRadius.circular(r),
                 border: Border.all(
-                  color: Colors.white.withValues(alpha: .12),
-                  width: .7,
+                  color: Colors.white.withValues(alpha: .10),
+                  width: .6,
                 ),
               ),
             ),

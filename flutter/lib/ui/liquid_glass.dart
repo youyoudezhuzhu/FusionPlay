@@ -74,9 +74,10 @@ class GlassSpec {
     rimAlpha: .52,
     edgeAlpha: .14,
     sheenAlpha: .42,
-    shadowAlpha: .22,
-    shadowBlur: 24,
-    shadowOffsetY: 8,
+    // Soft ambient diffusion only: no hard dark plinth under round controls.
+    shadowAlpha: .07,
+    shadowBlur: 22,
+    shadowOffsetY: 3,
   );
 
   static const panel = GlassSpec(

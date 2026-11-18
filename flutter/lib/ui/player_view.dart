@@ -9,6 +9,7 @@ import '../theme/fusion_theme.dart';
 import 'animated_press_scale.dart';
 import 'artwork.dart';
 import 'floating_album_art.dart';
+import 'liquid_glass.dart';
 import 'g2_shape.dart';
 import 'package:liquid_glass_widgets/liquid_glass_widgets.dart' as lg;
 
@@ -770,7 +771,7 @@ class _PlayerViewState extends State<PlayerView> {
       final cover = math
           .min(
             panelWidth - padding * 2,
-            math.max(56.0, panelHeight - (compact ? 236 : 300)),
+            math.max(56.0, panelHeight - (compact ? 238 : 320)),
           )
           .clamp(64.0, 500.0)
           .toDouble();
@@ -831,7 +832,7 @@ class _PlayerViewState extends State<PlayerView> {
             _liquidTimeline(compact: compact),
             SizedBox(height: compact ? 0 : 4),
             Center(child: _liquidTransport(compact: compact)),
-            SizedBox(height: dense ? 8 : (compact ? 16 : 20)),
+            SizedBox(height: dense ? 8 : (compact ? 10 : 20)),
             _liquid21Volume(compact: compact),
           ],
         ),
@@ -852,11 +853,13 @@ class _PlayerViewState extends State<PlayerView> {
       ),
       child: lg.GlassContainer(
         key: const ValueKey('player-volume-capsule'),
-        height: compact ? 30 : 40,
+        height: compact
+            ? (MediaQuery.sizeOf(context).height < 500 ? 28 : 30)
+            : 40,
         padding: EdgeInsets.symmetric(horizontal: compact ? 7 : 10),
         shape: const lg.LiquidRoundedSuperellipse(borderRadius: 999),
         useOwnLayer: true,
-        quality: lg.GlassQuality.minimal,
+        quality: lg.GlassQuality.standard,
         settings: const lg.LiquidGlassSettings(
           thickness: 14,
           blur: 4,
@@ -915,6 +918,8 @@ class _PlayerViewState extends State<PlayerView> {
           .min(cappedWidth * .82, 980.0)
           .clamp(math.min(cappedWidth, 360), cappedWidth)
           .toDouble();
+      // Portrait / very narrow: cover above info instead of a cramped row.
+      final portrait = cappedWidth < 560;
       final cover = math
           .min(groupWidth * .34, content.maxHeight * (compact ? .58 : .66))
           .clamp(88.0, 380.0)
@@ -925,28 +930,48 @@ class _PlayerViewState extends State<PlayerView> {
         child: Center(
           child: SizedBox(
             width: groupWidth,
-            child: Row(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                Expanded(
-                  flex: 5,
-                  child: Center(
-                    child: _breathingArtwork(
-                      size: cover,
-                      child: _artworkCard(cover, radius: compact ? 20 : 26),
-                    ),
+            child: portrait
+                ? Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      _breathingArtwork(
+                        size: cover,
+                        child: _artworkCard(cover, radius: 20),
+                      ),
+                      const SizedBox(height: 14),
+                      Expanded(
+                        child: _liquid21InfoPanel(
+                          compact: true,
+                          dense: content.maxHeight < 330,
+                        ),
+                      ),
+                    ],
+                  )
+                : Row(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      Expanded(
+                        flex: 5,
+                        child: Center(
+                          child: _breathingArtwork(
+                            size: cover,
+                            child: _artworkCard(
+                              cover,
+                              radius: compact ? 20 : 26,
+                            ),
+                          ),
+                        ),
+                      ),
+                      SizedBox(width: compact ? 16 : 28),
+                      Expanded(
+                        flex: 6,
+                        child: _liquid21InfoPanel(
+                          compact: content.maxHeight < 360,
+                          dense: content.maxHeight < 330,
+                        ),
+                      ),
+                    ],
                   ),
-                ),
-                SizedBox(width: compact ? 16 : 28),
-                Expanded(
-                  flex: 6,
-                  child: _liquid21InfoPanel(
-                    compact: true,
-                    dense: content.maxHeight < 330,
-                  ),
-                ),
-              ],
-            ),
           ),
         ),
       );
@@ -960,7 +985,7 @@ class _PlayerViewState extends State<PlayerView> {
     final hiddenByUser = _lyricsSupported && _hasDisplayableLyrics;
     final hint = hiddenByUser ? null : _centeredHint(playback);
     return Padding(
-      padding: EdgeInsets.all(compact ? (dense ? 4 : 6) : 22),
+      padding: EdgeInsets.all(compact ? (dense ? 4 : 6) : 18),
       child: Column(
         mainAxisAlignment: MainAxisAlignment.center,
         crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -1258,21 +1283,34 @@ class _PlayerViewState extends State<PlayerView> {
             },
           ),
         },
-        child: lg.GlassIconButton(
-          icon: FusionVectorIcon(
-            icon,
-            size: compact ? 18 : 22,
-            color: Colors.white.withValues(alpha: .88),
-          ),
-          onPressed: onTap,
-          size: size,
-          useOwnLayer: true,
-          quality: lg.GlassQuality.minimal,
-          settings: const lg.LiquidGlassSettings(
-            thickness: 16,
-            blur: 4,
-            glassColor: Color(0x18FFFFFF),
-            lightIntensity: .5,
+        child: SizedBox.square(
+          dimension: size,
+          child: LiquidGlass(
+            level: GlassLevel.control,
+            interactive: true,
+            borderRadius: 999,
+            tint: const Color(0x1CFFFFFF),
+            refraction: 1.0,
+            specular: .45,
+            thickness: 14,
+            absorption: .3,
+            forceFallback: widget.forceGlassFallback,
+            child: Material(
+              color: Colors.transparent,
+              shape: const CircleBorder(),
+              clipBehavior: Clip.antiAlias,
+              child: InkResponse(
+                onTap: onTap,
+                radius: size / 2,
+                child: Center(
+                  child: FusionVectorIcon(
+                    icon,
+                    size: compact ? 18 : 22,
+                    color: Colors.white.withValues(alpha: .9),
+                  ),
+                ),
+              ),
+            ),
           ),
         ),
       ),
@@ -1363,11 +1401,12 @@ class _PlayerViewState extends State<PlayerView> {
           onPressed: onTap,
           size: 36,
           useOwnLayer: true,
-          quality: lg.GlassQuality.minimal,
+          quality: lg.GlassQuality.standard,
           settings: const lg.LiquidGlassSettings(
-            thickness: 12,
-            blur: 3,
-            glassColor: Color(0x14FFFFFF),
+            thickness: 9,
+            blur: 2,
+            glassColor: Color(0x1FFFFFFF),
+            chromaticAberration: 0,
           ),
         ),
       ),
@@ -1470,7 +1509,8 @@ class _PlayerViewState extends State<PlayerView> {
 
   Widget _playPauseButton(bool reduceMotion, {required bool compact}) {
     final radius = compact ? 23.0 : 29.0;
-    final glyph = compact ? 22.0 : 28.0;
+    final short = MediaQuery.sizeOf(context).height < 400;
+    final glyph = short ? 20.0 : (compact ? 24.0 : 30.0);
     final hasPlayback = _hasPlayback;
     return AnimatedPressScale(
       key: const ValueKey('playback-play-pause-button'),
@@ -1518,46 +1558,69 @@ class _PlayerViewState extends State<PlayerView> {
             },
           ),
         },
-        child: lg.GlassIconButton(
-          icon: AnimatedSwitcher(
-            duration: reduceMotion
-                ? Duration.zero
-                : const Duration(milliseconds: 170),
-            switchInCurve: Curves.easeOutCubic,
-            transitionBuilder: (child, animation) => FadeTransition(
-              opacity: animation,
-              child: ScaleTransition(
-                scale: Tween<double>(begin: .82, end: 1).animate(
-                  CurvedAnimation(
-                    parent: animation,
-                    curve: Curves.easeOutCubic,
+        child: AnimatedOpacity(
+          opacity: hasPlayback ? 1 : .45,
+          duration: reduceMotion
+              ? Duration.zero
+              : const Duration(milliseconds: 160),
+          child: SizedBox.square(
+            dimension: short
+                ? 48
+                : (compact
+                      ? 60
+                      : (MediaQuery.sizeOf(context).width >= 1500 ? 82 : 70)),
+            child: DecoratedBox(
+              decoration: BoxDecoration(
+                color: const Color(0xF2FFFFFF),
+                shape: BoxShape.circle,
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.black.withValues(alpha: .16),
+                    blurRadius: 26,
+                    offset: const Offset(0, 8),
+                  ),
+                ],
+              ),
+              child: Material(
+                color: Colors.transparent,
+                shape: const CircleBorder(),
+                clipBehavior: Clip.antiAlias,
+                child: InkResponse(
+                  onTap: hasPlayback
+                      ? () => widget.onPlayback(PlaybackCommand.playPause)
+                      : null,
+                  radius: 60,
+                  child: Center(
+                    child: AnimatedSwitcher(
+                      duration: reduceMotion
+                          ? Duration.zero
+                          : const Duration(milliseconds: 170),
+                      switchInCurve: Curves.easeOutCubic,
+                      transitionBuilder: (child, animation) => FadeTransition(
+                        opacity: animation,
+                        child: ScaleTransition(
+                          scale: Tween<double>(begin: .82, end: 1).animate(
+                            CurvedAnimation(
+                              parent: animation,
+                              curve: Curves.easeOutCubic,
+                            ),
+                          ),
+                          child: child,
+                        ),
+                      ),
+                      child: FusionVectorIcon(
+                        widget.state.playback.isPlaying
+                            ? FusionIcons.pause
+                            : FusionIcons.play,
+                        key: ValueKey<bool>(widget.state.playback.isPlaying),
+                        size: glyph,
+                        color: const Color(0xE61A1C22),
+                      ),
+                    ),
                   ),
                 ),
-                child: child,
               ),
             ),
-            child: FusionVectorIcon(
-              widget.state.playback.isPlaying
-                  ? FusionIcons.pause
-                  : FusionIcons.play,
-              key: ValueKey<bool>(widget.state.playback.isPlaying),
-              size: glyph,
-              color: Colors.white,
-            ),
-          ),
-          onPressed: hasPlayback
-              ? () => widget.onPlayback(PlaybackCommand.playPause)
-              : null,
-          size: compact
-              ? 52
-              : (MediaQuery.sizeOf(context).width >= 1500 ? 76 : 62),
-          useOwnLayer: true,
-          quality: lg.GlassQuality.minimal,
-          settings: const lg.LiquidGlassSettings(
-            thickness: 16,
-            blur: 4,
-            glassColor: Color(0x18FFFFFF),
-            lightIntensity: .5,
           ),
         ),
       ),

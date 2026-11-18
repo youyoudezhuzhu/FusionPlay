@@ -113,6 +113,7 @@ Future<void> _capture(
   String? streamLine,
   List<String>? streamLines,
 }) async {
+  debugPrint('CAPTURE $name ${size.width}x${size.height}');
   tester.view.physicalSize = size;
   tester.view.devicePixelRatio = 1;
   addTearDown(tester.view.resetPhysicalSize);
