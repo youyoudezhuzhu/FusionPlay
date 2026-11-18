@@ -867,11 +867,12 @@ class _PlayerViewState extends State<PlayerView> {
         padding: EdgeInsets.symmetric(horizontal: compact ? 7 : 10),
         shape: const lg.LiquidRoundedSuperellipse(borderRadius: 999),
         useOwnLayer: true,
-        quality: lg.GlassQuality.standard,
+        quality: lg.GlassQuality.premium,
         settings: const lg.LiquidGlassSettings(
           thickness: 14,
           blur: 4,
-          glassColor: Color(0x18FFFFFF),
+          glassColor: Color(0x0DFFFFFF),
+          chromaticAberration: 0.35,
         ),
         child: Row(
           children: [
@@ -1274,12 +1275,12 @@ class _PlayerViewState extends State<PlayerView> {
             padding: EdgeInsets.zero,
             shape: const lg.LiquidRoundedSuperellipse(borderRadius: 999),
             useOwnLayer: true,
-            quality: lg.GlassQuality.standard,
+            quality: lg.GlassQuality.premium,
             settings: const lg.LiquidGlassSettings(
               thickness: 9,
               blur: 2,
-              glassColor: Color(0x12FFFFFF),
-              chromaticAberration: 0,
+              glassColor: Color(0x0CFFFFFF),
+              chromaticAberration: 0.35,
             ),
             child: Material(
               color: Colors.transparent,
@@ -1387,12 +1388,12 @@ class _PlayerViewState extends State<PlayerView> {
           onPressed: onTap,
           size: 36,
           useOwnLayer: true,
-          quality: lg.GlassQuality.standard,
+          quality: lg.GlassQuality.premium,
           settings: const lg.LiquidGlassSettings(
             thickness: 9,
             blur: 2,
-            glassColor: Color(0x1FFFFFFF),
-            chromaticAberration: 0,
+            glassColor: Color(0x0DFFFFFF),
+            chromaticAberration: 0.35,
           ),
         ),
       ),
