@@ -72,13 +72,13 @@ void main() {
   uv = clamp(uv, vec2(0.001), vec2(0.999));
 
   // Chromatic dispersion: red/blue sample slightly farther from the normal.
-  float ca = (0.5 + 1.4 * bevel) * uRefraction;
-  vec2 caOffset = (normal * ca * dpr) / max(imagePx, vec2(1.0));
-  vec3 color = vec3(
-    texture(uBackdrop, clamp(uv + caOffset, vec2(0.001), vec2(0.999))).r,
-    texture(uBackdrop, uv).g,
-    texture(uBackdrop, clamp(uv - caOffset, vec2(0.001), vec2(0.999))).b
-  );
+  vec3 color = texture(uBackdrop, uv).rgb;
+  if (bevel > 0.0 && uRefraction > 0.0) {
+    vec2 caOffset = normal * (bevel * 1.2 * uRefraction * dpr) /
+        max(imagePx, vec2(1.0));
+    color.r = texture(uBackdrop, clamp(uv + caOffset, vec2(0.001), vec2(0.999))).r;
+    color.b = texture(uBackdrop, clamp(uv - caOffset, vec2(0.001), vec2(0.999))).b;
+  }
 
   // Beer-Lambert rim absorption and a subtle body tint. Keep the backdrop
   // readable: the glass is a lens, not a painted card.
@@ -90,7 +90,9 @@ void main() {
   float facing = clamp(dot(normal, light), -1.0, 1.0);
   float specular = pow(max(facing, 0.0), 2.2) * pow(bevel, 2.6);
   float fresnel = pow(bevel, 4.0) * 0.32;
-  color += vec3(specular * 0.75 + fresnel) * uSpecular;
+  // Lift the transmitted hue only inside the bevel; keep the face clear.
+  float glint = clamp((specular * 0.38 + fresnel * 0.65) * uSpecular, 0.0, 1.0);
+  color = mix(color, min(vec3(1.0), color * 1.15 + vec3(0.32)), glint);
 
   fragColor = vec4(clamp(color, 0.0, 1.0), 1.0);
 }

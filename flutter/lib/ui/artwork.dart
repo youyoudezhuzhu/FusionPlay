@@ -57,6 +57,37 @@ ImageProvider<Object>? artworkProvider(String? source) {
   }
 }
 
+class PlayerBackdrop extends StatelessWidget {
+  const PlayerBackdrop({
+    super.key,
+    required this.source,
+    required this.hasPlayback,
+  });
+
+  final String? source;
+  final bool hasPlayback;
+
+  @override
+  Widget build(BuildContext context) => Stack(
+    fit: StackFit.expand,
+    children: [
+      ArtworkBackground(source: source, hasPlayback: hasPlayback),
+      // Dark readability gradient over the artwork (YAQMC-style restraint).
+      DecoratedBox(
+        decoration: BoxDecoration(
+          gradient: LinearGradient(
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+            colors: source != null && source!.isNotEmpty
+                ? const [Color(0x58101624), Color(0x70121826)]
+                : const [Color(0xCC101316), Color(0xF0101316)],
+          ),
+        ),
+      ),
+    ],
+  );
+}
+
 class ArtworkBackground extends StatelessWidget {
   const ArtworkBackground({
     super.key,
@@ -163,8 +194,8 @@ class _ArtworkBackgroundLayer extends StatelessWidget {
             advancedEffectsEnabled
                 ? ImageFiltered(
                     imageFilter: ImageFilter.blur(
-                      sigmaX: 76,
-                      sigmaY: 76,
+                      sigmaX: 48,
+                      sigmaY: 48,
                       tileMode: TileMode.clamp,
                     ),
                     child: artworkImage,
@@ -186,7 +217,7 @@ class _ArtworkBackgroundLayer extends StatelessWidget {
               ),
             ),
           if (provider != null)
-            const ColoredBox(color: Color.fromRGBO(255, 255, 255, .15)),
+            const ColoredBox(color: Color.fromRGBO(255, 255, 255, .05)),
         ],
       ),
     );

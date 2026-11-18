@@ -301,8 +301,8 @@ class _LiquidGlassState extends State<LiquidGlass> {
       behavior: HitTestBehavior.translucent,
       onPointerDown: (event) => _pointer(event.localPosition, pressed: true),
       onPointerMove: (event) => _pointer(event.localPosition),
-      onPointerUp: (event) => _pointer(event.localPosition, pressed: false),
-      onPointerCancel: (_) => _pointer(const Offset(-1, -1), pressed: false),
+      onPointerUp: (_) => _sheen.value = const _Sheen(),
+      onPointerCancel: (_) => _sheen.value = const _Sheen(),
       child: MouseRegion(
         onHover: (event) => _pointer(event.localPosition),
         onExit: (_) => _sheen.value = _sheen.value.copyWith(clear: true),
@@ -539,103 +539,40 @@ class _GlassPaint extends CustomPainter {
       canvas.drawRRect(rrect, Paint()..shader = gradient.createShader(rect));
     }
 
-    // 1b. Optical body shading: a soft top-left lift and bottom-right
-    // absorption give the pane a thickness gradient before the rim is drawn.
-    canvas.drawRRect(
-      rrect,
-      Paint()
-        ..shader = LinearGradient(
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-          colors: [
-            Colors.white.withValues(alpha: .085 * strength),
-            Colors.white.withValues(alpha: .012 * strength),
-            Colors.black.withValues(alpha: .10 * absorption),
-          ],
-          stops: const [0.0, .48, 1.0],
-        ).createShader(rect),
-    );
-
-    // 1c. Edge lens band. This is the high-quality fallback for real
-    // screen-space displacement: a thin, bright inner band whose width and
-    // opacity follow the glass thickness, like the compressed edge of a lens.
-    final lensBand = Paint()
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = (2.0 + 0.10 * (spec.blur - 14).clamp(0.0, 18.0)).clamp(
-        1.6,
-        4.0,
-      )
-      ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 1.4)
-      ..shader = LinearGradient(
-        begin: Alignment.topLeft,
-        end: Alignment.bottomRight,
-        colors: [
-          Colors.white.withValues(alpha: .19 * strength),
-          Colors.white.withValues(alpha: .035 * strength),
-          Colors.white.withValues(alpha: .12 * strength),
-        ],
-        stops: const [0.0, .58, 1.0],
-      ).createShader(rect);
-    canvas.drawRRect(rrect.deflate(2.2), lensBand);
-
-    // 1d. A faint refracted caustic just inside the bottom edge.
-    final caustic = Paint()
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = 1.0
-      ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 2.4)
-      ..shader = LinearGradient(
-        begin: Alignment.topCenter,
-        end: Alignment.bottomCenter,
-        colors: [
-          Colors.transparent,
-          Colors.white.withValues(alpha: .08 * strength),
-        ],
-      ).createShader(rect);
-    canvas.drawRRect(rrect.deflate(4.0), caustic);
-
     // 2. Dynamic specular highlight: follows the pointer; brightens on press.
     final state = sheen.value;
     final pointer = state.pointer;
-    final highlightCenter = pointer != null && pointer.dx >= 0
-        ? pointer
-        : Offset(size.width * .22, size.height * .06);
-    final intensity =
-        (spec.sheenAlpha * strength * (state.pressed ? 1.45 : 1.0)).clamp(
-          0.0,
-          .8,
-        );
-    if (intensity > 0.001) {
-      final radius = size.longestSide * .95;
+    final intensity = (spec.sheenAlpha * strength * (state.pressed ? .8 : .5))
+        .clamp(0.0, .15);
+    if (pointer != null && intensity > .001) {
+      final radius = size.shortestSide * 1.25;
       final paint = Paint()
-        ..shader =
-            RadialGradient(
-              colors: [
-                Colors.white.withValues(alpha: intensity),
-                Colors.white.withValues(alpha: intensity * .22),
-                Colors.white.withValues(alpha: 0),
-              ],
-              stops: const [0.0, .45, 1.0],
-            ).createShader(
-              Rect.fromCircle(center: highlightCenter, radius: radius),
-            );
+        ..shader = RadialGradient(
+          colors: [
+            Colors.white.withValues(alpha: intensity),
+            Colors.white.withValues(alpha: intensity * .22),
+            Colors.white.withValues(alpha: 0),
+          ],
+          stops: const [0.0, .45, 1.0],
+        ).createShader(Rect.fromCircle(center: pointer, radius: radius));
       canvas.drawRRect(rrect, paint);
     }
 
     // 3. Rim: bright inner edge top/left, fading to a faint bottom/right.
     final rimPaint = Paint()
       ..style = PaintingStyle.stroke
-      ..strokeWidth = 1.1
+      ..strokeWidth = .8
       ..shader = LinearGradient(
         begin: Alignment.topLeft,
         end: Alignment.bottomRight,
         colors: [
-          Colors.white.withValues(alpha: .58 * strength),
+          Colors.white.withValues(alpha: .24 * strength),
           Colors.white.withValues(alpha: .10 * strength),
-          Colors.white.withValues(alpha: .30 * strength),
+          Colors.white.withValues(alpha: .14 * strength),
         ],
         stops: const [0.0, .55, 1.0],
       ).createShader(rect);
-    canvas.drawRRect(rrect.deflate(0.55), rimPaint);
+    canvas.drawRRect(rrect.deflate(.4), rimPaint);
 
     // 4. Subtle bottom/right inner dark edge (depth without a plastic shadow).
     final edgeAlpha = (spec.edgeAlpha * absorption).clamp(0.0, .5);

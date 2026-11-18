@@ -1,11 +1,6 @@
-import 'dart:math' as math;
-
 import 'package:flutter/material.dart';
 
-/// Artwork that appears gently lifted from the ambient background.
-///
-/// The image remains sharp. The shadow and ambient bounce light are painted
-/// outside its bounds rather than as a dark, offset backing card.
+/// A sharp artwork face with a fine bevel and a soft, downward cast shadow.
 class FloatingAlbumArt extends StatelessWidget {
   const FloatingAlbumArt({
     super.key,
@@ -20,91 +15,65 @@ class FloatingAlbumArt extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final r = radius ?? size * .075;
+    final corners = BorderRadius.circular(radius ?? size * .075);
+    // Cap elevation on large displays; a TV cover should still feel close
+    // to the background. Negative spread keeps the shadow off the top edge.
+    final lift = (size * .048).clamp(5.0, 16.0).toDouble();
     return SizedBox.square(
       dimension: size,
-      child: Stack(
-        alignment: Alignment.center,
-        clipBehavior: Clip.none,
-        children: [
-          Positioned.fill(
-            child: IgnorePointer(
-              child: CustomPaint(
-                painter: _FloatingCoverLight(radius: r),
-              ),
+      child: DecoratedBox(
+        decoration: BoxDecoration(
+          borderRadius: corners,
+          boxShadow: [
+            BoxShadow(
+              color: const Color(0x59070812),
+              offset: Offset(0, lift),
+              blurRadius: lift * 1.65,
+              spreadRadius: -lift * .35,
             ),
-          ),
-          ClipRRect(
-            borderRadius: BorderRadius.circular(r),
-            child: SizedBox.square(dimension: size, child: child),
-          ),
-          IgnorePointer(
-            child: DecoratedBox(
-              decoration: BoxDecoration(
-                borderRadius: BorderRadius.circular(r),
-                border: Border.all(
-                  color: Colors.white.withValues(alpha: .10),
-                  width: .65,
-                ),
-              ),
-              child: SizedBox.square(dimension: size),
+            BoxShadow(
+              color: const Color(0x40040810),
+              offset: Offset(0, lift * .38),
+              blurRadius: lift * .5,
+              spreadRadius: -lift * .12,
             ),
+          ],
+        ),
+        child: ClipRRect(
+          borderRadius: corners,
+          child: CustomPaint(
+            foregroundPainter: _CoverBevel(corners),
+            child: child,
           ),
-        ],
+        ),
       ),
     );
   }
 }
 
-class _FloatingCoverLight extends CustomPainter {
-  const _FloatingCoverLight({required this.radius});
+class _CoverBevel extends CustomPainter {
+  const _CoverBevel(this.corners);
 
-  final double radius;
+  final BorderRadius corners;
 
   @override
   void paint(Canvas canvas, Size size) {
-    final side = math.min(size.width, size.height);
-    final bounds = Offset.zero & size;
-    final rounded = RRect.fromRectAndRadius(
-      bounds.deflate(side * .015),
-      Radius.circular(radius),
-    );
-
-    // Wide, soft penumbra: blurred shadow has no hard rectangular silhouette.
+    final rect = Offset.zero & size;
+    final edge = corners.toRRect(rect).deflate(.6);
     canvas.drawRRect(
-      rounded.shift(Offset(0, side * .022)),
+      edge,
       Paint()
-        ..color = Colors.black.withValues(alpha: .25)
-        ..maskFilter = MaskFilter.blur(BlurStyle.normal, side * .105),
-    );
-
-    // Subtle near-contact occlusion makes the cover feel lifted, not pasted.
-    canvas.drawRRect(
-      rounded.shift(Offset(0, side * .008)),
-      Paint()
-        ..color = Colors.black.withValues(alpha: .11)
-        ..maskFilter = MaskFilter.blur(BlurStyle.normal, side * .028),
-    );
-
-    // Soft environmental bounce below the artwork. Not a visible halo.
-    final glowCenter = Offset(side * .5, side * .64);
-    final glowRadius = side * .76;
-    canvas.drawCircle(
-      glowCenter,
-      glowRadius,
-      Paint()
-        ..shader = RadialGradient(
-          colors: [
-            const Color(0xFFB58B9D).withValues(alpha: .10),
-            const Color(0xFFB58B9D).withValues(alpha: .035),
-            const Color(0xFFB58B9D).withValues(alpha: 0),
-          ],
-          stops: const [0, .52, 1],
-        ).createShader(Rect.fromCircle(center: glowCenter, radius: glowRadius)),
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 1.2
+        ..shader = const LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [Color(0x44FFFFFF), Color(0x09FFFFFF), Color(0x38060A16)],
+          stops: [0, .42, 1],
+        ).createShader(rect),
     );
   }
 
   @override
-  bool shouldRepaint(covariant _FloatingCoverLight oldDelegate) =>
-      oldDelegate.radius != radius;
+  bool shouldRepaint(_CoverBevel oldDelegate) => oldDelegate.corners != corners;
 }

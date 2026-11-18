@@ -560,7 +560,6 @@ class _FusionPlayHomeState extends State<FusionPlayHome> {
     final mediaQuery = MediaQuery.of(context);
     final state = widget.state;
     final artwork = _displayedArtworkSource;
-    final hasArtwork = artwork != null && artwork.isNotEmpty;
     final playback = state.playback;
     final hasPlayback =
         playback.streamActive ||
@@ -571,23 +570,9 @@ class _FusionPlayHomeState extends State<FusionPlayHome> {
         playback.durationMs != null;
     final isTelevision = state.isTelevision;
 
-    final playerBackdrop = Stack(
-      fit: StackFit.expand,
-      children: [
-        ArtworkBackground(source: artwork, hasPlayback: hasPlayback),
-        // Dark readability gradient over the artwork (YAQMC-style restraint).
-        DecoratedBox(
-          decoration: BoxDecoration(
-            gradient: LinearGradient(
-              begin: Alignment.topLeft,
-              end: Alignment.bottomRight,
-              colors: hasArtwork
-                  ? const [Color(0xA6101316), Color(0xE6101316)]
-                  : const [Color(0xCC101316), Color(0xF0101316)],
-            ),
-          ),
-        ),
-      ],
+    final playerBackdrop = PlayerBackdrop(
+      source: artwork,
+      hasPlayback: hasPlayback,
     );
 
     final playerSurface = Stack(

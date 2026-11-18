@@ -823,7 +823,10 @@ class _PlayerViewState extends State<PlayerView> {
         innerWidth - transportWidth - 8,
         math.min(innerWidth * .47, panelHeight - padding * 2),
       );
-      if (sideCover >= 96) {
+      // A stacked cover anchors the lyrics column when the controls below
+      // leave room for a full-size face. Shallow phones keep the compact row.
+      final stackedArt = math.min(cover, panelHeight * .43);
+      if (sideCover >= 96 && cover < sideCover * 1.32) {
         final artworkSize = sideCover;
         return Padding(
           padding: EdgeInsets.all(padding),
@@ -890,8 +893,8 @@ class _PlayerViewState extends State<PlayerView> {
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
             _breathingArtwork(
-              size: cover,
-              child: _artworkCard(cover, radius: compact ? 16 : 20),
+              size: stackedArt,
+              child: _artworkCard(stackedArt, radius: stackedArt * .10),
             ),
             SizedBox(height: compact ? 6 : 12),
             Text(
