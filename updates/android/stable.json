@@ -2,14 +2,14 @@
   "schema_version": 1,
   "channel": "stable",
   "published": true,
-  "version_name": "1.7.3",
-  "version_code": 10703,
-  "sha256": "188898c0022292dfd7dd9141b67f66d1001bb341926ef6e36677206e161d41d6",
+  "version_name": "1.7.4",
+  "version_code": 10704,
+  "sha256": "1733e9d576264d75bdcc8340027ca8fabf249a4877c236e560807fc9b5d8b87b",
   "signer_sha256": "4836fb96c2ef76fd81ac385455f1b0154af77fadae1b45bbb752b192499dc12f",
-  "apk_url": "https://youyoudezhuzhu.github.io/FusionPlay/update/android/dl/latest.apk?v=10703",
-  "apk_url_alt": "https://github.com/youyoudezhuzhu/FusionPlay/releases/download/android-v1.7.3/FusionPlay-Android-1.7.3.apk",
-  "apk_size": 12684138,
-  "source_commit": "0e870689eeafbf6a0b24139ffe5371b43ffeb588",
-  "notes": "## FusionPlay Android 1.7.3\n\n- 播放器、菜单、设置和浮层使用共享封面背景与折射材质，调整封面悬浮投影及播放按钮行的位置。\n- AirPlay 读取发送端提供的 DMAP 曲目标识，分辨同曲标题更新与切歌。收紧“标题即歌词”的判断，避免同专辑连续曲目误入歌词视图。歌词可用性取决于发送端。\n- DLNA 相对封面地址按当前媒体地址解析。播放器接受与妙播接收端相同大小上限的内嵌封面。\n\n- 封面解码失败时保留上一张已显示的封面，并在后续播放状态更新时重试。\n\n本次验证包含自动化接收状态与 Flutter 播放页测试。未进行本版本的手机到接收器真机投送或 Android GPU 性能测试。",
-  "published_at": "2026-11-18T11:21:09Z"
+  "apk_url": "https://youyoudezhuzhu.github.io/FusionPlay/update/android/dl/latest.apk?v=10704",
+  "apk_url_alt": "https://github.com/youyoudezhuzhu/FusionPlay/releases/download/android-v1.7.4/FusionPlay-Android-1.7.4.apk",
+  "apk_size": 12683195,
+  "source_commit": "8bdcb36735e7943bcb6ba0dc31d5f838e6f6b802",
+  "notes": "## FusionPlay Android 1.7.4\n\n- AirPlay 2、小米妙播和 DLNA 共用固定的上一曲、播放/暂停、下一曲按钮行。发送端未提供的操作以淡色显示，保留位置，禁用触摸和遥控器操作。\n- 所有来源沿用相同的有歌词和无歌词布局。对相同的封面、曲名、进度条、音量、歌词区域和三个按钮增加了跨来源位置回归测试。",
+  "published_at": "2026-11-18T11:48:08Z"
 }
