@@ -255,7 +255,9 @@ class CoreProcessService(
             .lowercase()
             .takeIf(String::isNotEmpty)
             ?: throw IllegalArgumentException("source must not be blank.")
+        val requestId = UUID.randomUUID().toString()
         val payload = buildJsonObject {
+            put("request_id", requestId)
             put("command", "takeover")
             put("source", normalizedSource)
             mediaKind
@@ -266,7 +268,14 @@ class CoreProcessService(
         }
         // Both native protocol runtimes share one playback arbiter, so a
         // single command is enough to suspend whichever core source is active.
-        writeNdjson(payload.toString(), "auto")
+        lifecycleMutex.withLock {
+            ensureOpen()
+            // When only MiPlay is enabled, there is no competing core output.
+            if (appliedConfigurations.isEmpty()) return@withLock
+            SourceTakeoverPolicy.awaitCoreTakeover(events, requestId) {
+                writeNdjson(payload.toString(), "auto")
+            }
+        }
     }
 
     suspend fun shutdown() {

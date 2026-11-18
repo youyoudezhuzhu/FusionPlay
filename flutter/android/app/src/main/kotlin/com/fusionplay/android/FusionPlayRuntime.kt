@@ -793,7 +793,9 @@ class FusionPlayRuntime(
     }
 
     private suspend fun handleXiaomiEvent(event: WindowsBridgeXiaomiEvent) {
-        event.toVolumePercentOrNull()?.let { percent ->
+        event.toVolumePercentOrNull()?.takeIf {
+            SourceTakeoverPolicy.acceptsDeviceVolume(viewModel.state.value.activeMediaSource, MediaSource.XIAOMI_MIPLAY)
+        }?.let { percent ->
             if (!FusionPlayMediaChannel.setSystemMediaVolumePercent(percent)) {
                 viewModel.reportExternalLog("无法将被控端媒体音量同步到 $percent%。", isError = true)
             }
@@ -926,7 +928,8 @@ class FusionPlayRuntime(
                 }
             }
             is AppEvent.Volume -> if (
-                event.source == null || event.source.equals(CORE_SOURCE_AIRPLAY, ignoreCase = true)
+                (event.source == null || event.source.equals(CORE_SOURCE_AIRPLAY, ignoreCase = true)) &&
+                SourceTakeoverPolicy.acceptsDeviceVolume(viewModel.state.value.activeMediaSource, MediaSource.AIRPLAY)
             ) {
                 // iPhone AirPlay 2 sends SET_PARAMETER volume here. Map it to
                 // the real Android media volume exactly like MiPlay.
