@@ -696,10 +696,10 @@ class _FusionPlayHomeState extends State<FusionPlayHome> {
                           interactive: true,
                           borderRadius: 22,
                           padding: const EdgeInsets.fromLTRB(18, 8, 6, 8),
-                          forceFallback: true,
-                          refraction: 0,
-                          specular: .18,
-                          thickness: 8,
+                          forceFallback: widget.forceGlassFallback,
+                          refraction: 0.85,
+                          specular: .30,
+                          thickness: 14,
                           child: DefaultTextStyle.merge(
                             style: const TextStyle(
                               color: Color(0xEBFFFFFF),
