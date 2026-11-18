@@ -56,6 +56,10 @@ pub enum CoreEvent<'a> {
     },
     NowPlaying {
         #[serde(skip_serializing_if = "Option::is_none")]
+        lyric_line: Option<&'a str>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        track_changed: Option<bool>,
+        #[serde(skip_serializing_if = "Option::is_none")]
         track_id: Option<&'a str>,
         source: &'a str,
         epoch: u64,
@@ -376,6 +380,8 @@ mod tests {
     #[test]
     fn mutable_media_events_are_scoped_to_source_epoch() {
         let event = CoreEvent::NowPlaying {
+            lyric_line: None,
+            track_changed: None,
             track_id: None,
             source: "airplay",
             epoch: 31,

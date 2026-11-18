@@ -15,6 +15,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
 enum class LyricsOrigin {
+    AIRPLAY_TITLE,
     EMBEDDED,
     METADATA_URI,
     SIDECAR_URI,

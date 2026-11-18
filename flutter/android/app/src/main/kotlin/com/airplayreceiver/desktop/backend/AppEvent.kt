@@ -101,6 +101,8 @@ sealed interface AppEvent {
         val source: String? = null,
         val epoch: Long? = null,
         val trackId: String? = null,
+        val lyricLine: String? = null,
+        val trackChanged: Boolean? = null,
     ) : AppEvent {
         override val type = "now_playing"
     }

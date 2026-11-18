@@ -252,7 +252,10 @@ class _PlayerViewState extends State<PlayerView> {
   /// Keep a short bounded history keyed by the current playback session; never
   /// invent future lines or word timestamps.
   void _observeStreamLyrics(PlaybackSnapshot playback) {
-    final session = _trackKeyOf(playback);
+    // An AirPlay epoch may contain several songs, even without a DMAP item ID.
+    final session = playback.lyrics?.origin == 'airplay_title'
+        ? '${_trackKeyOf(playback)}\u001f${playback.artist}\u001f${playback.title}'
+        : _trackKeyOf(playback);
     if (_streamSessionKey != session) {
       _streamSessionKey = session;
       _streamLyrics.clear();

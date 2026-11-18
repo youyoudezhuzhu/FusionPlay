@@ -211,15 +211,23 @@ internal object AppStateTransitions {
             val artist = event.artist.nonBlankOrNull()
             val album = event.album.nonBlankOrNull()
             val genre = event.genre.nonBlankOrNull()
-            val trackChanged = if (event.trackId != null && playback.trackIdentity != null) {
+            val trackChanged = event.trackChanged ?: if (event.trackId != null && playback.trackIdentity != null) {
                 event.trackId != playback.trackIdentity
             } else {
                 title != null &&
                     playback.title != null &&
                     title != playback.title
             }
+            val lyrics = when {
+                source != MediaSource.AIRPLAY -> playback.lyrics
+                !trackChanged && playback.lyrics != null && playback.lyrics.origin != LyricsOrigin.AIRPLAY_TITLE -> playback.lyrics
+                event.lyricLine != null -> LyricsDocument(listOf(LyricLine(null, event.lyricLine)), LyricsOrigin.AIRPLAY_TITLE)
+                trackChanged || event.trackChanged != null -> null
+                else -> playback.lyrics
+            }
             if (trackChanged) {
                 playback.copy(
+                    lyrics = lyrics,
                     trackIdentity = event.trackId,
                     title = title,
                     artist = artist,
@@ -231,6 +239,7 @@ internal object AppStateTransitions {
                 )
             } else {
                 playback.copy(
+                    lyrics = lyrics,
                     trackIdentity = event.trackId ?: playback.trackIdentity,
                     title = title ?: playback.title,
                     artist = artist ?: playback.artist,
