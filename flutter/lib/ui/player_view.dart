@@ -786,12 +786,11 @@ class _PlayerViewState extends State<PlayerView> {
       final compact = panelHeight < 560 || panelWidth < 300;
       final dense = compact && panelHeight < 330;
       final padding = compact ? 8.0 : 16.0;
-      // Reserve space for metadata, timeline, transport and volume first.
-      // Use remaining height for artwork rather than an arbitrary 238px cut.
-      // Conservative reserve includes title/artist, timeline, transport,
-      // volume and spacing.  The 900x400 / 980x420 previews previously
-      // overflowed because 183px underestimated the real controls stack.
-      final controlsBudget = dense ? 206.0 : (compact ? 248.0 : 286.0);
+      // Budget for the actual compact controls: title (~21), artist (~15),
+      // timeline (40 + time labels), transport (~56), volume (28-30),
+      // and symmetric gaps. Avoid the previous 248px over-reservation,
+      // which shrank the cover disproportionately on 21:9 phones.
+      final controlsBudget = dense ? 204.0 : (compact ? 220.0 : 286.0);
       final cover = math
           .min(
             panelWidth - padding * 2,
@@ -839,9 +838,9 @@ class _PlayerViewState extends State<PlayerView> {
               ),
             SizedBox(height: compact ? 1 : 4),
             _liquidTimeline(compact: compact),
-            SizedBox(height: compact ? 0 : 4),
+            SizedBox(height: dense ? 7 : (compact ? 10 : 16)),
             Center(child: _liquidTransport(compact: compact)),
-            SizedBox(height: dense ? 8 : (compact ? 10 : 20)),
+            SizedBox(height: dense ? 7 : (compact ? 10 : 16)),
             _liquid21Volume(compact: compact),
           ],
         ),
@@ -1023,9 +1022,9 @@ class _PlayerViewState extends State<PlayerView> {
           ],
           SizedBox(height: dense ? 2 : (compact ? 6 : 20)),
           _liquidTimeline(compact: compact),
-          SizedBox(height: dense ? 2 : (compact ? 4 : 10)),
+          SizedBox(height: dense ? 7 : (compact ? 10 : 16)),
           Center(child: _liquidTransport(compact: compact)),
-          SizedBox(height: compact ? 6 : 14),
+          SizedBox(height: dense ? 7 : (compact ? 10 : 16)),
           _liquid21Volume(compact: compact),
         ],
       ),
@@ -1121,9 +1120,11 @@ class _PlayerViewState extends State<PlayerView> {
             },
           ),
         ),
+        // Move labels closer to the painted track (centered in its 40px
+        // hit target) without reducing the seekable touch area.
         SizedBox(height: compact ? 0 : 2),
         Transform.translate(
-          offset: Offset(0, compact ? -4 : -2),
+          offset: Offset(0, compact ? -10 : -8),
           child: Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
