@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:io';
 import 'dart:ui' as ui;
 
@@ -8,18 +9,20 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:fusionplay_android_flutter/models/app_state.dart';
 import 'package:fusionplay_android_flutter/theme/fusion_theme.dart';
 import 'package:fusionplay_android_flutter/ui/app_menu.dart';
+import 'package:fusionplay_android_flutter/ui/artwork.dart';
 import 'package:fusionplay_android_flutter/ui/glass_backdrop.dart';
 import 'package:fusionplay_android_flutter/ui/liquid_glass.dart';
 import 'package:fusionplay_android_flutter/ui/settings_view.dart';
 
-Widget _backdrop() => const DecoratedBox(
-  decoration: BoxDecoration(
-    gradient: LinearGradient(
-      begin: Alignment.topLeft,
-      end: Alignment.bottomRight,
-      colors: [Color(0xFF4D315C), Color(0xFF162434), Color(0xFF07090D)],
-    ),
-  ),
+final String _coverData =
+    'data:image/png;base64,${base64Encode(File('/tmp/fusionplay-cover.png').readAsBytesSync())}';
+
+Widget _backdrop() => Stack(
+  fit: StackFit.expand,
+  children: [
+    ArtworkBackground(source: _coverData, hasPlayback: true),
+    const ColoredBox(color: Color(0x4D000000)),
+  ],
 );
 
 Widget _host(Widget child, GlobalKey boundaryKey) => MaterialApp(
@@ -46,6 +49,10 @@ void main() {
   });
 
   testWidgets('render settings/menu/dialog gallery', (tester) async {
+    tester.view.physicalSize = const Size(1280, 582);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
     final settingsKey = GlobalKey();
     await tester.pumpWidget(
       _host(
@@ -56,8 +63,12 @@ void main() {
             height: 520,
             child: LiquidGlass(
               level: GlassLevel.panel,
-              borderRadius: 28,
-              tint: const Color(0xB814191F),
+              borderRadius: 24,
+              tint: const Color(0x8814191F),
+              forceFallback: true,
+              refraction: 0,
+              specular: .18,
+              thickness: 8,
               child: SettingsView(
                 state: const AppState(initialized: true),
                 showHeader: false,
@@ -93,7 +104,7 @@ void main() {
       () => image!.toByteData(format: ui.ImageByteFormat.png),
     );
     File(
-      '/tmp/fusionplay-preview/settings-960x540.png',
+      '/tmp/fusionplay-preview/settings-21x9.png',
     ).writeAsBytesSync(data!.buffer.asUint8List());
 
     final menuKey = GlobalKey();
@@ -107,8 +118,12 @@ void main() {
               width: 250,
               child: LiquidGlass(
                 level: GlassLevel.panel,
-                borderRadius: 24,
-                tint: const Color(0xE014171C),
+                borderRadius: 22,
+                tint: const Color(0x7014171C),
+                forceFallback: true,
+                refraction: 0,
+                specular: .18,
+                thickness: 8,
                 child: FusionAppMenu(
                   items: [
                     FusionMenuItem(
@@ -155,7 +170,7 @@ void main() {
       () => menuImage!.toByteData(format: ui.ImageByteFormat.png),
     );
     File(
-      '/tmp/fusionplay-preview/menu-960x540.png',
+      '/tmp/fusionplay-preview/menu-21x9.png',
     ).writeAsBytesSync(menuData!.buffer.asUint8List());
 
     final dialogKey = GlobalKey();
@@ -200,7 +215,7 @@ void main() {
       () => dialogImage!.toByteData(format: ui.ImageByteFormat.png),
     );
     File(
-      '/tmp/fusionplay-preview/dialog-960x540.png',
+      '/tmp/fusionplay-preview/dialog-21x9.png',
     ).writeAsBytesSync(dialogData!.buffer.asUint8List());
   });
 }

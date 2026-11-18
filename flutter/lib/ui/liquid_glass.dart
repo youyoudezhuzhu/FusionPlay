@@ -80,20 +80,22 @@ class GlassSpec {
   );
 
   static const panel = GlassSpec(
-    tint: Color(0xD014191F),
+    // Overlay chrome: tinted depth without a thick white 3D rim. The player
+    // controls no longer use this spec, so it is tuned for menus/settings.
+    tint: Color(0xA814191F),
     blur: 24,
-    radius: 26,
-    borderAlpha: .20,
-    rimAlpha: .40,
-    edgeAlpha: .22,
-    sheenAlpha: .30,
-    shadowAlpha: .34,
-    shadowBlur: 30,
-    shadowOffsetY: 12,
+    radius: 22,
+    borderAlpha: .08,
+    rimAlpha: .10,
+    edgeAlpha: .10,
+    sheenAlpha: .12,
+    shadowAlpha: .22,
+    shadowBlur: 26,
+    shadowOffsetY: 10,
     gradient: LinearGradient(
       begin: Alignment.topLeft,
       end: Alignment.bottomRight,
-      colors: [Color(0x16FFFFFF), Color(0x04000000)],
+      colors: [Color(0x0AFFFFFF), Color(0x00000000)],
     ),
   );
 
@@ -760,8 +762,12 @@ class GlassDialog extends StatelessWidget {
             child: LiquidGlass(
               level: GlassLevel.panel,
               interactive: true,
-              borderRadius: 26,
+              borderRadius: 24,
               padding: padding,
+              forceFallback: true,
+              refraction: 0,
+              specular: .18,
+              thickness: 8,
               child: Material(
                 color: Colors.transparent,
                 child: DefaultTextStyle.merge(
