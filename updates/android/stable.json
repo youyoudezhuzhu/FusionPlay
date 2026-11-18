@@ -2,14 +2,14 @@
   "schema_version": 1,
   "channel": "stable",
   "published": true,
-  "version_name": "1.7.6",
-  "version_code": 10706,
-  "sha256": "7a26f0e5133746b938c87b703f4a9cd472d5d04f74753fa1262f1290509ecb25",
+  "version_name": "1.7.7",
+  "version_code": 10707,
+  "sha256": "c458ca2ca0bf829b6197096b9bd1e8c61b7ec3d4858318ebe704571c82aaf557",
   "signer_sha256": "4836fb96c2ef76fd81ac385455f1b0154af77fadae1b45bbb752b192499dc12f",
-  "apk_url": "https://youyoudezhuzhu.github.io/FusionPlay/update/android/dl/latest.apk?v=10706",
-  "apk_url_alt": "https://github.com/youyoudezhuzhu/FusionPlay/releases/download/android-v1.7.6/FusionPlay-Android-1.7.6.apk",
-  "apk_size": 12690568,
-  "source_commit": "fa9173aa64df9d5d05dd38653d74240b13284499",
-  "notes": "## FusionPlay Android 1.7.6\n\n- 适配网易云音乐通过 AirPlay 发送逐句歌词的格式。播放器根据曲目信息拆分歌名和歌手，并在歌词栏更新当前句。\n- 修复 DLNA 网络播放器与系统媒体会话重复申请音频焦点的问题，避免播放刚开始就被暂停。跨来源接管时，将暂停操作限定在旧来源。\n- 优化 AirPlay 进度条。换句时保持播放时钟连续，过滤轻微的位置回报抖动，并改善拖动定位后的进度确认。",
-  "published_at": "2026-11-18T14:06:45Z"
+  "apk_url": "https://youyoudezhuzhu.github.io/FusionPlay/update/android/dl/latest.apk?v=10707",
+  "apk_url_alt": "https://github.com/youyoudezhuzhu/FusionPlay/releases/download/android-v1.7.7/FusionPlay-Android-1.7.7.apk",
+  "apk_size": 12711043,
+  "source_commit": "37636780292e75390139ae6aa1206616d8566e1f",
+  "notes": "## FusionPlay Android 1.7.7\n\n- 在线更新支持在同一页面查看下载进度。安装包校验通过后可点击「安装」。如果系统要求安装权限，授权返回后可直接安装已下载的包。\n- 改进网易云音乐通过 AirPlay 投送时的逐句歌词识别。发送端更新曲目标识时，播放器会结合歌名和歌手判断是否仍是同一首歌。\n- 修复从 AirPlay 切到 DLNA 后封面和模糊背景可能残留的问题。DLNA 换歌时，即使发送端复用同一封面地址，也会重新取图。\n- 导出的接收日志增加 AirPlay 歌词识别依据，以及 DLNA 歌词字段、链接读取结果和解码器可见的歌词标签，方便排查不同手机的投送差异。",
+  "published_at": "2026-11-18T15:28:15Z"
 }
