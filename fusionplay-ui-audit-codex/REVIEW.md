@@ -41,3 +41,11 @@ ffmpeg -y -framerate 58.8235 -i /tmp/fusionplay-preview/menu-frames/frame-%02d.p
 ## 本轮执行结果
 
 依赖解析成功。全量 flutter test 通过 **213 项**。P01–P20 均未报告 RenderFlex overflow。两组 1 px 高度边界的封面中心位移均小于 3 px。Flutter analyze 返回非零，18 条均为 vendored 第三方库的弃用 info，无 error 或 warning。未屏蔽第三方诊断。
+
+### Android 1.7.3 接收信息与播放页
+
+使用 Flutter 3.32.8 将三种接收状态送入生产页面 FusionPlayHome。以下截图来自 980×420 的 Flutter 测试渲染。AirPlay 用例提供曲名、歌手与封面，妙播和 DLNA 用例另外提供带时间戳的歌词。DLNA 画面使用本地图片固定输入，远程相对地址的解析由 Kotlin 用例单独验证。测试另检查解码失败后保留已显示封面。真实发送端可提供的字段取决于应用和曲目，本轮没有手机投送或 Android GPU 真机数据。
+
+[AirPlay 2](screenshots/player/metadata-airplay.jpg) · [小米妙播](screenshots/player/metadata-xiaomi_miplay.jpg) · [DLNA](screenshots/player/metadata-dlna.jpg)
+
+复现截图可在 flutter 目录执行 `FUSIONPLAY_METADATA_PREVIEW_DIR=/tmp/receiver-preview flutter test test/receiver_metadata_ui_test.dart`。

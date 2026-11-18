@@ -152,6 +152,7 @@ class _FusionPlayHomeState extends State<FusionPlayHome> {
   String? _requestedArtworkIdentity;
   bool _artworkPreparationStarted = false;
   Timer? _artworkClearTimer;
+  DateTime? _artworkRetryAfter;
   Timer? _errorToastTimer;
   String? _errorToastMessage;
   String? _visibleError;
@@ -226,6 +227,10 @@ class _FusionPlayHomeState extends State<FusionPlayHome> {
       // churn must not restart the artwork flip. Keep the displayed identity
       // until the actual image source changes.
       _requestedArtworkIdentity = nextIdentity;
+      final retryAfter = _artworkRetryAfter;
+      if (retryAfter != null && !DateTime.now().isBefore(retryAfter)) {
+        unawaited(_prepareArtwork(nextArtwork, nextIdentity));
+      }
       return;
     }
     _requestedArtworkSource = nextArtwork;
@@ -251,17 +256,14 @@ class _FusionPlayHomeState extends State<FusionPlayHome> {
 
   Future<void> _prepareArtwork(String? source, String? identity) async {
     _artworkClearTimer?.cancel();
+    _artworkRetryAfter = null;
     if (source == null) {
       if (_displayedArtworkSource == null) return;
       _artworkClearTimer = Timer(artworkClearGracePeriod, () {
-        if (mounted &&
-            _requestedArtworkSource == source &&
-            _requestedArtworkIdentity == identity) {
+        if (mounted && _requestedArtworkSource == null) {
           setState(() {
             _displayedArtworkSource = null;
-            _displayedArtworkIdentity = _displayedArtworkSource == null
-                ? _displayedArtworkIdentity
-                : identity;
+            _displayedArtworkIdentity = null;
           });
         }
       });
@@ -270,7 +272,14 @@ class _FusionPlayHomeState extends State<FusionPlayHome> {
     final provider = artworkProvider(source);
     if (provider == null) return;
     try {
-      await precacheImage(provider, context);
+      var failed = false;
+      await precacheImage(provider, context, onError: (_, _) => failed = true);
+      if (failed) {
+        if (mounted && _requestedArtworkSource == source) {
+          _artworkRetryAfter = DateTime.now().add(const Duration(seconds: 5));
+        }
+        return;
+      }
       if (mounted &&
           _requestedArtworkSource == source &&
           _requestedArtworkIdentity == identity) {
