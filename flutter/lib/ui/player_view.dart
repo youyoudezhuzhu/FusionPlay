@@ -1286,16 +1286,18 @@ class _PlayerViewState extends State<PlayerView> {
         },
         child: SizedBox.square(
           dimension: size,
-          child: LiquidGlass(
-            level: GlassLevel.control,
-            interactive: true,
-            borderRadius: 999,
-            tint: const Color(0x1CFFFFFF),
-            refraction: 1.0,
-            specular: .45,
-            thickness: 14,
-            absorption: .3,
-            forceFallback: widget.forceGlassFallback,
+          child: lg.GlassContainer(
+            height: size,
+            padding: EdgeInsets.zero,
+            shape: const lg.LiquidRoundedSuperellipse(borderRadius: 999),
+            useOwnLayer: true,
+            quality: lg.GlassQuality.standard,
+            settings: const lg.LiquidGlassSettings(
+              thickness: 9,
+              blur: 2,
+              glassColor: Color(0x12FFFFFF),
+              chromaticAberration: 0,
+            ),
             child: Material(
               color: Colors.transparent,
               shape: const CircleBorder(),
@@ -1570,17 +1572,23 @@ class _PlayerViewState extends State<PlayerView> {
                 : (compact
                       ? 60
                       : (MediaQuery.sizeOf(context).width >= 1500 ? 82 : 70)),
-            child: DecoratedBox(
-              decoration: BoxDecoration(
-                color: const Color(0xF2FFFFFF),
-                shape: BoxShape.circle,
-                boxShadow: [
-                  BoxShadow(
-                    color: Colors.black.withValues(alpha: .16),
-                    blurRadius: 26,
-                    offset: const Offset(0, 8),
-                  ),
-                ],
+            // The primary transport control uses the same refractive
+            // material as the adjacent buttons; no opaque white disc.
+            child: lg.GlassContainer(
+              height: short
+                  ? 48
+                  : (compact
+                        ? 60
+                        : (MediaQuery.sizeOf(context).width >= 1500 ? 82 : 70)),
+              padding: EdgeInsets.zero,
+              shape: const lg.LiquidRoundedSuperellipse(borderRadius: 999),
+              useOwnLayer: true,
+              quality: lg.GlassQuality.standard,
+              settings: const lg.LiquidGlassSettings(
+                thickness: 9,
+                blur: 2,
+                glassColor: Color(0x18FFFFFF),
+                chromaticAberration: 0,
               ),
               child: Material(
                 color: Colors.transparent,
@@ -1615,7 +1623,7 @@ class _PlayerViewState extends State<PlayerView> {
                             : FusionIcons.play,
                         key: ValueKey<bool>(widget.state.playback.isPlaying),
                         size: glyph,
-                        color: const Color(0xE61A1C22),
+                        color: Colors.white.withValues(alpha: .94),
                       ),
                     ),
                   ),
