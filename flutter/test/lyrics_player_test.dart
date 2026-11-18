@@ -241,12 +241,13 @@ void main() {
           reason: '$size',
         );
         expect(column[i].right, lessThan(lyrics.left), reason: '$size');
-        if (i > 0)
+        if (i > 0) {
           expect(
             column[i].top,
             greaterThanOrEqualTo(column[i - 1].bottom - .1),
             reason: '$size',
           );
+        }
       }
       expect(tester.takeException(), isNull);
     }

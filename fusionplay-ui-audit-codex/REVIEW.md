@@ -49,3 +49,9 @@ ffmpeg -y -framerate 58.8235 -i /tmp/fusionplay-preview/menu-frames/frame-%02d.p
 [AirPlay 2](screenshots/player/metadata-airplay.jpg) · [小米妙播](screenshots/player/metadata-xiaomi_miplay.jpg) · [DLNA](screenshots/player/metadata-dlna.jpg)
 
 复现截图可在 flutter 目录执行 `FUSIONPLAY_METADATA_PREVIEW_DIR=/tmp/receiver-preview flutter test test/receiver_metadata_ui_test.dart`。
+
+### 同列歌词布局与 Android 多来源接管复查
+
+有歌词横屏移除了将左栏再次拆成两列的分支。布局回归测量封面、曲名、歌手、进度、播放和音量的中心与顺序，覆盖 620×320 至 1920×1080 共 11 个尺寸。在 900×400 和 980×420，下方控件占用实际空间后，封面实测分别为 156.8 和 173.9 逻辑像素。[1280×597 Flutter 渲染](cover-study/lyrics.png)
+
+Android AirPlay 音频正在播放时，妙播的曲目数据进入该来源的缓存。妙播报告播放状态 2 后可以触发接管。Rust 将旧会话置为暂停并清空音频缓冲，尝试远程暂停，保留发送端连接。Android 过去在 JNI 入队成功后即可请求恢复妙播输出。本次增加带请求 ID 的核心确认，并过滤后台来源对设备媒体音量的写入。仲裁测试覆盖匹配回执、其他请求的回执、失败与超时。实际两台发送器的交叠时长和切换延迟仍缺少设备测量。反向切换的 1.5 秒旧播放状态抑制窗口属于兼容性折中。

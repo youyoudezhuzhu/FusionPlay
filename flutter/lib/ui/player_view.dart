@@ -802,13 +802,16 @@ class _PlayerViewState extends State<PlayerView> {
       final panelWidth = constraints.maxWidth;
       final panelHeight = constraints.maxHeight;
       final compact = panelHeight < 560 || panelWidth < 300;
-      final dense = compact && panelHeight < 330;
+      final room = ((panelHeight - 380) / 120).clamp(0.0, 1.0);
       final padding = compact ? 8.0 : 16.0;
       final playback = widget.state.playback;
       final (title, artist) = _displayMetadata(playback);
       final artistLine = _cleanArtist(artist);
       return Padding(
-        padding: EdgeInsets.all(padding),
+        padding: EdgeInsets.symmetric(
+          horizontal: padding,
+          vertical: compact ? 2 + 6 * room : padding,
+        ),
         child: Column(
           key: const ValueKey('player-controls-column'),
           mainAxisAlignment: MainAxisAlignment.center,
@@ -818,7 +821,7 @@ class _PlayerViewState extends State<PlayerView> {
                 builder: (context, space) {
                   final size = math.min(
                     space.maxHeight,
-                    math.min(space.maxWidth, panelHeight * .44),
+                    math.min(space.maxWidth, panelHeight * (.47 - .03 * room)),
                   );
                   return _breathingArtwork(
                     size: size,
@@ -857,7 +860,7 @@ class _PlayerViewState extends State<PlayerView> {
               width: (panelWidth * .68).clamp(210.0, 560.0),
               child: _playbackControls(
                 compact: compact,
-                gap: dense ? 4 : (compact ? 7 : 12),
+                gap: compact ? 2 + 5 * room : 12,
                 fillVolumeWidth: true,
               ),
             ),
