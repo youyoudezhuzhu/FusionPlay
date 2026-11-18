@@ -859,6 +859,62 @@ void main() {
     expect(find.text('新歌'), findsOneWidget);
     expect(find.byKey(const ValueKey('player-lyrics-view')), findsNothing);
   });
+  testWidgets('AirPlay 换句和迟到的进度回报不会拉回进度，拖动可向后定位', (tester) async {
+    Future<void> report(
+      int ms,
+      String lyric, {
+      bool playing = true,
+      String id = 'a',
+    }) async {
+      await _pumpPlayer(
+        tester,
+        _stateFromMap({
+          'playback': {
+            'protocol': 'airplay',
+            'positionMs': ms,
+            'isPlaying': playing,
+            'trackIdentity': id,
+            'lyrics': {
+              'origin': 'airplay_title',
+              'lines': [
+                {'text': lyric},
+              ],
+            },
+          },
+          'controls': {'seek': true},
+        }),
+        reduceMotion: true,
+      );
+    }
+
+    await report(10000, '第一句');
+    await tester.pump(const Duration(seconds: 2));
+    expect(find.text('0:12'), findsOneWidget);
+    await report(10000, '第二句');
+    expect(find.text('0:12'), findsOneWidget);
+    await report(11500, '第二句');
+    expect(find.text('0:12'), findsOneWidget);
+    await tester.pump(const Duration(seconds: 2));
+    expect(find.text('0:13'), findsOneWidget);
+    await report(11500, '第二句', playing: false);
+    await tester.pump(const Duration(seconds: 2));
+    expect(find.text('0:13'), findsOneWidget);
+    await report(11500, '第二句');
+    final bar = tester.widget<RoundedProgressBar>(
+      find.byKey(const ValueKey('player-progress-bar')),
+    );
+    bar.onChangeStart!(.025);
+    bar.onChanged(.025);
+    bar.onChangeEnd!(.025);
+    await report(12000, '第三句');
+    expect(find.text('0:04'), findsOneWidget);
+    await report(4500, '第三句');
+    await tester.pump(const Duration(seconds: 1));
+    expect(find.text('0:05'), findsOneWidget);
+    await report(0, '新曲', id: 'b');
+    expect(find.text('0:00'), findsOneWidget);
+  });
+
   testWidgets('网易云 AirPlay 的规范化字段在同一连接中逐句显示，换歌清空历史', (tester) async {
     Future<void> line(String song, String text) async {
       await _pumpPlayer(

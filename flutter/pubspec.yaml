@@ -12,6 +12,7 @@ environment:
 dependencies:
   flutter:
     sdk: flutter
+  clock: ^1.1.2
   flutter_svg: 2.2.3
   liquid_glass_widgets:
     path: third_party/liquid_glass_widgets

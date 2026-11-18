@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:math' as math;
 
+import 'package:clock/clock.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
@@ -132,10 +133,9 @@ class _PlayerViewState extends State<PlayerView> {
   // changes), so interpolate between them with the local monotonic wall clock.
   Timer? _progressTicker;
   int _progressAnchorMs = 0;
-  DateTime _progressAnchorAt = DateTime.now();
+  final Stopwatch _progressElapsed = clock.stopwatch()..start();
   int _displayedPositionMs = 0;
-  int _lastStatePositionMs = 0;
-  bool _lastPlaying = false;
+  static const _progressToleranceMs = 1500;
   // NetEase (and some other AirPlay senders) put the current lyric line in the
   // now-playing *title* field and the song/composer in artist. Detect a rapidly
   // changing AirPlay title and treat the captured titles as lyrics.
@@ -410,10 +410,7 @@ class _PlayerViewState extends State<PlayerView> {
   void initState() {
     super.initState();
     _lastTrackKey = _trackKeyOf(widget.state.playback);
-    _lastStatePositionMs = widget.state.playback.positionMs;
-    _displayedPositionMs = _lastStatePositionMs;
-    _progressAnchorMs = _lastStatePositionMs;
-    _lastPlaying = widget.state.playback.isPlaying;
+    _anchorProgress(widget.state.playback.positionMs);
     _observeAirPlayTitle(widget.state.playback);
     _observeStreamLyrics(widget.state.playback);
     _progressTicker = Timer.periodic(
@@ -488,56 +485,85 @@ class _PlayerViewState extends State<PlayerView> {
       artworkFlipDirectionPending = false;
       artworkFlipDirectionTimer?.cancel();
     }
-    if (!seeking) {
-      final pending = pendingSeekTargetMs;
-      if (pending == null ||
-          (widget.state.playback.positionMs - pending).abs() <= 1500) {
-        pendingSeekTimer?.cancel();
-        pendingSeekTargetMs = null;
-        seekPositionMs = widget.state.playback.positionMs.toDouble();
-      } else {
-        seekPositionMs = pending.toDouble();
-      }
-    }
-    final playing = widget.state.playback.isPlaying;
-    if (!playing || playing != _lastPlaying) {
-      _syncProgressAnchor(force: true);
-    } else {
-      _syncProgressAnchor();
-    }
-    _lastPlaying = playing;
+    _updateProgress(oldWidget.state.playback, widget.state.playback);
   }
 
-  bool get _isAirPlayPlayback =>
-      (widget.state.playback.protocol ?? '').toLowerCase().contains('airplay');
+  bool get _isAirPlayPlayback => _isAirPlayProtocol(widget.state.playback);
 
-  void _syncProgressAnchor({bool force = false}) {
-    final reported = widget.state.playback.positionMs;
-    if (force || reported != _lastStatePositionMs) {
-      _lastStatePositionMs = reported;
-      _progressAnchorMs = reported;
-      _progressAnchorAt = DateTime.now();
-      _displayedPositionMs = reported;
+  void _anchorProgress(int position) {
+    _progressAnchorMs = position;
+    _progressElapsed.reset();
+    _displayedPositionMs = position;
+  }
+
+  void _updateProgress(PlaybackSnapshot old, PlaybackSnapshot next) {
+    // Without an item ID a sender can update the title with each lyric.
+    // Only compare fallback titles when they represent actual song names.
+    bool hasSongTitle(PlaybackSnapshot p) =>
+        !_isAirPlayProtocol(p) ||
+        p.lyrics?.origin == 'airplay_title' ||
+        !_airPlayArtistSeparators.any((p.artist ?? '').contains);
+    final changedTrack =
+        old.protocol != next.protocol ||
+        old.sourceEpoch != next.sourceEpoch ||
+        (old.trackIdentity != null && next.trackIdentity != null
+            ? old.trackIdentity != next.trackIdentity
+            : old.title != next.title &&
+                  hasSongTitle(old) &&
+                  hasSongTitle(next));
+    if (changedTrack) {
+      pendingSeekTimer?.cancel();
+      pendingSeekTargetMs = null;
+      seeking = false;
+      seekPositionMs = null;
+      _anchorProgress(next.positionMs);
+      return;
+    }
+    if (seeking) return;
+    final updated = next.positionMs != old.positionMs;
+    final pending = pendingSeekTargetMs;
+    if (pending != null) {
+      if (!updated ||
+          (next.positionMs - pending).abs() > _progressToleranceMs) {
+        return;
+      }
+      pendingSeekTimer?.cancel();
+      pendingSeekTargetMs = null;
+      _anchorProgress(next.positionMs);
+      return;
+    }
+    if (updated) {
+      final previous = _displayedPositionMs;
+      _anchorProgress(next.positionMs);
+      // A slightly late clock sample can lag the interpolated display. Hold
+      // the visible position until the new anchor catches up.
+      if (_isAirPlayPlayback &&
+          old.isPlaying &&
+          next.isPlaying &&
+          previous > next.positionMs &&
+          previous - next.positionMs <= _progressToleranceMs) {
+        _displayedPositionMs = previous;
+      }
+    } else if (next.isPlaying != old.isPlaying) {
+      _anchorProgress(_displayedPositionMs);
     }
   }
 
   void _tickProgress() {
-    if (!mounted) return;
     final playback = widget.state.playback;
-    if (!playback.isPlaying ||
+    if (!mounted ||
+        !playback.isPlaying ||
         !_isAirPlayPlayback ||
         seeking ||
         pendingSeekTargetMs != null) {
-      if (_displayedPositionMs != playback.positionMs) {
-        setState(() => _displayedPositionMs = playback.positionMs);
-      }
       return;
     }
-    final elapsed = DateTime.now().difference(_progressAnchorAt).inMilliseconds;
-    int next = _progressAnchorMs + math.max(0, elapsed).toInt();
-    final duration = playback.durationMs ?? 0;
-    if (duration > 0) next = next.clamp(0, duration).toInt();
-    if ((next - _displayedPositionMs).abs() >= 100) {
+    final next = airPlayInterpolatedPositionMs(
+      anchorMs: _progressAnchorMs,
+      elapsed: _progressElapsed.elapsed,
+      durationMs: playback.durationMs,
+    );
+    if (next - _displayedPositionMs >= 100) {
       setState(() => _displayedPositionMs = next);
     }
   }
@@ -1141,7 +1167,12 @@ class _PlayerViewState extends State<PlayerView> {
                 focusBorderColor: Colors.white,
                 activeColor: Colors.white,
                 inactiveColor: Colors.white.withValues(alpha: .18),
-                onChangeStart: (_) => setState(() => seeking = true),
+                onChangeStart: (_) => setState(() {
+                  seekPositionMs = _visiblePositionMs.toDouble();
+                  pendingSeekTimer?.cancel();
+                  pendingSeekTargetMs = null;
+                  seeking = true;
+                }),
                 onChanged: (value) => setState(() {
                   seeking = true;
                   seekPositionMs = duration * value;
@@ -1152,9 +1183,15 @@ class _PlayerViewState extends State<PlayerView> {
                     seeking = false;
                     seekPositionMs = target.toDouble();
                     pendingSeekTargetMs = target;
-                    _progressAnchorMs = target;
-                    _progressAnchorAt = DateTime.now();
-                    _displayedPositionMs = target;
+                    _anchorProgress(target);
+                    pendingSeekTimer?.cancel();
+                    pendingSeekTimer = Timer(const Duration(seconds: 5), () {
+                      if (!mounted) return;
+                      setState(() {
+                        pendingSeekTargetMs = null;
+                        _anchorProgress(widget.state.playback.positionMs);
+                      });
+                    });
                   });
                   widget.onSeek(target);
                 },
