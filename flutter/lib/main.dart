@@ -448,7 +448,8 @@ class _FusionPlayHomeState extends State<FusionPlayHome> {
         runUpdateFlow(
           context: context,
           onCheckUpdate: widget.controller.checkForUpdate,
-          onInstallUpdate: widget.controller.downloadAndInstallUpdate,
+          onDownloadUpdate: widget.controller.downloadUpdate,
+          onInstallUpdate: widget.controller.installDownloadedUpdate,
         ),
       ),
     );
@@ -693,8 +694,9 @@ class _FusionPlayHomeState extends State<FusionPlayHome> {
                           onExportLogs: widget.controller.exportLogs,
                           isAndroid: _isAndroid,
                           onCheckUpdate: widget.controller.checkForUpdate,
+                          onDownloadUpdate: widget.controller.downloadUpdate,
                           onInstallUpdate:
-                              widget.controller.downloadAndInstallUpdate,
+                              widget.controller.installDownloadedUpdate,
                         ),
                         onDismiss: _dismissOverlay,
                         onSettingsClose: _closeSettings,

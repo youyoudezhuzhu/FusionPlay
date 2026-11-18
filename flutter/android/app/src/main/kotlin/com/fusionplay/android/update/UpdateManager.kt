@@ -17,7 +17,9 @@ import kotlinx.coroutines.launch
  *
  * Flutter 侧通过 `com.fusionplay.android/update` 通道调用：
  * - `check` → { status: available|up_to_date|unavailable|error, ... }
- * - `downloadAndInstall` → { status: started|permission_required|error, message? }
+ * - `download` reports byte progress and returns ready after verification.
+ * - `install` opens the installer for a verified local package.
+ * - legacy `downloadAndInstall` → { status: started|permission_required|error, message? }
  *
  * 网络与文件操作都在 IO 线程执行，结果切回主线程再回给 Flutter。
  */
@@ -27,7 +29,12 @@ class UpdateManager(private val context: Context) {
     private val repository = UpdateRepository(context)
     private val downloader = UpdateDownloader(context)
     private val installer = UpdateInstaller(context)
-    private val busy = AtomicBoolean(false)
+    private companion object {
+        // Activity recreation may attach another manager while IO is winding down.
+        val busy = AtomicBoolean(false)
+    }
+
+    @Volatile private var selected: UpdateManifest? = null
     private var channel: MethodChannel? = null
 
     fun attach(messenger: BinaryMessenger) {
@@ -46,9 +53,14 @@ class UpdateManager(private val context: Context) {
             "check" -> scope.launch {
                 val outcome = runCatching { repository.check(force = true) }
                     .getOrElse { UpdateCheck.Failure(it.message ?: "检查更新失败") }
-                respond(result, checkMap(outcome))
+                val available = (outcome as? UpdateCheck.Available)?.manifest
+                selected = available
+                val downloaded = available != null && runCatching {
+                    downloader.verifiedFile(available) != null
+                }.getOrDefault(false)
+                respond(result, checkMap(outcome) + ("downloaded" to downloaded))
             }
-            "downloadAndInstall" -> {
+            "download", "install", "downloadAndInstall" -> {
                 if (!busy.compareAndSet(false, true)) {
                     result.success(
                         mapOf("status" to "error", "message" to "已有更新任务正在进行中"),
@@ -57,7 +69,7 @@ class UpdateManager(private val context: Context) {
                 }
                 scope.launch {
                     val payload = try {
-                        downloadAndInstall()
+                        if (call.method == "downloadAndInstall") downloadAndInstall() else updateAction(call)
                     } catch (error: Exception) {
                         mapOf("status" to "error", "message" to (error.message ?: "更新失败"))
                     } finally {
@@ -68,6 +80,23 @@ class UpdateManager(private val context: Context) {
             }
             else -> result.notImplemented()
         }
+    }
+
+    private fun updateAction(call: MethodCall): Map<String, Any?> {
+        val manifest = selected
+        require(manifest != null && manifest.sha256 == call.argument<String>("releaseKey")) {
+            "更新版本已变化，请重新检查更新"
+        }
+        if (call.method == "install") {
+            val apk = downloader.verifiedFile(manifest)
+                ?: return mapOf("status" to "missing", "message" to "安装包已失效，请重新下载")
+            return install(apk)
+        }
+        downloader.download(manifest) { bytes, total ->
+            val event = mapOf("bytes" to bytes, "total" to total, "releaseKey" to manifest.sha256)
+            mainHandler.post { channel?.invokeMethod("progress", event) }
+        }
+        return mapOf("status" to "ready")
     }
 
     private fun downloadAndInstall(): Map<String, Any?> {
@@ -87,23 +116,25 @@ class UpdateManager(private val context: Context) {
                 "message" to "检查更新失败：${check.message}",
             )
         }
-        val apk = downloader.download(manifest)
-        return when (val install = installer.install(apk)) {
-            is InstallResult.Started -> mapOf("status" to "started")
-            is InstallResult.PermissionRequired -> mapOf(
-                "status" to "permission_required",
-                "message" to install.message,
-            )
-            is InstallResult.Failure -> mapOf(
-                "status" to "error",
-                "message" to install.message,
-            )
-        }
+        return install(downloader.download(manifest) { _, _ -> })
+    }
+
+    private fun install(apk: java.io.File): Map<String, Any?> = when (val install = installer.install(apk)) {
+        is InstallResult.Started -> mapOf("status" to "started")
+        is InstallResult.PermissionRequired -> mapOf(
+            "status" to "permission_required",
+            "message" to install.message,
+        )
+        is InstallResult.Failure -> mapOf(
+            "status" to "error",
+            "message" to install.message,
+        )
     }
 
     private fun checkMap(outcome: UpdateCheck): Map<String, Any?> = when (outcome) {
         is UpdateCheck.Available -> mapOf(
             "status" to "available",
+            "releaseKey" to outcome.manifest.sha256,
             "versionName" to outcome.manifest.versionName,
             "versionCode" to outcome.manifest.versionCode,
             "notes" to outcome.manifest.notes,

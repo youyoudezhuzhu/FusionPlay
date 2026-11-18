@@ -7,6 +7,8 @@ enum UpdateCheckStatus { available, upToDate, unavailable, error }
 class UpdateCheckResult {
   const UpdateCheckResult({
     required this.status,
+    this.releaseKey = '',
+    this.downloaded = false,
     this.versionName,
     this.versionCode,
     this.notes,
@@ -17,6 +19,8 @@ class UpdateCheckResult {
 
   /// The latest version found on the update server, when `available`.
   final String? versionName;
+  final String releaseKey;
+  final bool downloaded;
 
   /// Monotonic Play-style version code of [versionName].
   final int? versionCode;
@@ -44,6 +48,8 @@ class UpdateCheckResult {
     };
     return UpdateCheckResult(
       status: status,
+      releaseKey: _string(map['releaseKey']) ?? '',
+      downloaded: map['downloaded'] == true,
       versionName: _string(map['versionName']),
       versionCode: _integer(map['versionCode']),
       notes: _string(map['notes']),
@@ -60,7 +66,7 @@ class UpdateCheckResult {
 }
 
 /// Result of asking Android to download and start installing an update.
-enum UpdateInstallStatus { started, permissionRequired, error }
+enum UpdateInstallStatus { started, permissionRequired, missing, error }
 
 /// Payload of the Android `downloadAndInstall` update-channel method.
 class UpdateInstallResult {
@@ -73,6 +79,7 @@ class UpdateInstallResult {
 
   factory UpdateInstallResult.fromMap(Map<Object?, Object?> map) {
     final status = switch (_string(map['status'])?.toLowerCase()) {
+      'missing' => UpdateInstallStatus.missing,
       'started' => UpdateInstallStatus.started,
       'permission_required' => UpdateInstallStatus.permissionRequired,
       _ => UpdateInstallStatus.error,
@@ -86,6 +93,11 @@ class UpdateInstallResult {
   @override
   String toString() => 'UpdateInstallResult(status: ${status.name})';
 }
+
+typedef DownloadProgress = void Function(int bytes, int total);
+typedef DownloadUpdate =
+    Future<void> Function(String releaseKey, DownloadProgress progress);
+typedef InstallUpdate = Future<UpdateInstallResult> Function(String releaseKey);
 
 /// Thin client of the Android update MethodChannel.
 ///
@@ -123,11 +135,42 @@ class AndroidUpdateService {
     }
   }
 
-  Future<UpdateInstallResult> downloadAndInstall() async {
+  bool _downloading = false;
+
+  Future<void> download(String key, DownloadProgress progress) async {
+    if (_downloading) throw StateError('已有下载正在进行');
+    _downloading = true;
+    _channel.setMethodCallHandler((call) async {
+      final data = _map(call.arguments);
+      if (call.method == 'progress' && data['releaseKey'] == key) {
+        progress(_integer(data['bytes']) ?? 0, _integer(data['total']) ?? -1);
+      }
+    });
     try {
-      final response = await _channel.invokeMethod<Object?>(
-        'downloadAndInstall',
+      final data = _map(
+        await _channel.invokeMethod<Object?>('download', {'releaseKey': key}),
       );
+      if (data['status'] != 'ready') {
+        throw StateError(_string(data['message']) ?? '下载更新失败');
+      }
+    } finally {
+      _channel.setMethodCallHandler(null);
+      _downloading = false;
+    }
+  }
+
+  Future<UpdateInstallResult> install(String key) =>
+      _install('install', {'releaseKey': key});
+
+  Future<UpdateInstallResult> downloadAndInstall() =>
+      _install('downloadAndInstall');
+
+  Future<UpdateInstallResult> _install(
+    String method, [
+    Map<String, String>? arguments,
+  ]) async {
+    try {
+      final response = await _channel.invokeMethod<Object?>(method, arguments);
       return UpdateInstallResult.fromMap(_map(response));
     } on MissingPluginException {
       return const UpdateInstallResult(

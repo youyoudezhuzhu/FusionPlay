@@ -69,6 +69,7 @@ class SettingsView extends StatefulWidget {
     this.isAndroid,
     this.scrollable = true,
     this.onCheckUpdate,
+    this.onDownloadUpdate,
     this.onInstallUpdate,
     this.showHeader = true,
   });
@@ -107,7 +108,8 @@ class SettingsView extends StatefulWidget {
   final Future<UpdateCheckResult> Function()? onCheckUpdate;
 
   /// Download + system installer triggered from the update dialog.
-  final Future<UpdateInstallResult> Function()? onInstallUpdate;
+  final DownloadUpdate? onDownloadUpdate;
+  final InstallUpdate? onInstallUpdate;
 
   /// When false the page title is omitted (hosted inside the glass overlay).
   final bool showHeader;
@@ -443,6 +445,7 @@ class _SettingsViewState extends State<SettingsView> {
   bool get _showUpdateRow =>
       (widget.isAndroid ?? defaultTargetPlatform == TargetPlatform.android) &&
       widget.onCheckUpdate != null &&
+      widget.onDownloadUpdate != null &&
       widget.onInstallUpdate != null;
 
   Widget _checkUpdateRow() {
@@ -482,11 +485,13 @@ class _SettingsViewState extends State<SettingsView> {
     if (_checkingUpdate || _downloadingUpdate) return;
     final onCheck = widget.onCheckUpdate;
     final onInstall = widget.onInstallUpdate;
-    if (onCheck == null || onInstall == null) return;
+    final onDownload = widget.onDownloadUpdate;
+    if (onCheck == null || onInstall == null || onDownload == null) return;
 
     await runUpdateFlow(
       context: context,
       onCheckUpdate: onCheck,
+      onDownloadUpdate: onDownload,
       onInstallUpdate: onInstall,
       onCheckingChanged: (checking) {
         if (mounted) setState(() => _checkingUpdate = checking);

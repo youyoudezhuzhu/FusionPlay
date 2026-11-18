@@ -768,6 +768,9 @@ void main() {
           versionName: '2.0',
           notes: '更新说明',
         ),
+        download: (_, _) async {},
+        install: (_) async =>
+            const UpdateInstallResult(status: UpdateInstallStatus.started),
       ),
     );
     await captureRoute('update-confirmation');

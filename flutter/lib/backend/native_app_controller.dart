@@ -82,6 +82,14 @@ class NativeAppController extends FusionPlayController {
   Future<UpdateCheckResult> checkForUpdate() => _updates.check();
 
   @override
+  Future<void> downloadUpdate(String key, DownloadProgress progress) =>
+      _updates.download(key, progress);
+
+  @override
+  Future<UpdateInstallResult> installDownloadedUpdate(String key) =>
+      _updates.install(key);
+
+  @override
   Future<UpdateInstallResult> downloadAndInstallUpdate() =>
       _updates.downloadAndInstall();
 
