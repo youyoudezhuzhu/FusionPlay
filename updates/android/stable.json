@@ -2,14 +2,14 @@
   "schema_version": 1,
   "channel": "stable",
   "published": true,
-  "version_name": "1.7.2",
-  "version_code": 10702,
-  "sha256": "1bbe809eb5ff631b0447b323ac6f910b1e1fd5045759e43041f6de93c8227554",
+  "version_name": "1.7.3",
+  "version_code": 10703,
+  "sha256": "188898c0022292dfd7dd9141b67f66d1001bb341926ef6e36677206e161d41d6",
   "signer_sha256": "4836fb96c2ef76fd81ac385455f1b0154af77fadae1b45bbb752b192499dc12f",
-  "apk_url": "https://youyoudezhuzhu.github.io/FusionPlay/update/android/dl/latest.apk?v=10702",
-  "apk_url_alt": "https://github.com/youyoudezhuzhu/FusionPlay/releases/download/android-v1.7.2/FusionPlay-Android-1.7.2.apk",
-  "apk_size": 12740864,
-  "source_commit": "fd8c4e3249cf3137d3bbc7bf1f409c1524e7909e",
-  "notes": "## FusionPlay Android 1.7.2\n\n### Android 显示问题修复\n\n- 播放页玻璃控件切换为 `liquid_glass_widgets` 的 **minimal（shader-free）** 质量档，避免部分 Android/Impeller 设备上第三方高级 shader 导致的控件黑屏/只显示背景痕迹。\n- 保留 1.7.1 的 21:9 布局、FloatingAlbumArt、玻璃按钮/音量胶囊外形和全部业务逻辑。\n- 这是兼容性回退，不是最终形态；待确认设备后可在支持 Impeller 的机型上恢复更高折射质量。\n\n### 已知\n\n- 1.7.1 在部分 Android 设备上出现播放控件不显示/黑屏；本版优先保证可显示和可操作。",
-  "published_at": "2026-11-17T16:18:29Z"
+  "apk_url": "https://youyoudezhuzhu.github.io/FusionPlay/update/android/dl/latest.apk?v=10703",
+  "apk_url_alt": "https://github.com/youyoudezhuzhu/FusionPlay/releases/download/android-v1.7.3/FusionPlay-Android-1.7.3.apk",
+  "apk_size": 12684138,
+  "source_commit": "0e870689eeafbf6a0b24139ffe5371b43ffeb588",
+  "notes": "## FusionPlay Android 1.7.3\n\n- 播放器、菜单、设置和浮层使用共享封面背景与折射材质，调整封面悬浮投影及播放按钮行的位置。\n- AirPlay 读取发送端提供的 DMAP 曲目标识，分辨同曲标题更新与切歌。收紧“标题即歌词”的判断，避免同专辑连续曲目误入歌词视图。歌词可用性取决于发送端。\n- DLNA 相对封面地址按当前媒体地址解析。播放器接受与妙播接收端相同大小上限的内嵌封面。\n\n- 封面解码失败时保留上一张已显示的封面，并在后续播放状态更新时重试。\n\n本次验证包含自动化接收状态与 Flutter 播放页测试。未进行本版本的手机到接收器真机投送或 Android GPU 性能测试。",
+  "published_at": "2026-11-18T11:21:09Z"
 }
