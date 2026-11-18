@@ -527,8 +527,9 @@ class _PlayerViewState extends State<PlayerView> {
       if (!updated ||
           ((next.positionMs - pending).abs() > _progressToleranceMs &&
               (next.positionMs - expected).abs() > _progressToleranceMs)) {
-        if (next.isPlaying != old.isPlaying)
+        if (next.isPlaying != old.isPlaying) {
           _anchorProgress(_displayedPositionMs);
+        }
         return;
       }
       pendingSeekTimer?.cancel();
