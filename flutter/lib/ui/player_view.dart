@@ -770,7 +770,10 @@ class _PlayerViewState extends State<PlayerView> {
       final padding = compact ? 8.0 : 16.0;
       // Reserve space for metadata, timeline, transport and volume first.
       // Use remaining height for artwork rather than an arbitrary 238px cut.
-      final controlsBudget = dense ? 160.0 : (compact ? 183.0 : 226.0);
+      // Conservative reserve includes title/artist, timeline, transport,
+      // volume and spacing.  The 900x400 / 980x420 previews previously
+      // overflowed because 183px underestimated the real controls stack.
+      final controlsBudget = dense ? 206.0 : (compact ? 248.0 : 286.0);
       final cover = math.min(
         panelWidth - padding * 2,
         math.max(64.0, panelHeight - padding * 2 - controlsBudget),
@@ -908,7 +911,7 @@ class _PlayerViewState extends State<PlayerView> {
   Widget _liquid21NoLyricsStage() => LayoutBuilder(
     key: const ValueKey('player-layout-horizontal'),
     builder: (context, content) {
-      final compact = content.maxHeight < 390;
+      final compact = content.maxHeight < 360;
       final cappedWidth =
           (content.maxWidth > 1400
                   ? math.min(content.maxWidth, 1600)
@@ -1572,23 +1575,19 @@ class _PlayerViewState extends State<PlayerView> {
                 : (compact
                       ? 60
                       : (MediaQuery.sizeOf(context).width >= 1500 ? 82 : 70)),
-            // The primary transport control uses the same refractive
-            // material as the adjacent buttons; no opaque white disc.
-            child: lg.GlassContainer(
-              height: short
-                  ? 48
-                  : (compact
-                        ? 60
-                        : (MediaQuery.sizeOf(context).width >= 1500 ? 82 : 70)),
-              padding: EdgeInsets.zero,
-              shape: const lg.LiquidRoundedSuperellipse(borderRadius: 999),
-              useOwnLayer: true,
-              quality: lg.GlassQuality.standard,
-              settings: const lg.LiquidGlassSettings(
-                thickness: 9,
-                blur: 2,
-                glassColor: Color(0x18FFFFFF),
-                chromaticAberration: 0,
+            // Reference design: the primary action is an opaque white disc.
+            // Only previous/next and the volume capsule use refractive glass.
+            child: DecoratedBox(
+              decoration: BoxDecoration(
+                color: const Color(0xF2FFFFFF),
+                shape: BoxShape.circle,
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.black.withValues(alpha: .12),
+                    blurRadius: 20,
+                    offset: const Offset(0, 5),
+                  ),
+                ],
               ),
               child: Material(
                 color: Colors.transparent,
@@ -1623,7 +1622,7 @@ class _PlayerViewState extends State<PlayerView> {
                             : FusionIcons.play,
                         key: ValueKey<bool>(widget.state.playback.isPlaying),
                         size: glyph,
-                        color: Colors.white.withValues(alpha: .94),
+                        color: const Color(0xE61A1C22),
                       ),
                     ),
                   ),
