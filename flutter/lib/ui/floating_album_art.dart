@@ -1,8 +1,7 @@
 import 'package:flutter/material.dart';
 
-/// Floating album art: a soft ambient shadow, the unobscured square artwork,
-/// and a hairline rim light. The shadow is deliberately painted outside the
-/// artwork's clip so it never becomes a black plinth under the cover.
+/// A floating cover with a diffused ambient shadow, not an offset solid card.
+/// Shadows live outside the artwork clip; the image stays sharp.
 class FloatingAlbumArt extends StatelessWidget {
   const FloatingAlbumArt({
     super.key,
@@ -18,32 +17,18 @@ class FloatingAlbumArt extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final r = radius ?? size * .075;
-    return SizedBox(
-      width: size,
-      height: size,
+    return SizedBox.square(
+      dimension: size,
       child: Stack(
         alignment: Alignment.center,
         clipBehavior: Clip.none,
         children: [
-          // A soft, blurred ellipse-like spread. No solid black offset card.
-          // Wide, low-opacity diffusion: no hard edge and no solid plinth.
-          Container(
-            width: size * .92,
-            height: size * .92,
-            decoration: BoxDecoration(
-              borderRadius: BorderRadius.circular(size * .10),
-              boxShadow: [
-                BoxShadow(
-                  color: Colors.black.withValues(alpha: .16),
-                  blurRadius: size * .16,
-                  spreadRadius: 0,
-                  offset: Offset(0, size * .05),
-                ),
-                BoxShadow(
-                  color: Colors.white.withValues(alpha: .05),
-                  blurRadius: size * .08,
-                ),
-              ],
+          // The radial diffusion has no rectangular fill or hard lower edge.
+          Positioned.fill(
+            child: IgnorePointer(
+              child: CustomPaint(
+                painter: _AlbumAmbientShadow(),
+              ),
             ),
           ),
           ClipRRect(
@@ -51,20 +36,40 @@ class FloatingAlbumArt extends StatelessWidget {
             child: SizedBox.square(dimension: size, child: child),
           ),
           IgnorePointer(
-            child: Container(
-              width: size,
-              height: size,
+            child: DecoratedBox(
               decoration: BoxDecoration(
                 borderRadius: BorderRadius.circular(r),
                 border: Border.all(
-                  color: Colors.white.withValues(alpha: .10),
-                  width: .6,
+                  color: Colors.white.withValues(alpha: .09),
+                  width: .65,
                 ),
               ),
+              child: SizedBox.square(dimension: size),
             ),
           ),
         ],
       ),
     );
   }
+}
+
+class _AlbumAmbientShadow extends CustomPainter {
+  @override
+  void paint(Canvas canvas, Size size) {
+    final center = Offset(size.width * .5, size.height * .54);
+    final radius = size.width * .72;
+    final paint = Paint()
+      ..shader = RadialGradient(
+        colors: [
+          Colors.black.withValues(alpha: .23),
+          Colors.black.withValues(alpha: .10),
+          Colors.black.withValues(alpha: 0),
+        ],
+        stops: const [0, .52, 1],
+      ).createShader(Rect.fromCircle(center: center, radius: radius));
+    canvas.drawCircle(center, radius, paint);
+  }
+
+  @override
+  bool shouldRepaint(covariant _AlbumAmbientShadow oldDelegate) => false;
 }
