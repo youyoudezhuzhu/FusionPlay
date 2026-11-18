@@ -638,48 +638,50 @@ class _FusionPlayHomeState extends State<FusionPlayHome> {
                 ),
                 if (_morphOpen && _anchorRect != null)
                   Positioned.fill(
-                    child: FusionMorphOverlay(
-                      key: const ValueKey('morph-overlay'),
-                      stage: _morphStage!,
-                      anchorRect: _anchorRect!,
-                      menuItems: _menuItems(),
-                      menuFocusNodes: _menuItemFocus,
-                      settingsTitle: '设置',
-                      settingsChild: SettingsView(
-                        state: state,
-                        showHeader: false,
-                        scrollable: false,
-                        initialFocusNode: _settingsInitialFocus,
-                        nameFocusNode: _settingsNameFocus,
-                        miPlayFocusNode: isTelevision
-                            ? _settingsTvInitialFocus
-                            : _settingsInitialFocus,
-                        onClose: _closeSettings,
-                        onReceiverName: widget.controller.setReceiverName,
-                        onStartup: widget.controller.setStartupEnabled,
-                        onAutoWake: widget.controller.setAutoWakeEnabled,
-                        onAdvancedEffects:
-                            widget.controller.setAdvancedEffectsEnabled,
-                        onMiPlay: (value) => widget.controller
-                            .setProtocolEnabled('miplay', value),
-                        onMiPlayIdentity:
-                            widget.controller.setMiPlayDeviceIdentity,
-                        onAirPlay: (value) => widget.controller
-                            .setProtocolEnabled('airplay', value),
-                        onDlna: (value) =>
-                            widget.controller.setProtocolEnabled('dlna', value),
-                        onExportLogs: widget.controller.exportLogs,
-                        isAndroid: _isAndroid,
-                        onCheckUpdate: widget.controller.checkForUpdate,
-                        onInstallUpdate:
-                            widget.controller.downloadAndInstallUpdate,
+                    child: SafeArea(
+                      child: FusionMorphOverlay(
+                        key: const ValueKey('morph-overlay'),
+                        stage: _morphStage!,
+                        anchorRect: _anchorRect!,
+                        menuItems: _menuItems(),
+                        menuFocusNodes: _menuItemFocus,
+                        settingsTitle: '设置',
+                        settingsChild: SettingsView(
+                          state: state,
+                          showHeader: false,
+                          scrollable: false,
+                          initialFocusNode: _settingsInitialFocus,
+                          nameFocusNode: _settingsNameFocus,
+                          miPlayFocusNode: isTelevision
+                              ? _settingsTvInitialFocus
+                              : _settingsInitialFocus,
+                          onClose: _closeSettings,
+                          onReceiverName: widget.controller.setReceiverName,
+                          onStartup: widget.controller.setStartupEnabled,
+                          onAutoWake: widget.controller.setAutoWakeEnabled,
+                          onAdvancedEffects:
+                              widget.controller.setAdvancedEffectsEnabled,
+                          onMiPlay: (value) => widget.controller
+                              .setProtocolEnabled('miplay', value),
+                          onMiPlayIdentity:
+                              widget.controller.setMiPlayDeviceIdentity,
+                          onAirPlay: (value) => widget.controller
+                              .setProtocolEnabled('airplay', value),
+                          onDlna: (value) => widget.controller
+                              .setProtocolEnabled('dlna', value),
+                          onExportLogs: widget.controller.exportLogs,
+                          isAndroid: _isAndroid,
+                          onCheckUpdate: widget.controller.checkForUpdate,
+                          onInstallUpdate:
+                              widget.controller.downloadAndInstallUpdate,
+                        ),
+                        onDismiss: _dismissOverlay,
+                        onSettingsClose: _closeSettings,
+                        onClosed: _finishMorphClose,
+                        onTransitionCompleted: _handleMorphTransitionCompleted,
+                        settingsMaxWidth: isTelevision ? 720 : 560,
+                        forceFallback: widget.forceGlassFallback,
                       ),
-                      onDismiss: _dismissOverlay,
-                      onSettingsClose: _closeSettings,
-                      onClosed: _finishMorphClose,
-                      onTransitionCompleted: _handleMorphTransitionCompleted,
-                      settingsMaxWidth: isTelevision ? 720 : 560,
-                      forceFallback: widget.forceGlassFallback,
                     ),
                   ),
                 if (_visibleError != null)

@@ -436,7 +436,7 @@ void main() {
     // the menu expands from its top-right corner.
     expect(menuRect.right, closeTo(buttonRect.right, .01));
     expect(menuRect.top, closeTo(buttonRect.top, .01));
-    expect(menuRect.height, closeTo(3 * 46 + 14, .01));
+    expect(menuRect.height, closeTo(3 * 46 + 20, .01));
     final container = tester.widget<LiquidGlass>(
       find.byKey(const ValueKey('morph-container')),
     );

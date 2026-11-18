@@ -176,6 +176,7 @@ class FusionSettingsSheet extends StatelessWidget {
                   child: SizedBox(height: headerHeight),
                 ),
                 SliverList.list(children: [child]),
+                const SliverToBoxAdapter(child: SizedBox(height: 24)),
               ],
             ),
           ),
@@ -400,7 +401,7 @@ class _FusionMorphOverlayState extends State<FusionMorphOverlay>
   /// the three-dot button exactly the same when the circle becomes the panel.
   Rect _menuRect(Size size) {
     final width = size.width < 480 ? 220.0 : 240.0;
-    final height = widget.menuItems.length * 46.0 + 14.0;
+    final height = widget.menuItems.length * 46.0 + 20.0;
     final anchor = widget.anchorRect;
     var left = anchor.right - width;
     left = left.clamp(8.0, math.max(8.0, size.width - width - 8)).toDouble();
