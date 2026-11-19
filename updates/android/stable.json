@@ -2,14 +2,14 @@
   "schema_version": 1,
   "channel": "stable",
   "published": true,
-  "version_name": "1.7.2",
-  "version_code": 10702,
-  "sha256": "1bbe809eb5ff631b0447b323ac6f910b1e1fd5045759e43041f6de93c8227554",
+  "version_name": "1.7.8",
+  "version_code": 10708,
+  "sha256": "7b4b69c2501c8ef4cf7d8344a790dd0fa638b371fb9fd906f6a0d8b364a4727f",
   "signer_sha256": "4836fb96c2ef76fd81ac385455f1b0154af77fadae1b45bbb752b192499dc12f",
-  "apk_url": "https://youyoudezhuzhu.github.io/FusionPlay/update/android/dl/latest.apk?v=10702",
-  "apk_url_alt": "https://github.com/youyoudezhuzhu/FusionPlay/releases/download/android-v1.7.2/FusionPlay-Android-1.7.2.apk",
-  "apk_size": 12740864,
-  "source_commit": "fd8c4e3249cf3137d3bbc7bf1f409c1524e7909e",
-  "notes": "## FusionPlay Android 1.7.2\n\n### Android 显示问题修复\n\n- 播放页玻璃控件切换为 `liquid_glass_widgets` 的 **minimal（shader-free）** 质量档，避免部分 Android/Impeller 设备上第三方高级 shader 导致的控件黑屏/只显示背景痕迹。\n- 保留 1.7.1 的 21:9 布局、FloatingAlbumArt、玻璃按钮/音量胶囊外形和全部业务逻辑。\n- 这是兼容性回退，不是最终形态；待确认设备后可在支持 Impeller 的机型上恢复更高折射质量。\n\n### 已知\n\n- 1.7.1 在部分 Android 设备上出现播放控件不显示/黑屏；本版优先保证可显示和可操作。",
-  "published_at": "2026-11-17T16:18:29Z"
+  "apk_url": "https://youyoudezhuzhu.github.io/FusionPlay/update/android/dl/latest.apk?v=10708",
+  "apk_url_alt": "https://github.com/youyoudezhuzhu/FusionPlay/releases/download/android-v1.7.8/FusionPlay-Android-1.7.8.apk",
+  "apk_size": 12711094,
+  "source_commit": "f6364a30f2342b5a500bd23111b03e45e6b0a5ba",
+  "notes": "## FusionPlay Android 1.7.8\n\n- 修复小米妙播偶发将加密音频误识别为明文 AAC 的问题，避免错误的采样率识别导致播放中断。\n- 改进同一 AAC 帧分布在多个 PES 数据包时的识别和拼接，并保留对明文 AAC 的兼容。",
+  "published_at": "2026-11-19T08:01:14Z"
 }
