@@ -2,14 +2,14 @@
   "schema_version": 1,
   "channel": "stable",
   "published": true,
-  "version_name": "1.7.7",
-  "version_code": 10707,
-  "sha256": "c458ca2ca0bf829b6197096b9bd1e8c61b7ec3d4858318ebe704571c82aaf557",
+  "version_name": "1.7.8",
+  "version_code": 10708,
+  "sha256": "7b4b69c2501c8ef4cf7d8344a790dd0fa638b371fb9fd906f6a0d8b364a4727f",
   "signer_sha256": "4836fb96c2ef76fd81ac385455f1b0154af77fadae1b45bbb752b192499dc12f",
-  "apk_url": "https://youyoudezhuzhu.github.io/FusionPlay/update/android/dl/latest.apk?v=10707",
-  "apk_url_alt": "https://github.com/youyoudezhuzhu/FusionPlay/releases/download/android-v1.7.7/FusionPlay-Android-1.7.7.apk",
-  "apk_size": 12711043,
-  "source_commit": "37636780292e75390139ae6aa1206616d8566e1f",
-  "notes": "## FusionPlay Android 1.7.7\n\n- 在线更新支持在同一页面查看下载进度。安装包校验通过后可点击「安装」。如果系统要求安装权限，授权返回后可直接安装已下载的包。\n- 改进网易云音乐通过 AirPlay 投送时的逐句歌词识别。发送端更新曲目标识时，播放器会结合歌名和歌手判断是否仍是同一首歌。\n- 修复从 AirPlay 切到 DLNA 后封面和模糊背景可能残留的问题。DLNA 换歌时，即使发送端复用同一封面地址，也会重新取图。\n- 导出的接收日志增加 AirPlay 歌词识别依据，以及 DLNA 歌词字段、链接读取结果和解码器可见的歌词标签，方便排查不同手机的投送差异。",
-  "published_at": "2026-11-18T15:28:15Z"
+  "apk_url": "https://youyoudezhuzhu.github.io/FusionPlay/update/android/dl/latest.apk?v=10708",
+  "apk_url_alt": "https://github.com/youyoudezhuzhu/FusionPlay/releases/download/android-v1.7.8/FusionPlay-Android-1.7.8.apk",
+  "apk_size": 12711094,
+  "source_commit": "f6364a30f2342b5a500bd23111b03e45e6b0a5ba",
+  "notes": "## FusionPlay Android 1.7.8\n\n- 修复小米妙播偶发将加密音频误识别为明文 AAC 的问题，避免错误的采样率识别导致播放中断。\n- 改进同一 AAC 帧分布在多个 PES 数据包时的识别和拼接，并保留对明文 AAC 的兼容。",
+  "published_at": "2026-11-19T08:01:14Z"
 }
