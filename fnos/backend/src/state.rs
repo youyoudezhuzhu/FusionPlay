@@ -43,6 +43,8 @@ pub struct RuntimeState {
     pub current_source: Option<String>,
     #[serde(skip)]
     pub commands: std::collections::BTreeMap<String, Vec<String>>,
+    #[serde(skip)]
+    pub pending_miplay: Option<MediaInfo>,
     pub media: MediaInfo,
     pub sender_volume: SenderVolume,
     pub last_error: Option<String>,
@@ -82,6 +84,9 @@ impl AppState {
 
     pub fn set_current_source(&self, source: Option<Source>) {
         let mut state = self.state.write().unwrap();
+        if source == Some(Source::MiPlay) && state.current_source.as_deref() != Some("miplay") {
+            state.media = state.pending_miplay.take().unwrap_or_default();
+        }
         state.current_source = source.map(|source| source.as_str().to_string());
         if source != Some(Source::AirPlay) {
             state.sender_volume.airplay_db = None;

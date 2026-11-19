@@ -843,10 +843,13 @@ fn handle_miplay_event(value: Value, state: SharedState, sink: Arc<EngineSink>) 
             let mut runtime = state.state.write().unwrap();
             runtime.miplay.state = proto_state::STREAMING.to_string();
             runtime.miplay.detail = "正在播放小米妙播音频".to_string();
+            if let Some(media) = runtime.pending_miplay.take() {
+                runtime.media = media;
+            } else if runtime.current_source.as_deref() != Some("miplay") {
+                runtime.media = Default::default();
+            }
             runtime.current_source = Some("miplay".into());
-            runtime.media.title = text("title");
-            runtime.media.artist = text("artist");
-            runtime.media.album = text("album");
+            runtime.media.detail_codec = text("source_codec");
         }
         "stream_stopped" | "media_channel_closed" | "media_session_replaced" => {
             let mut runtime = state.state.write().unwrap();
@@ -854,19 +857,25 @@ fn handle_miplay_event(value: Value, state: SharedState, sink: Arc<EngineSink>) 
             if runtime.current_source.as_deref() == Some("miplay") {
                 runtime.current_source = None;
             }
+            if kind == "stream_stopped" { runtime.pending_miplay = None; }
             drop(runtime);
             sink.release(Source::MiPlay);
         }
         "media_info" => {
             let mut runtime = state.state.write().unwrap();
+            let media = crate::state::MediaInfo {
+                title: text("title"), artist: text("artist"), album: text("album"),
+                lyrics_text: text("lyrics"), cover_url: text("artwork"),
+                duration_ms: value["duration_ms"].as_u64(),
+                position_ms: value["position_ms"].as_u64(),
+                ..Default::default()
+            };
             if runtime.current_source.as_deref() == Some("miplay") {
-                runtime.media.title = text("title");
-                runtime.media.artist = text("artist");
-                runtime.media.album = text("album");
-                runtime.media.lyrics_text = text("lyrics");
-                runtime.media.duration_ms = value["duration_ms"].as_u64();
-                runtime.media.cover_url = text("artwork");
-                runtime.media.position_ms = value["position_ms"].as_u64();
+                let codec = runtime.media.detail_codec.take();
+                runtime.media = media;
+                runtime.media.detail_codec = codec;
+            } else {
+                runtime.pending_miplay = Some(media);
             }
         }
         "progress" | "volume" => {
@@ -1032,6 +1041,22 @@ mod tests {
         let runtime = state.snapshot();
         assert_eq!(runtime.airplay.state, "waiting");
         assert_eq!(runtime.airplay.detail, "等待 AirPlay 2 投放");
+    }
+
+    #[test]
+    fn miplay_metadata_before_pcm_is_displayed_on_takeover() {
+        let engine = AudioEngine::new(Default::default(), crate::audio::NullBackend::new()).unwrap();
+        let state = crate::state::AppState::new();
+        state.set_current_source(Some(Source::AirPlay));
+        let sink = EngineSink::new(engine, Arc::new(Arbiter::new()), state.clone());
+        handle_miplay_event(serde_json::json!({"event":"media_info","title":"Starlight","lyrics":"line one"}),
+            state.clone(), sink.clone());
+        assert!(state.snapshot().media.title.is_none());
+        handle_miplay_event(serde_json::json!({"event":"stream_started","source_codec":"aac"}),
+            state.clone(), sink);
+        let media = state.snapshot().media;
+        assert_eq!(media.title.as_deref(), Some("Starlight"));
+        assert_eq!(media.lyrics_text.as_deref(), Some("line one"));
     }
 
     #[test]
