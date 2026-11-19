@@ -74,6 +74,8 @@ FP.initGlass = function () {
       entry = { map };
       maps.set(panel, entry);
     }
+    entry.map.setAttribute('width', w);
+    entry.map.setAttribute('height', h);
     entry.map.setAttribute('href', canvas.toDataURL());
     entry.signature = signature;
   }
