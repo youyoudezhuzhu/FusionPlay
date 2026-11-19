@@ -960,6 +960,13 @@ fn stop_releases_lease_and_stops_feeding_engine() {
         wait_for(|| harness.backend.frames() > 4_800, Duration::from_secs(10)),
         "playback never produced audio"
     );
+    harness.player.set_paused(true);
+    thread::sleep(Duration::from_millis(75));
+    let paused_frames = harness.backend.frames();
+    thread::sleep(Duration::from_millis(100));
+    assert_eq!(harness.backend.frames(), paused_frames, "paused decode still feeding PCM");
+    harness.player.set_paused(false);
+    assert!(wait_for(|| harness.backend.frames() > paused_frames, Duration::from_secs(5)));
     harness.player.stop();
 
     let result = receiver

@@ -110,6 +110,13 @@ chmod -R u+rwX "$STAGE" 2>/dev/null || true
 mkdir -p "$STAGE/app/bin" "$STAGE/app/www" "$STAGE/app/licenses"
 cp -f "$BIN" "$STAGE/app/bin/fusionplay-fnos"
 cp -r "$ROOT/frontend/." "$STAGE/app/www/"
+(
+  cd "$REPO/flutter"
+  flutter pub get --enforce-lockfile
+  flutter build web --release --no-pub --no-web-resources-cdn --pwa-strategy=none -t lib/backend/fnos/player.dart
+)
+mkdir -p "$STAGE/app/www/player"
+cp -r "$REPO/flutter/build/web/." "$STAGE/app/www/player/"
 cp -f "$REPO/LICENSE" "$STAGE/app/licenses/LICENSE"
 if [ -f "$REPO/THIRD_PARTY_NOTICES.md" ]; then
     cp -f "$REPO/THIRD_PARTY_NOTICES.md" "$STAGE/app/licenses/THIRD_PARTY_NOTICES.md"

@@ -4,6 +4,7 @@ import 'dart:io';
 import 'dart:math' as math;
 import 'dart:ui';
 
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter_svg/flutter_svg.dart';
 
@@ -181,6 +182,7 @@ class _ArtworkBackgroundLayer extends StatelessWidget {
         : Image(
             image: provider!,
             fit: advancedEffectsEnabled ? BoxFit.fill : BoxFit.cover,
+            errorBuilder: kIsWeb ? (_, _, _) => const SizedBox.expand() : null,
             gaplessPlayback: true,
           );
     return DecoratedBox(
@@ -423,8 +425,21 @@ class _ArtworkCardState extends State<ArtworkCard>
                     image: provider,
                     fit: BoxFit.cover,
                     gaplessPlayback: true,
-                    errorBuilder: (_, _, _) =>
-                        const ColoredBox(color: Color(0x1A1A1A1A)),
+                    errorBuilder: (_, _, _) {
+                      // A sender can host its cover without granting CanvasKit CORS access.
+                      final uri = Uri.tryParse(visibleSource ?? '');
+                      if (kIsWeb &&
+                          (uri?.scheme == 'https' || uri?.scheme == 'http')) {
+                        return Image.network(
+                          uri.toString(),
+                          fit: BoxFit.cover,
+                          webHtmlElementStrategy: WebHtmlElementStrategy.prefer,
+                          errorBuilder: (_, _, _) =>
+                              const ColoredBox(color: Color(0x1A1A1A1A)),
+                        );
+                      }
+                      return const ColoredBox(color: Color(0x1A1A1A1A));
+                    },
                   ),
           ),
         ),

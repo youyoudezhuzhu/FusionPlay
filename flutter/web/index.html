@@ -1,0 +1,17 @@
+<!doctype html>
+<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>播放器 · FusionPlay</title>
+<style>body{margin:0;background:#181821;color:white;font:16px system-ui}main{padding:24px}a{color:inherit}</style></head>
+<body><main id="loading">正在打开播放器… <a href="../index.html#/audio">音频输出</a></main>
+<script>
+window.fpStatus = async () => {
+  const response = await fetch('../api/status', {cache:'no-store'});
+  if (!response.ok) throw new Error('接收器暂时不可用');
+  return response.text();
+};
+window.fpControl = async (source, command, value) => {
+  const response = await fetch('../api/player', {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({source,command,value})});
+  if (!response.ok) throw new Error('操作未完成，请检查发送端连接');
+};
+window.fpManage = route => location.assign('../index.html#/' + route);
+window.addEventListener('flutter-first-frame', () => document.getElementById('loading')?.remove());
+</script><script src="flutter_bootstrap.js" async></script></body></html>

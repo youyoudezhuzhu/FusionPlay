@@ -562,10 +562,50 @@ window.FP = window.FP || {};
       renderCurveControls();
     }
 
+    let groupsSignature;
+    function renderGroups() {
+      const audio = (store.getDraft() || {}).audio;
+      if (!audio) return;
+      const groups = audio.output_groups || [];
+      const enabled = audio.devices.filter(d => d.enabled).map(d => d.id);
+      const signature = JSON.stringify([groups, enabled, audio.devices.map(d => d.id)]);
+      if (groupsSignature === signature) return;
+      groupsSignature = signature;
+      const list = el('output-groups');
+      u.clearNode(list);
+      for (const group of groups) {
+        const row = u.create('li', 'card-foot');
+        const selected = group.devices.length === enabled.length && enabled.every(id => group.devices.includes(id));
+        const apply = u.create('button', 'btn', group.name);
+        apply.type = 'button';
+        apply.setAttribute('aria-pressed', String(selected));
+        apply.disabled = selected;
+        apply.onclick = function () {
+          const devices = store.getDraft().audio.devices;
+          if (group.devices.some(id => !devices.some(d => d.id === id))) {
+            ctx.toast('方案中的音箱已被移除，请重新添加设备。', 'warn');
+            return;
+          }
+          devices.forEach(d => store.setDeviceField(d.id, 'enabled', group.devices.includes(d.id)));
+          render();
+        };
+        const remove = u.create('button', 'btn small', '移除');
+        remove.type = 'button';
+        remove.setAttribute('aria-label', '移除输出方案 ' + group.name);
+        remove.onclick = function () {
+          store.setGlobal('output_groups', store.getDraft().audio.output_groups.filter(g => g.name !== group.name));
+          render();
+        };
+        row.append(apply, remove);
+        list.appendChild(row);
+      }
+    }
+
     function render() {
       if (!active) return;
       ensureSelection();
       renderDeviceList();
+      renderGroups();
       renderAddList();
       renderGlobal();
       renderPanel();
@@ -695,6 +735,20 @@ window.FP = window.FP || {};
         resetPoints: function () {}
       };
 
+      el('group-create').addEventListener('click', function () {
+        const audio = (store.getDraft() || {}).audio;
+        if (!audio) return;
+        const name = el('group-name').value.trim();
+        const groups = audio.output_groups || [];
+        const devices = audio.devices.filter(d => d.enabled).map(d => d.id);
+        if (!name || !devices.length || groups.some(g => g.name === name)) {
+          ctx.toast('请启用至少一个音箱，并填写未使用的方案名称。', 'warn');
+          return;
+        }
+        store.setGlobal('output_groups', groups.concat([{name, devices}]));
+        el('group-name').value = '';
+        render();
+      });
       el('audio-refresh').addEventListener('click', refreshDevices);
       el('audio-back').addEventListener('click', function () {
         document.body.classList.remove('audio-detail-open');

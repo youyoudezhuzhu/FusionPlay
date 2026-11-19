@@ -218,3 +218,26 @@ fn import_v1_export_migrates_curves_to_devices() {
     assert_eq!(a.gain_db, -3.0);
     assert_eq!(a.delay_ms, 12.0);
 }
+
+#[test]
+fn output_groups_persist_without_changing_calibration_or_receiver_identity() {
+    let dir = tempfile::tempdir().unwrap();
+    let (app, http) = start_app(dir.path(), vec![
+        device("hw:living", VolumeCurve::default()),
+        device("hw:kitchen", VolumeCurve::default()),
+    ]);
+    let mut config = serde_json::to_value(app.snapshot()).unwrap();
+    let groups = serde_json::json!([
+        {"name":"客厅","devices":["hw:living"]},
+        {"name":"全屋","devices":["hw:living","hw:kitchen"]}
+    ]);
+    config["audio"]["output_groups"] = groups.clone();
+    config["audio"]["devices"][1]["enabled"] = false.into();
+    config["audio"]["devices"][1]["delay_ms"] = 120.into();
+    assert_eq!(http.request("PUT", "/api/config", Some(&config.to_string())).0, 200);
+    let saved = serde_json::to_value(Config::load(&app.config_path).unwrap()).unwrap();
+    assert_eq!(saved["audio"]["output_groups"], groups);
+    assert_eq!(saved["audio"]["devices"][1]["delay_ms"], 120.0);
+    assert!(!app.engine.settings().devices[1].enabled);
+    assert_eq!(saved["receiver"], config["receiver"]);
+}

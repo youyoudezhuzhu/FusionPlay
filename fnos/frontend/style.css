@@ -1156,3 +1156,6 @@ body.has-savebar .toast { bottom: 92px; }
 .identity-option.active { border-color: var(--accent); background: var(--accent-soft); color: var(--accent); }
 .identity-option.active .icon { color: var(--accent); }
 .identity-option:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+#output-groups li { display: flex; justify-content: space-between; gap: .75rem; }
+#group-name { max-width: 100%; margin: .5rem 0; }

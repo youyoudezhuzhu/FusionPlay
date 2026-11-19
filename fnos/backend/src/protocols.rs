@@ -493,6 +493,30 @@ impl ProtocolHosts {
         Arc::clone(&self.dlna)
     }
 
+    pub fn player_command(&self, source: &str, command: &str, value: u64) -> Result<()> {
+        let state = self.state.snapshot();
+        anyhow::ensure!(state.current_source.as_deref() == Some(source), "播放来源已变化");
+        anyhow::ensure!(state.player_commands().iter().any(|c| c == command), "发送端不支持此操作");
+        if source == "miplay" {
+            use fusionplay_miplay_sdk::MediaAction;
+            let handle = self.miplay.lock().unwrap();
+            let controller = &handle.as_ref().context("妙播未连接")?.controller;
+            let action = match command {
+                "play_pause" => MediaAction::Toggle,
+                "next_track" => MediaAction::Next,
+                "previous_track" => MediaAction::Previous,
+                "seek" => MediaAction::Seek(value),
+                "set_volume" => return controller.set_volume(value.min(100) as u8),
+                _ => anyhow::bail!("不支持的操作"),
+            };
+            return controller.send(action);
+        }
+        let core = self.core.lock().unwrap();
+        let tx = core.as_ref().and_then(|host| host.commands.as_ref()).context("接收器未就绪")?;
+        tx.send(serde_json::json!({"source":source,"command":command,"position_ms":value}).to_string())?;
+        Ok(())
+    }
+
     pub fn arbiter(&self) -> Arc<Arbiter> {
         Arc::clone(&self.arbiter)
     }
@@ -610,6 +634,33 @@ fn handle_core_event(json: String, state: SharedState, dlna: Arc<DlnaPlayer>) {
     let kind = value.get("type").and_then(Value::as_str).unwrap_or_default();
     let text = |key: &str| value.get(key).and_then(Value::as_str).map(|v| v.to_string());
     match kind {
+        "remote_control_available" => {
+            if let Some(source) = text("source") {
+                let commands = value["commands"].as_array().into_iter().flatten()
+                    .filter_map(Value::as_str).map(String::from).collect();
+                state.state.write().unwrap().commands.insert(source, commands);
+            }
+        }
+        "remote_control_unavailable" => {
+            let mut runtime = state.state.write().unwrap();
+            if let Some(source) = text("source") { runtime.commands.remove(&source); }
+            else { runtime.commands.clear(); }
+        }
+        "progress" => {
+            let mut runtime = state.state.write().unwrap();
+            if runtime.current_source.as_deref() == value["source"].as_str() {
+                runtime.media.position_ms = value["position_ms"].as_u64();
+                runtime.media.duration_ms = value["duration_ms"].as_u64();
+            }
+        }
+        "dlna_rate" => {
+            let paused = value["rate"].as_f64() == Some(0.0);
+            dlna.set_paused(paused);
+            let mut runtime = state.state.write().unwrap();
+            if runtime.current_source.as_deref() == Some("dlna") {
+                runtime.dlna.state = if paused { "paused" } else { "playing" }.into();
+            }
+        }
         "receiver_ready" => {
             let mut runtime = state.state.write().unwrap();
             if runtime.airplay.enabled {
@@ -633,6 +684,9 @@ fn handle_core_event(json: String, state: SharedState, dlna: Arc<DlnaPlayer>) {
             runtime.media.title = text("title");
             runtime.media.artist = text("artist");
             runtime.media.album = text("album");
+            if value["source"] == "airplay" {
+                runtime.media.lyrics_text = text("lyric_line");
+            }
             if value.get("track_changed").and_then(Value::as_bool) == Some(true) {
                 runtime.media.cover_url = None;
             }
@@ -702,6 +756,7 @@ fn handle_core_event(json: String, state: SharedState, dlna: Arc<DlnaPlayer>) {
                 runtime.media.artist = text("artist");
                 runtime.media.album = text("album");
                 runtime.media.cover_url = text("artwork_url");
+                runtime.media.lyrics_text = text("lyrics_text");
                 runtime.media.duration_ms = value.get("duration_ms").and_then(Value::as_u64);
                 runtime.media.position_ms = value.get("start_position_ms").and_then(Value::as_u64);
             }
@@ -744,7 +799,8 @@ fn handle_core_event(json: String, state: SharedState, dlna: Arc<DlnaPlayer>) {
             let mut runtime = state.state.write().unwrap();
             let position = value.get("position_ms").and_then(Value::as_u64);
             runtime.media.position_ms = position;
-            runtime.dlna.detail = "DLNA Seek 暂未支持（首版），播放位置由控制端显示".into();
+            drop(runtime);
+            if let Some(ms) = position { let _ = dlna.seek(ms); }
         }
         "error" => {
             let message = text("message").unwrap_or_else(|| "未知错误".into());
@@ -798,7 +854,30 @@ fn handle_miplay_event(value: Value, state: SharedState, sink: Arc<EngineSink>) 
             if runtime.current_source.as_deref() == Some("miplay") {
                 runtime.current_source = None;
             }
+            drop(runtime);
             sink.release(Source::MiPlay);
+        }
+        "media_info" => {
+            let mut runtime = state.state.write().unwrap();
+            if runtime.current_source.as_deref() == Some("miplay") {
+                runtime.media.title = text("title");
+                runtime.media.artist = text("artist");
+                runtime.media.album = text("album");
+                runtime.media.lyrics_text = text("lyrics");
+                runtime.media.duration_ms = value["duration_ms"].as_u64();
+                runtime.media.cover_url = text("artwork");
+                runtime.media.position_ms = value["position_ms"].as_u64();
+            }
+        }
+        "progress" | "volume" => {
+            let mut runtime = state.state.write().unwrap();
+            if runtime.current_source.as_deref() == Some("miplay") {
+                if kind == "progress" {
+                    runtime.media.position_ms = value["position_ms"].as_u64();
+                } else {
+                    runtime.sender_volume.miplay_percent = value["percent"].as_u64().map(|v| v.min(100) as u8);
+                }
+            }
         }
         "playback_state" => {
             if let Some(playing) = value.get("playing").and_then(Value::as_bool) {

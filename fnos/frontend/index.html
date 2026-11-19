@@ -7,6 +7,7 @@
 <title>FusionPlay · 音频接收与输出管理</title>
 <link rel="icon" href="data:,">
 <script>
+if (!location.hash || location.hash === '#/player') location.replace('player/index.html');
 /* Apply the persisted theme before first paint to avoid a flash. */
 try {
   var savedTheme = localStorage.getItem('fusionplay.theme');
@@ -167,6 +168,7 @@ try {
     </div>
   </div>
   <nav class="main-nav" aria-label="主导航">
+    <a class="nav-link" href="player/index.html">播放器</a>
     <a class="nav-link" href="#/overview" data-route="overview">概览</a>
     <a class="nav-link" href="#/audio" data-route="audio">音频</a>
     <a class="nav-link" href="#/receive" data-route="receive">接收</a>
@@ -284,6 +286,15 @@ try {
             <ul class="add-list" id="audio-add-list"></ul>
           </div>
           <p class="hint">点击卡片选择音箱；开关控制该音箱是否输出，可同时启用多个。</p>
+        </article>
+
+        <article class="card" aria-labelledby="output-groups-title">
+          <h2 class="card-title" id="output-groups-title">输出方案</h2>
+          <p class="hint">把当前启用的音箱存为一组。切换方案后点击「保存并应用」，各音箱沿用自己的音量和延迟。</p>
+          <label for="group-name">新方案名称</label>
+          <input id="group-name" maxlength="64" placeholder="例如：客厅">
+          <button type="button" class="btn" id="group-create">记录当前组合</button>
+          <ul class="device-list" id="output-groups"></ul>
         </article>
 
         <article class="card" aria-labelledby="audio-global-title">

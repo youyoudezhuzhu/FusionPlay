@@ -1,5 +1,8 @@
 # FusionPlay fnOS：构建、测试与 CI
 
+本地打包需要 Flutter 3.32.8 在 PATH 中。构建脚本会编译 `flutter/lib/backend/fnos/player.dart` 并将播放器、字体及 CanvasKit 一起写入 `www/player/`。管理页从播放器菜单进入。
+
+
 面向开发者。用户安装/验收见 [INSTALL.md](INSTALL.md)；功能边界见 [README.md](README.md)。
 
 ## 1. 目录布局

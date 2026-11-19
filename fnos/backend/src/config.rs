@@ -121,6 +121,9 @@ impl Default for MiPlaySwitch {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct AudioSettings {
+    /// Named sets of ALSA device IDs sharing the active receiver stream.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub output_groups: Vec<OutputGroup>,
     /// Master mix rate. The engine runs at this rate and resamples per device.
     pub sample_rate: u32,
     /// Global calibration attenuation, 0–100 % (100 = no extra attenuation).
@@ -137,6 +140,7 @@ pub struct AudioSettings {
 impl Default for AudioSettings {
     fn default() -> Self {
         Self {
+            output_groups: Vec::new(),
             sample_rate: 48_000,
             global_attenuation_percent: 100.0,
             curve: VolumeCurve::default(),
@@ -144,6 +148,12 @@ impl Default for AudioSettings {
             devices: Vec::new(),
         }
     }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OutputGroup {
+    pub name: String,
+    pub devices: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -272,6 +282,13 @@ impl Config {
         }
         if !(0.0..=100.0).contains(&self.audio.global_attenuation_percent) {
             anyhow::bail!("全局衰减必须在 0–100%");
+        }
+        let mut names = std::collections::HashSet::new();
+        for group in &self.audio.output_groups {
+            anyhow::ensure!(!group.name.trim().is_empty() && names.insert(group.name.trim()),
+                "输出方案名称不能为空或重复");
+            anyhow::ensure!(!group.devices.is_empty() && group.devices.iter().all(|id| !id.is_empty()),
+                "输出方案至少需要一个音箱");
         }
         if !self.audio.curve.is_default() {
             self.audio.curve.validate().map_err(anyhow::Error::msg)?;

@@ -50,6 +50,7 @@ class PlayerView extends StatefulWidget {
     required this.onPlayback,
     required this.onSeek,
     required this.onVolume,
+    this.volumeEnabled = true,
     this.artworkSource,
     this.artworkIdentity,
     this.progressFocusNode,
@@ -67,6 +68,7 @@ class PlayerView extends StatefulWidget {
   final ValueChanged<PlaybackCommand> onPlayback;
   final ValueChanged<int> onSeek;
   final ValueChanged<int> onVolume;
+  final bool volumeEnabled;
   final String? artworkSource;
   final String? artworkIdentity;
   final FocusNode? progressFocusNode;
@@ -921,7 +923,7 @@ class _PlayerViewState extends State<PlayerView> {
             children: [
               InkResponse(
                 key: const ValueKey('volume-mute-button'),
-                onTap: _toggleMute,
+                onTap: widget.volumeEnabled ? _toggleMute : null,
                 radius: 16,
                 child: Icon(
                   icon,
@@ -934,8 +936,8 @@ class _PlayerViewState extends State<PlayerView> {
                 child: RoundedProgressBar(
                   key: const ValueKey('volume-slider'),
                   value: _displayVolume,
-                  enabled: true,
-                  seekEnabled: true,
+                  enabled: widget.volumeEnabled,
+                  seekEnabled: widget.volumeEnabled,
                   showThumb: true,
                   focusNode: _volumeFocus,
                   upFocusNode: _playEnabled ? _playPauseFocus : null,

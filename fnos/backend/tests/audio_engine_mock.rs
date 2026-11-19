@@ -338,6 +338,7 @@ fn device_setting(id: &str, sample_rate: u32) -> DeviceSetting {
 
 fn audio_settings(devices: Vec<DeviceSetting>) -> AudioSettings {
     AudioSettings {
+        output_groups: vec![],
         sample_rate: MASTER_RATE,
         global_attenuation_percent: 100.0,
         curve: Default::default(),

@@ -54,6 +54,8 @@ done
 
 echo "▶ app.tgz 内容"
 check_exec "$TMP/app/bin/fusionplay-fnos" "含可执行 bin/fusionplay-fnos"
+check_file "$TMP/app/www/player/main.dart.js" "共享 Flutter 播放器"
+check_file "$TMP/app/www/player/canvaskit/canvaskit.wasm" "离线 CanvasKit"
 check_file "$TMP/app/www/index.html" "含 www/index.html"
 check_file "$TMP/app/www/js/main.js" "含 www/js/main.js"
 check_file "$TMP/app/www/js/core.js" "含 www/js/core.js"

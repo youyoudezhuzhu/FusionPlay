@@ -209,6 +209,7 @@ pub struct DlnaPlayer {
     /// Stop token + seek request of the currently playing track. A new track
     /// replaces it; `stop()` and the arbiter suspend hook raise the token.
     current: Mutex<Option<CurrentPlayback>>,
+    paused: AtomicBool,
     timeout_ms: AtomicU64,
     stats: Mutex<Option<DlnaStats>>,
     /// P2-1: opt-in auto-advance hook. The 1.3.x DLNA control plane is
@@ -228,6 +229,7 @@ impl DlnaPlayer {
             arbiter: Arc::clone(&arbiter),
             state,
             current: Mutex::new(None),
+            paused: AtomicBool::new(false),
             timeout_ms: AtomicU64::new(DEFAULT_TIMEOUT.as_millis() as u64),
             stats: Mutex::new(None),
             auto_advance: AtomicBool::new(false),
@@ -259,6 +261,11 @@ impl DlnaPlayer {
 
     /// Stop the currently playing DLNA track, if any. Safe to call from any
     /// thread (including arbiter suspend hooks).
+    pub fn set_paused(&self, paused: bool) {
+        self.paused.store(paused, Ordering::Release);
+        if paused { self.engine.flush(Source::Dlna); }
+    }
+
     pub fn stop(&self) {
         if let Some(current) = self.current.lock().unwrap().as_ref() {
             current.token.store(true, Ordering::Release);
@@ -679,6 +686,10 @@ impl DlnaPlayer {
             if abort.aborted() {
                 break;
             }
+            if self.paused.load(Ordering::Acquire) {
+                std::thread::sleep(Duration::from_millis(15));
+                continue;
+            }
             if let Some(target_ms) = take_pending_seek(seek_slot) {
                 match format.seek(
                     SeekMode::Accurate,
@@ -946,6 +957,10 @@ impl DlnaPlayer {
         loop {
             if abort.aborted() {
                 break;
+            }
+            if self.paused.load(Ordering::Acquire) {
+                std::thread::sleep(Duration::from_millis(15));
+                continue;
             }
             if let Some(target_ms) = take_pending_seek(seek_slot) {
                 tracing::info!(

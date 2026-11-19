@@ -82,6 +82,11 @@ jobs:
         timeout-minutes: 20
         run: cargo test --manifest-path src/FusionPlay.MiPlaySdk/Cargo.toml --lib
 
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.32.8'
+          cache: true
+
       - name: Build release binary
         timeout-minutes: 20
         run: cargo build --release --manifest-path fnos/backend/Cargo.toml

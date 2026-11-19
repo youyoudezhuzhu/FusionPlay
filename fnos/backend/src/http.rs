@@ -276,6 +276,8 @@ fn handle(
                     "miplay": runtime.miplay,
                 },
                 "current_source": runtime.current_source,
+                "player_commands": runtime.player_commands(),
+                "receiver_name": config.receiver.name,
                 "media": runtime.media,
                 "sender_volume": runtime.sender_volume,
                 "devices": engine.devices,
@@ -306,6 +308,18 @@ fn handle(
             Ok(config) => respond_json(&mut *respond, json!({"ok": true, "config": config})),
             Err(error) => respond_error(&mut *respond, 400, &format!("{error:#}")),
         },
+        ("POST", "/api/player") => {
+            let result = request_json(&request).and_then(|body| {
+                let source = body["source"].as_str().context("缺少播放来源")?;
+                let command = body["command"].as_str().context("缺少命令")?;
+                app.protocols.lock().unwrap().as_ref().context("接收器未运行")?
+                    .player_command(source, command, body["value"].as_u64().unwrap_or(0))
+            });
+            match result {
+                Ok(()) => respond_json(respond, json!({"accepted":true})),
+                Err(err) => respond_error(respond, 409, &err.to_string()),
+            }
+        }
         ("GET", "/api/devices") => respond_json(&mut *respond, json!({"devices": app.engine.devices()})),
         ("POST", "/api/devices/refresh") => {
             let config = app.snapshot();
@@ -565,6 +579,7 @@ fn serve_static(
     match std::fs::read(&file) {
         Ok(body) => {
             let content_type = match file.extension().and_then(|e| e.to_str()) {
+                Some("wasm") => "application/wasm",
                 Some("html") => "text/html; charset=utf-8",
                 Some("js") => "application/javascript; charset=utf-8",
                 Some("css") => "text/css; charset=utf-8",

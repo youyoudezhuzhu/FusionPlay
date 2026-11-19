@@ -24,6 +24,7 @@ pub struct MediaInfo {
     pub position_ms: Option<u64>,
     pub duration_ms: Option<u64>,
     pub detail_codec: Option<String>,
+    pub lyrics_text: Option<String>,
 }
 
 #[derive(Debug, Clone, Default, Serialize)]
@@ -40,10 +41,23 @@ pub struct RuntimeState {
     pub dlna: ProtocolRuntime,
     pub miplay: ProtocolRuntime,
     pub current_source: Option<String>,
+    #[serde(skip)]
+    pub commands: std::collections::BTreeMap<String, Vec<String>>,
     pub media: MediaInfo,
     pub sender_volume: SenderVolume,
     pub last_error: Option<String>,
     pub errors: Vec<String>,
+}
+
+impl RuntimeState {
+    pub fn player_commands(&self) -> Vec<String> {
+        match self.current_source.as_deref() {
+            Some("miplay") => ["play_pause", "previous_track", "next_track", "seek", "set_volume"]
+                .into_iter().map(String::from).collect(),
+            Some(source) => self.commands.get(source).cloned().unwrap_or_default(),
+            None => Vec::new(),
+        }
+    }
 }
 
 pub struct AppState {
