@@ -779,6 +779,10 @@ fn hotplug_recovery_and_live_config_preserve_other_devices() {
     );
 
     // --- replug B ----------------------------------------------------------
+    // Hold the first hardware write until the test samples the prefilled ring.
+    // Otherwise a busy runner can miss the transient even when prefill worked.
+    provider.set_gate("mock:b", false);
+    let gate = GateHolder::adopt(&provider, "mock:b");
     provider.set_present("mock:b", true);
     assert!(
         wait_until(Duration::from_secs(5), || {
@@ -789,18 +793,9 @@ fn hotplug_recovery_and_live_config_preserve_other_devices() {
     );
     // Reconnect prefill: the ring must be refilled with the calibration/jitter
     // silence before audio resumes.
-    let mut max_buffer = 0.0f32;
-    let deadline = Instant::now() + Duration::from_millis(120);
-    while Instant::now() < deadline {
-        if let Some(device) = device_status(&engine, "mock:b") {
-            max_buffer = max_buffer.max(device.buffer_ms);
-        }
-        thread::sleep(Duration::from_millis(1));
-    }
-    assert!(
-        max_buffer >= 80.0,
-        "reconnect did not prefill the ring (max buffer {max_buffer} ms)"
-    );
+    let buffer = device_status(&engine, "mock:b").unwrap().buffer_ms;
+    assert!(buffer >= 80.0, "reconnect did not prefill the ring ({buffer} ms)");
+    drop(gate);
     let b_before = device_status(&engine, "mock:b").unwrap().written_frames;
     pump(&engine, 30, Duration::from_millis(2));
     assert!(
