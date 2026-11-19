@@ -532,9 +532,23 @@ fn handle(
                 "log_path": logging::path().map(|p| p.display().to_string()),
             }))
         }
+        ("GET", artwork) if artwork.starts_with("/artwork/") => {
+            let name = &artwork["/artwork/".len()..];
+            if !artwork_filename(name) {
+                return respond(404, "text/plain", b"not found", &[]);
+            }
+            serve_static(name, respond, &crate::protocols::state_dir().join("artwork"))
+        }
         ("GET", _) => serve_static(&path, respond, &app.www_dir),
         _ => respond_error(&mut *respond, 405, "不支持的请求方法"),
     }
+}
+
+/// Only the content-addressed image names emitted by the AirPlay core.
+pub(crate) fn artwork_filename(name: &str) -> bool {
+    let Some((stem, ext)) = name.rsplit_once('.') else { return false };
+    matches!(ext, "png" | "jpg") && stem.strip_prefix("cover-art-")
+        .is_some_and(|hash| hash.len() == 16 && hash.bytes().all(|b| b.is_ascii_hexdigit()))
 }
 
 fn serve_static(
@@ -555,6 +569,7 @@ fn serve_static(
                 Some("js") => "application/javascript; charset=utf-8",
                 Some("css") => "text/css; charset=utf-8",
                 Some("svg") => "image/svg+xml",
+                Some("jpg") => "image/jpeg",
                 Some("png") => "image/png",
                 Some("ico") => "image/x-icon",
                 Some("json") => "application/json; charset=utf-8",

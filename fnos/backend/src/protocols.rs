@@ -498,7 +498,7 @@ impl ProtocolHosts {
     }
 }
 
-fn state_dir() -> PathBuf {
+pub(crate) fn state_dir() -> PathBuf {
     std::env::var_os("FUSIONPLAY_STATE_DIR")
         .map(PathBuf::from)
         .or_else(|| std::env::var_os("TRIM_PKGVAR").map(PathBuf::from))
@@ -633,7 +633,16 @@ fn handle_core_event(json: String, state: SharedState, dlna: Arc<DlnaPlayer>) {
             runtime.media.title = text("title");
             runtime.media.artist = text("artist");
             runtime.media.album = text("album");
-            runtime.media.cover_url = text("cover_url");
+            if value.get("track_changed").and_then(Value::as_bool) == Some(true) {
+                runtime.media.cover_url = None;
+            }
+        }
+        "cover_art" => {
+            if let Some(name) = value["path"].as_str().and_then(|p| Path::new(p).file_name())
+                .and_then(|name| name.to_str()).filter(|name| crate::http::artwork_filename(name))
+            {
+                state.state.write().unwrap().media.cover_url = Some(format!("artwork/{name}"));
+            }
         }
         "volume" => {
             let mut runtime = state.state.write().unwrap();
@@ -683,7 +692,7 @@ fn handle_core_event(json: String, state: SharedState, dlna: Arc<DlnaPlayer>) {
             }
         }
         "dlna_media" => {
-            let Some(url) = text("url") else { return };
+            if value.get("url").and_then(Value::as_str).is_none() { return; }
             {
                 let mut runtime = state.state.write().unwrap();
                 if runtime.dlna.enabled {
@@ -700,7 +709,10 @@ fn handle_core_event(json: String, state: SharedState, dlna: Arc<DlnaPlayer>) {
             std::thread::Builder::new()
                 .name("dlna-media".into())
                 .spawn(move || {
-                    if let Err(error) = dlna.play_uri(&url) {
+                    let result = serde::Deserialize::deserialize(&value)
+                        .map_err(anyhow::Error::from)
+                        .and_then(|track| dlna.play_track(&track));
+                    if let Err(error) = result {
                         let message = format!("DLNA 播放失败：{error:#}");
                         tracing::error!("{message}");
                         state.record_error(message);
@@ -926,6 +938,13 @@ mod tests {
             Arc::clone(&dlna),
         );
         assert_eq!(state.snapshot().airplay.state, "streaming");
+        for event in [
+            json!({"type":"cover_art","path":"/tmp/artwork/cover-art-0123456789abcdef.jpg"}),
+            json!({"type":"now_playing","title":"Track","artist":"Artist"}),
+        ] {
+            handle_core_event(event.to_string(), state.clone(), dlna.clone());
+        }
+        assert_eq!(state.snapshot().media.cover_url.as_deref(), Some("artwork/cover-art-0123456789abcdef.jpg"));
         handle_core_event(
             json!({"type":"stream_stopped","source":"airplay","epoch":1}).to_string(),
             Arc::clone(&state),

@@ -990,13 +990,12 @@ fn flv_aac_audio_plays_from_disk() {
     let harness = harness();
     let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/data/sine_aac.flv");
     let uri = format!("file://{}", path.display());
-    let track = DlnaTrack {
-        uri: &uri,
-        media_kind: "audio",
-        content_type: Some("video/flv"),
-        upnp_class: Some("object.item.videoItem"),
-        ..DlnaTrack::default()
-    };
+    let event = serde_json::json!({
+        "url": uri, "media_kind": "audio", "content_type": "video/flv",
+        "upnp_class": "object.item.videoItem", "title": "Overture",
+        "artwork_url": "https://example.test/cover.jpg"
+    });
+    let track = serde::Deserialize::deserialize(&event).unwrap();
     harness
         .player
         .play_track(&track)
@@ -1005,6 +1004,8 @@ fn flv_aac_audio_plays_from_disk() {
     assert!(harness.backend.frames() > 20_000, "no FLV audio reached the engine");
     harness.backend.assert_48k_stereo();
     let state = harness.state.snapshot();
+    assert_eq!(state.media.title.as_deref(), Some("Overture"));
+    assert_eq!(state.media.cover_url.as_deref(), Some("https://example.test/cover.jpg"));
     assert!(state.last_error.is_none(), "unexpected error: {:?}", state.last_error);
     assert_eq!(harness.arbiter.current(), None);
 }
