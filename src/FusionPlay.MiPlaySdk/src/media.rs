@@ -1640,7 +1640,10 @@ impl TsDemuxer {
                 .decrypt_padded::<NoPadding>(&mut elementary[..encrypted_len])
                 .map_err(|_| anyhow::anyhow!("decrypt media AES-CBC prefix"))?;
         }
-        if apparent_adts && !starts_with_complete_adts_frame(&elementary) {
+        // The ADTS framer can join a frame across several PES payloads.
+        // Accept an incomplete decrypted frame only when the original header
+        // is incompatible with the receiver's AAC format.
+        if apparent_adts && !prefer_decrypted_adts(input, &elementary) {
             elementary.copy_from_slice(input);
         } else {
             self.keys = Some(keys);
@@ -1719,13 +1722,19 @@ fn adts_frame_len(data: &[u8]) -> Option<usize> {
     )
 }
 
-// Used only to resolve ambiguous clear/ciphertext input with a PES private IV.
-fn starts_with_complete_adts_frame(data: &[u8]) -> bool {
-    if !is_adts(data) || adts_sample_rate(data).is_none() {
-        return false;
+fn prefer_decrypted_adts(clear: &[u8], decrypted: &[u8]) -> bool {
+    fn supported_frame_len(data: &[u8]) -> Option<usize> {
+        if adts_sample_rate(data) != Some(MIPLAY_SAMPLE_RATE_HZ) {
+            return None;
+        }
+        let header_len = adts_header_len(data)?;
+        let frame_len = adts_frame_len(data)?;
+        (data.len() >= header_len && frame_len > header_len).then_some(frame_len)
     }
-    let header_len = adts_header_len(data).unwrap();
-    adts_frame_len(data).is_some_and(|len| len > header_len && len <= data.len())
+
+    supported_frame_len(decrypted).is_some_and(|frame_len| {
+        frame_len <= decrypted.len() || supported_frame_len(clear).is_none()
+    })
 }
 
 const ADTS_SAMPLE_RATES: [u32; 13] = [
@@ -4145,8 +4154,34 @@ mod tests {
             let decoded = demuxer.finish_pes().unwrap().unwrap();
             assert_eq!(adts_sample_rate(&decoded.payload), Some(48_000));
             assert_eq!(decoded.payload, plain);
+            let mut framer = AdtsFramer::default();
+            demuxer.pes = [header.as_slice(), &cipher[..256]].concat();
+            let first = demuxer.finish_pes().unwrap().unwrap();
+            assert_eq!(first.payload, plain[..256]);
+            assert!(framer.push(&first.payload).is_empty());
+
+            let mut continuation = plain[256..].to_vec();
+            cbc::Encryptor::<Aes128>::new_from_slices(&key, &iv)
+                .unwrap()
+                .encrypt_padded::<NoPadding>(&mut continuation[..256], 256)
+                .unwrap();
+            demuxer.pes = [header.as_slice(), continuation.as_slice()].concat();
+            let second = demuxer.finish_pes().unwrap().unwrap();
+            assert_eq!(framer.push(&second.payload), vec![plain.clone()]);
+
             assert_eq!(demuxer.keys.unwrap().stream_iv, iv);
         }
+    }
+
+    #[test]
+    fn ambiguous_adts_keeps_supported_clear_header_over_wrong_rate_or_partial_candidate() {
+        let clear = [0xff, 0xf9, 0x4c, 0x80, 0x01, 0x1f, 0xfc, 0];
+        let mut candidate = clear;
+        candidate[2] = 0x5c; // 22.05 kHz
+        assert!(!super::prefer_decrypted_adts(&clear, &candidate));
+        candidate[2] = clear[2];
+        candidate[4] = 0x04; // 32-byte frame carried in a shorter slice
+        assert!(!super::prefer_decrypted_adts(&clear, &candidate));
     }
 
     #[test]
