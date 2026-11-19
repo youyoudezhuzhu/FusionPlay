@@ -14,11 +14,15 @@ FusionPlay 是一个面向全平台的局域网音乐投放接收器，支持 **
 
 ```text
 flutter/
-  lib/                  Flutter 界面、状态模型与平台运行时
+  lib/ui/, lib/theme/   Android 与 Windows 共用的播放器、歌词、设置和视觉参数
+  lib/models/           两端共用的界面状态
+  lib/backend/android/  Kotlin MethodChannel 适配器
+  lib/backend/windows/  Rust 侧车 NDJSON 适配器
   android/app/          Android 宿主、Kotlin 后端和 Rust 构建任务
   windows/              Windows 宿主工程（CMake/runner）
   test/                 Flutter 与界面交互测试
 src/
+  shared_audio/         Windows 和飞牛共用的 DLNA 声道混合、重采样与单测
   AirPlayReceiver.Core/ AirPlay、DLNA、音频和 JNI 核心
   FusionPlay.MiPlaySdk/ 小米妙播协议与媒体接收
   FusionPlay.AndroidIfAddrs/ Android 5 网络接口适配
@@ -30,6 +34,12 @@ vendor/shairplay/       带本地修复的上游 AirPlay 实现
 tools/                  图标、抓包和诊断辅助工具
 docs/                   平台与协议说明
 ```
+
+三端在同一分支维护。播放协议改动集中在 `src/`。Android 和 Windows 通过各自的控制器向同一个 `FusionPlayHome` 提供状态。飞牛在浏览器中渲染概览、音频、接收和设置页面，输出设备的选择、增益、延迟和校准由 `fnos/` 管理。
+
+调整共享颜色、圆角或模糊半径时，编辑 `flutter/lib/theme/fusion_theme.dart`，运行 `python3 tools/sync_web_theme.py` 并提交生成的样式。飞牛构建使用 `--check` 验证同步。播放器从当前媒体的封面生成背景，缺少封面时使用中性底色。
+
+界面预览：[共享 Flutter 播放器](docs/platform-previews/flutter-player.png) · [飞牛接收概览](docs/platform-previews/fusionplay-fnos-overview.png) · [飞牛输出设备](docs/platform-previews/fusionplay-fnos-output.png)。截图使用测试曲目信息和模拟 USB 设备。飞牛使用真实配置接口保存输出延迟，音频后端为 null。
 
 Android 侧只有 `flutter/android/app` 一个应用模块：Rust 动态库由该模块的 `buildRustNative` 任务生成到 Gradle 构建目录，不会写入源码树。Windows 侧由 `windows/backend` 生成独立侧车可执行文件，与 Flutter 宿主通过 NDJSON 通信，接口见 [docs/WINDOWS_ARCHITECTURE.md](docs/WINDOWS_ARCHITECTURE.md)。
 

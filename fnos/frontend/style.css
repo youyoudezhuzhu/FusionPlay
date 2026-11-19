@@ -5,14 +5,14 @@
 
 /* --- Theme tokens ------------------------------------------------------- */
 :root {
-  --bg: #F5F6F8;
-  --card: #FFFFFF;
+  --bg: var(--fusion-background);
+  --card: var(--fusion-surface);
   --surface-2: #F7F8FA;
-  --text: #232B35;
-  --muted: #7B8695;
-  --border: #E6E9EE;
-  --accent: #4A70D5;
-  --accent-soft: #EDF2FF;
+  --text: var(--fusion-on-surface);
+  --muted: var(--fusion-on-surface-variant);
+  --border: var(--fusion-outline-variant);
+  --accent: var(--fusion-primary);
+  --accent-soft: var(--fusion-surface-container-high);
   --accent-contrast: #FFFFFF;
   --ok: #269776;
   --ok-soft: #E7F4EF;
@@ -24,62 +24,62 @@
   --switch-track: #DDE2E9;
   --shadow: 0 1px 2px rgba(18, 28, 45, .04), 0 4px 14px rgba(18, 28, 45, .035);
   --shadow-pop: 0 10px 28px rgba(18, 28, 45, .13);
-  --radius-card: 15px;
-  --radius-device: 11px;
+  --radius-card: var(--fusion-card-radius);
+  --radius-device: var(--fusion-field-radius);
   --radius-btn: 9px;
-  --focus-ring: 0 0 0 3px rgba(74, 112, 213, .22);
-  --font: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Hiragino Sans GB",
+  --focus-ring: 0 0 0 3px rgba(28, 28, 28, .22);
+  --font: "MiSans", -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Hiragino Sans GB",
           "Microsoft YaHei", "Noto Sans SC", sans-serif;
   --mono: "SFMono-Regular", ui-monospace, Menlo, Consolas, "Liberation Mono", monospace;
   color-scheme: light;
 }
 
 html[data-theme="dark"] {
-  --bg: #151A20;
-  --card: #212830;
-  --surface-2: #2A323B;
-  --text: #EDF0F5;
-  --muted: #A0ACBB;
-  --border: #39424E;
-  --accent: #8BAAFF;
-  --accent-soft: #293950;
-  --accent-contrast: #10151B;
+  --bg: #171717;
+  --card: var(--fusion-inverse-surface);
+  --surface-2: #303030;
+  --text: var(--fusion-inverse-on-surface);
+  --muted: #BCBCBC;
+  --border: #424242;
+  --accent: var(--fusion-inverse-on-surface);
+  --accent-soft: #383838;
+  --accent-contrast: #171717;
   --ok: #58C49D;
   --ok-soft: #1F3A32;
   --warn: #D8A657;
   --warn-soft: #3A3324;
   --danger: #E5776F;
   --danger-soft: #3B2727;
-  --range-track: #39424E;
+  --range-track: #424242;
   --switch-track: #414B57;
   --shadow: none;
   --shadow-pop: 0 12px 30px rgba(0, 0, 0, .45);
-  --focus-ring: 0 0 0 3px rgba(139, 170, 255, .25);
+  --focus-ring: 0 0 0 3px rgba(255, 255, 255, .25);
   color-scheme: dark;
 }
 
 @media (prefers-color-scheme: dark) {
   html[data-theme="system"] {
-    --bg: #151A20;
-    --card: #212830;
-    --surface-2: #2A323B;
-    --text: #EDF0F5;
-    --muted: #A0ACBB;
-    --border: #39424E;
-    --accent: #8BAAFF;
-    --accent-soft: #293950;
-    --accent-contrast: #10151B;
+    --bg: #171717;
+    --card: var(--fusion-inverse-surface);
+    --surface-2: #303030;
+    --text: var(--fusion-inverse-on-surface);
+    --muted: #BCBCBC;
+    --border: #424242;
+    --accent: var(--fusion-inverse-on-surface);
+    --accent-soft: #383838;
+    --accent-contrast: #171717;
     --ok: #58C49D;
     --ok-soft: #1F3A32;
     --warn: #D8A657;
     --warn-soft: #3A3324;
     --danger: #E5776F;
     --danger-soft: #3B2727;
-    --range-track: #39424E;
+    --range-track: #424242;
     --switch-track: #414B57;
     --shadow: none;
     --shadow-pop: 0 12px 30px rgba(0, 0, 0, .45);
-    --focus-ring: 0 0 0 3px rgba(139, 170, 255, .25);
+    --focus-ring: 0 0 0 3px rgba(255, 255, 255, .25);
     color-scheme: dark;
   }
 }
@@ -158,7 +158,7 @@ svg { display: block; }
   align-items: center;
   justify-content: center;
   flex: none;
-  box-shadow: 0 2px 8px rgba(74, 112, 213, .22);
+  box-shadow: 0 2px 8px rgba(28, 28, 28, .22);
 }
 .brand-logo .icon { width: 22px; height: 22px; }
 .brand-name { font-size: 16px; font-weight: 650; letter-spacing: .1px; line-height: 1.25; }
@@ -262,7 +262,13 @@ main {
   padding: 19px;
   box-shadow: var(--shadow);
 }
-.page > .card + .card { margin-top: 15px; }
+.page > .card + .card { margin-top: var(--fusion-card-spacing); }
+@supports (backdrop-filter: blur(1px)) and (background: color-mix(in srgb, white, transparent)) {
+  .app-header, .savebar {
+    background: color-mix(in srgb, var(--bg) 84%, transparent);
+    backdrop-filter: blur(var(--fusion-blur-radius));
+  }
+}
 .card-head {
   display: flex;
   align-items: center;
@@ -557,12 +563,40 @@ input[type="range"]:focus-visible { outline: 2px solid var(--accent); outline-of
   gap: 15px;
   align-items: start;
 }
-.overview-col { display: flex; flex-direction: column; gap: 15px; min-width: 0; }
+.overview-col { display: flex; flex-direction: column; gap: var(--fusion-card-spacing); min-width: 0; }
 
+/* Keep the softened artwork below all labels and outside the hit-test path. */
+.now-card {
+  position: relative;
+  isolation: isolate;
+  overflow: hidden;
+  background: #242424;
+  color: #fff;
+  --muted: #e2e2e2;
+  --text: #fff;
+  --accent: #fff;
+  --accent-soft: rgba(255, 255, 255, .15);
+  --surface-2: rgba(255, 255, 255, .12);
+  --border: rgba(255, 255, 255, .22);
+  --range-track: rgba(255, 255, 255, .3);
+}
+.now-backdrop {
+  position: absolute;
+  inset: -10%;
+  width: 120%;
+  height: 120%;
+  object-fit: cover;
+  filter: blur(var(--fusion-blur-radius));
+  opacity: .36;
+  z-index: -1;
+  pointer-events: none;
+}
+.now-card .tag, .now-card .pill.neutral { background: #383838; color: white; }
 .now-body { display: flex; align-items: center; gap: 14px; }
 .cover {
-  width: 78px;
-  height: 78px;
+  width: clamp(86px, 12vw, 144px);
+  aspect-ratio: 1;
+  box-shadow: 0 14px 20px -11px rgba(0, 0, 0, .72);
   flex: none;
   border-radius: var(--radius-device);
   border: 1px solid var(--border);
@@ -577,7 +611,7 @@ input[type="range"]:focus-visible { outline: 2px solid var(--accent); outline-of
 .cover-placeholder .icon { width: 28px; height: 28px; }
 .now-main { min-width: 0; flex: 1; }
 .now-title {
-  font-size: 15px;
+  font-size: clamp(18px, 2.4vw, 28px);
   font-weight: 600;
   line-height: 1.35;
   overflow-wrap: anywhere;
@@ -1070,7 +1104,7 @@ body.has-savebar .toast { bottom: 92px; }
   .toast { right: 16px; bottom: 16px; }
   body.has-savebar .toast { bottom: 84px; }
   .now-body { align-items: flex-start; }
-  .cover { width: 66px; height: 66px; }
+  .cover { width: clamp(70px, 22vw, 96px); }
   .point-row { grid-template-columns: minmax(0, 1fr) 78px 78px auto; gap: 6px; }
   .segmented { display: flex; width: 100%; }
   .segmented button { flex: 1; padding: 0 8px; }

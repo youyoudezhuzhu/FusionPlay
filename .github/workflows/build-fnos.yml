@@ -54,6 +54,9 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-fnos-cargo-
 
+      - name: Check shared Flutter design values
+        run: python3 tools/sync_web_theme.py --check
+
       - name: Toolchain sanity check
         run: |
           rustc --version

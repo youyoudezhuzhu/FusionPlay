@@ -16,6 +16,7 @@ try {
   document.documentElement.setAttribute('data-theme', 'system');
 }
 </script>
+<link rel="stylesheet" href="fusion-theme.css">
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
@@ -189,7 +190,8 @@ try {
 
     <div class="overview-grid">
       <div class="overview-col">
-        <article class="card" aria-labelledby="now-card-title">
+        <article class="card now-card" aria-labelledby="now-card-title">
+          <img id="now-backdrop" class="now-backdrop" alt="" aria-hidden="true" referrerpolicy="no-referrer" hidden>
           <div class="card-head">
             <h2 class="card-title" id="now-card-title">当前接收</h2>
             <span class="pill neutral" id="now-state">待机</span>

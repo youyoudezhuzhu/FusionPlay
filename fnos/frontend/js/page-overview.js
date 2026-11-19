@@ -85,6 +85,11 @@ window.FP = window.FP || {};
       const image = el('now-cover');
       const placeholder = el('now-cover-empty');
       const url = media.cover_url ? String(media.cover_url) : '';
+      const backdrop = el('now-backdrop');
+      if (url !== coverUrl) {
+        backdrop.hidden = true;
+        backdrop.removeAttribute('src');
+      }
       if (!url) {
         coverUrl = '';
         coverFailed = '';
@@ -410,12 +415,17 @@ window.FP = window.FP || {};
       const image = el('now-cover');
       if (image) {
         image.addEventListener('load', function () {
+          if (!coverUrl || image.getAttribute('src') !== coverUrl) return;
+          const backdrop = el('now-backdrop');
+          backdrop.src = image.currentSrc;
+          backdrop.hidden = false;
           coverFailed = '';
           image.hidden = false;
           const placeholder = el('now-cover-empty');
           if (placeholder) placeholder.hidden = true;
         });
         image.addEventListener('error', function () {
+          el('now-backdrop').hidden = true;
           coverFailed = coverUrl;
           image.hidden = true;
           const placeholder = el('now-cover-empty');
