@@ -417,8 +417,8 @@ class _RefractiveSurfaceState extends State<_RefractiveSurface> {
                 painter: _GlassPaint(
                   sheen: widget.sheen,
                   spec: widget.spec,
-                  tint: Colors.transparent,
-                  gradient: null,
+                  tint: kIsWeb ? widget.tint : Colors.transparent,
+                  gradient: kIsWeb ? widget.spec.gradient : null,
                   borderRadius: widget.borderRadius,
                   specular: widget.specular,
                   absorption: widget.absorption,
@@ -486,7 +486,8 @@ class _RefractionPainter extends CustomPainter {
       ..setFloat(16, axisX.dx)
       ..setFloat(17, axisX.dy)
       ..setFloat(18, axisY.dx)
-      ..setFloat(19, axisY.dy);
+      ..setFloat(19, axisY.dy)
+      ..setFloat(20, kIsWeb ? 1 : 0);
     shader.setImageSampler(0, texture.image);
     canvas.drawRect(Offset.zero & size, Paint()..shader = shader);
   }

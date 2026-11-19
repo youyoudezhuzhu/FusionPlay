@@ -20,6 +20,7 @@ uniform float uAbsorption;
 uniform vec4 uTint;
 uniform vec2 uAxisX;
 uniform vec2 uAxisY;
+uniform float uLiveFace;
 
 uniform sampler2D uBackdrop;
 
@@ -94,5 +95,8 @@ void main() {
   float glint = clamp((specular * 0.38 + fresnel * 0.65) * uSpecular, 0.0, 1.0);
   color = mix(color, min(vec3(1.0), color * 1.15 + vec3(0.32)), glint);
 
-  fragColor = vec4(clamp(color, 0.0, 1.0), 1.0);
+  // CanvasKit already composited the live backdrop underneath the surface.
+  // The face has zero displacement. Only the bevel needs resampled pixels.
+  float opacity = mix(1.0, bevel, uLiveFace);
+  fragColor = vec4(clamp(color, 0.0, 1.0) * opacity, opacity);
 }

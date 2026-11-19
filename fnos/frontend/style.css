@@ -1159,3 +1159,49 @@ body.has-savebar .toast { bottom: 92px; }
 
 #output-groups li { display: flex; justify-content: space-between; gap: .75rem; }
 #group-name { max-width: 100%; margin: .5rem 0; }
+
+/* The scene stays in viewport space as panes scroll across it. */
+body { isolation: isolate; }
+.glass-definitions { position: absolute; width: 0; height: 0; pointer-events: none; }
+.glass-scene {
+  position: fixed; inset: 0; z-index: -1; overflow: hidden; pointer-events: none;
+  background:
+    radial-gradient(ellipse at 8% 28%, #949ed388, transparent 57%),
+    radial-gradient(ellipse at 86% 65%, #d59d9280, transparent 56%),
+    radial-gradient(ellipse at 48% 110%, #96b5ae77, transparent 61%), var(--bg);
+}
+.glass-scene img {
+  width: 100%; height: 100%; object-fit: cover;
+  transform: scale(1.10); filter: blur(clamp(18px, 3vw, 48px)); opacity: .46;
+}
+@supports (backdrop-filter: blur(1px)) and (background: color-mix(in srgb, white, transparent)) {
+  :root {
+    --glass-face: color-mix(in srgb, var(--card) 65%, transparent);
+    --glass-edge: color-mix(in srgb, var(--card) 52%, var(--border));
+    --glass-field: color-mix(in srgb, var(--surface-2) 54%, transparent);
+  }
+  .card:not(.now-card), .app-header, .savebar, .toast {
+    background: linear-gradient(142deg, #ffffff10, transparent 52%), var(--glass-face);
+    backdrop-filter: var(--surface-lens, blur(0px)) blur(3px) saturate(1.1);
+    border-color: var(--glass-edge);
+    box-shadow: inset 0 1px 0 #ffffff36, 0 8px 24px -18px #18213960;
+  }
+  .app-header, .savebar, .toast { --glass-face: color-mix(in srgb, var(--card) 82%, transparent); }
+  .device-card, .identity-option, .theme-toggle, .btn:not(.primary),
+  input:not([type=range]):not([type=checkbox]), select, textarea {
+    background-color: var(--glass-field);
+    border-color: color-mix(in srgb, var(--border) 80%, transparent);
+  }
+  .device-card.selected, .identity-option.active {
+    background-color: color-mix(in srgb, var(--accent-soft) 72%, transparent);
+    border-color: var(--accent);
+  }
+  .btn:not(.primary):hover, .theme-toggle:hover, .device-card:hover, .identity-option:hover {
+    background-color: color-mix(in srgb, var(--card) 87%, transparent);
+  }
+  .toast.error { border-color: var(--danger); }
+}
+@media (prefers-reduced-transparency: reduce), (forced-colors: active) {
+  .glass-scene { display: none; }
+  .card:not(.now-card), .app-header, .savebar, .toast { background: var(--card); backdrop-filter: none; }
+}

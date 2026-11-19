@@ -16,6 +16,7 @@ window.FP = window.FP || {};
   const POLL_MS = 2000;
 
   const store = FP.createStore();
+  const updateArtwork = FP.initGlass();
   const els = {};
 
   let connected = false;
@@ -389,6 +390,7 @@ window.FP = window.FP || {};
       if (!document.hidden) refreshCore();
     });
     store.subscribe(function (reason) {
+      if (reason === 'remote') updateArtwork(store.state.status);
       if (reason === 'dirty' || reason === 'revert') saveError = '';
       updateSavebar();
     });
