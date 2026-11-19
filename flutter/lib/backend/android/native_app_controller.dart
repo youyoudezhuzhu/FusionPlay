@@ -2,9 +2,9 @@ import 'dart:async';
 
 import 'package:flutter/services.dart';
 
-import '../models/app_state.dart';
-import 'app_controller.dart';
-import 'update_service.dart';
+import '../../models/app_state.dart';
+import '../app_controller.dart';
+import '../update_service.dart';
 
 /// Android backend: bridges to the Kotlin runtime through MethodChannel.
 class NativeAppController extends FusionPlayController {

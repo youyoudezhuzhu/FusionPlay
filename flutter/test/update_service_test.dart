@@ -1,8 +1,8 @@
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:fusionplay_android_flutter/backend/native_app_controller.dart';
+import 'package:fusionplay_android_flutter/backend/android/native_app_controller.dart';
 import 'package:fusionplay_android_flutter/backend/update_service.dart';
-import 'package:fusionplay_android_flutter/backend/windows_app_controller.dart';
+import 'package:fusionplay_android_flutter/backend/windows/windows_app_controller.dart';
 
 const _updateChannel = MethodChannel(AndroidUpdateService.channelName);
 

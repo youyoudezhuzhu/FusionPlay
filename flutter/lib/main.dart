@@ -5,8 +5,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import 'backend/app_controller.dart';
-import 'backend/native_app_controller.dart';
-import 'backend/windows_app_controller.dart';
+import 'backend/android/native_app_controller.dart';
+import 'backend/windows/windows_app_controller.dart';
 import 'models/app_state.dart';
 import 'theme/fusion_theme.dart';
 import 'ui/app_menu.dart';

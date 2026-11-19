@@ -2,8 +2,8 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
-import '../models/app_state.dart';
-import 'app_controller.dart';
+import '../../models/app_state.dart';
+import '../app_controller.dart';
 
 /// Thrown when the sidecar executable is missing or cannot be spawned.
 class SidecarLaunchException implements Exception {

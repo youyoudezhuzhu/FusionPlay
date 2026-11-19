@@ -2,6 +2,8 @@ include: package:flutter_lints/flutter.yaml
 
 analyzer:
   exclude:
+    # Vendored libraries retain upstream deprecated compatibility aliases.
+    - third_party/**
     - build/**
     - android/**
     - ios/**
