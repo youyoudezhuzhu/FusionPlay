@@ -211,12 +211,26 @@ internal object AppStateTransitions {
             val artist = event.artist.nonBlankOrNull()
             val album = event.album.nonBlankOrNull()
             val genre = event.genre.nonBlankOrNull()
-            val trackChanged =
+            val trackChanged = if (event.trackId != null && playback.trackIdentity != null) {
+                event.trackId != playback.trackIdentity
+            } else if (event.trackChanged != null) {
+                event.trackChanged
+            } else {
                 title != null &&
                     playback.title != null &&
                     title != playback.title
+            }
+            val lyrics = when {
+                source != MediaSource.AIRPLAY -> playback.lyrics
+                !trackChanged && playback.lyrics != null && playback.lyrics.origin != LyricsOrigin.AIRPLAY_TITLE -> playback.lyrics
+                event.lyricLine != null -> LyricsDocument(listOf(LyricLine(null, event.lyricLine)), LyricsOrigin.AIRPLAY_TITLE)
+                trackChanged || event.trackChanged != null -> null
+                else -> playback.lyrics
+            }
             if (trackChanged) {
                 playback.copy(
+                    lyrics = lyrics,
+                    trackIdentity = event.trackId,
                     title = title,
                     artist = artist,
                     album = album,
@@ -227,6 +241,8 @@ internal object AppStateTransitions {
                 )
             } else {
                 playback.copy(
+                    lyrics = lyrics,
+                    trackIdentity = event.trackId ?: playback.trackIdentity,
                     title = title ?: playback.title,
                     artist = artist ?: playback.artist,
                     album = album ?: playback.album,
@@ -483,8 +499,7 @@ internal object AppStateTransitions {
                 title = event.title ?: previous.title.takeIf { sameMedia },
                 artist = event.artist ?: previous.artist.takeIf { sameMedia },
                 album = event.album ?: previous.album.takeIf { sameMedia },
-                coverArt = event.artworkUrl
-                    ?: previous.coverArt.takeIf { sameMedia },
+                coverArt = event.resolvedArtwork ?: previous.coverArt.takeIf { sameMedia },
                 mediaUrl = event.url,
                 mediaKind = event.mediaKind,
                 protocol = DLNA_SOURCE,

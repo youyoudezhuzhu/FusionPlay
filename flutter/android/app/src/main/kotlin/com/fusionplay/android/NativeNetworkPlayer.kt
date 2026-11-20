@@ -8,15 +8,23 @@ import androidx.media3.common.C
 import androidx.media3.common.MediaItem
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.PlaybackParameters
+import androidx.media3.common.Tracks
+import androidx.media3.extractor.metadata.id3.Id3Frame
 import androidx.media3.common.Player
 import androidx.media3.exoplayer.ExoPlayer
+import com.airplayreceiver.desktop.backend.FusionPlayDiagnosticLogger
 import com.airplayreceiver.desktop.backend.MediaSource
 import java.io.Closeable
 
 internal class NativeNetworkPlayer(
     context: Context,
+    private val diagnostics: FusionPlayDiagnosticLogger,
     private val onError: (String) -> Unit = {},
 ) : Closeable {
+    private companion object {
+        val lyricFrameIds = setOf("USLT", "SYLT", "ULT", "SLT")
+    }
+
     private val applicationContext = context.applicationContext
     private val mainHandler = Handler(Looper.getMainLooper())
     private var player: ExoPlayer? = null
@@ -24,22 +32,69 @@ internal class NativeNetworkPlayer(
     private fun createPlayer(): ExoPlayer = ExoPlayer.Builder(applicationContext).build().apply {
         setAudioAttributes(
             AudioAttributes.Builder().setUsage(C.USAGE_MEDIA).setContentType(C.AUDIO_CONTENT_TYPE_MUSIC).build(),
-            true,
+            // FusionPlayMediaChannel owns system audio focus for all receivers.
+            // A second request here can revoke our own focus and pause DLNA.
+            /* handleAudioFocus = */ false,
         )
         addListener(object : Player.Listener {
+            @androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
+            override fun onTracksChanged(tracks: Tracks) {
+                if (source != MediaSource.DLNA) return
+                val observed = mutableSetOf<String>()
+                var audioTracks = 0
+                for (group in tracks.groups) {
+                    if (group.type != C.TRACK_TYPE_AUDIO) continue
+                    for (index in 0 until group.length) {
+                        if (!group.isTrackSelected(index)) continue
+                        audioTracks++
+                        val tags = group.getTrackFormat(index).metadata ?: continue
+                        for (i in 0 until tags.length()) {
+                            val id = (tags[i] as? Id3Frame)?.id ?: continue
+                            if (id in lyricFrameIds) observed.add(id)
+                        }
+                    }
+                }
+                if (audioTracks > 0) {
+                    recordPlayback("decoder_id3_lyrics", mapOf("audio_tracks" to audioTracks,
+                        "frames" to observed.sorted().joinToString(","), "lyrics_frame_present" to observed.isNotEmpty()))
+                }
+            }
+
+            override fun onPlayWhenReadyChanged(playWhenReady: Boolean, reason: Int) {
+                recordPlayback("decoder_play_intent", mapOf("play_when_ready" to playWhenReady, "reason_code" to reason))
+            }
+
             override fun onIsPlayingChanged(isPlaying: Boolean) {
                 playing = isPlaying
+                recordPlayback("decoder_playing", mapOf("playing" to isPlaying))
             }
 
             override fun onPlaybackStateChanged(playbackState: Int) {
                 ready = playbackState == Player.STATE_READY
+                recordPlayback("decoder_state", mapOf("state" to when (playbackState) {
+                    Player.STATE_BUFFERING -> "buffering"
+                    Player.STATE_READY -> "ready"
+                    Player.STATE_ENDED -> "ended"
+                    else -> "idle"
+                }))
             }
 
             override fun onPlayerError(error: PlaybackException) {
-                onError(error.message ?: "未知播放器错误")
+                recordPlayback("decoder_error", mapOf("code" to error.errorCodeName))
+                onError("${error.errorCodeName}：${error.message ?: "未知播放器错误"}")
             }
         })
         volume = if (muted) 0f else unmutedVolume
+    }
+
+    private fun recordPlayback(event: String, details: Map<String, Any?>) {
+        val component = when (source) {
+            MediaSource.DLNA -> "dlna"
+            MediaSource.AIRPLAY -> "airplay"
+            else -> return
+        }
+        diagnostics.write(component, event, if (event == "decoder_error") "failure" else "observed",
+            details + ("epoch" to sourceEpoch))
     }
 
     var source: MediaSource? = null

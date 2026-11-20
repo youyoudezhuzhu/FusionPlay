@@ -15,7 +15,7 @@ import 'package:fusionplay_android_flutter/ui/liquid_glass.dart';
 import 'package:fusionplay_android_flutter/ui/settings_view.dart';
 
 final String _coverData =
-    'data:image/png;base64,${base64Encode(File('/tmp/fusionplay-cover.png').readAsBytesSync())}';
+    'data:image/png;base64,${base64Encode(File('../fusionplay-ui-audit-codex/assets/cover.png').readAsBytesSync())}';
 
 Widget _backdrop() => Stack(
   fit: StackFit.expand,
@@ -39,6 +39,9 @@ Widget _host(Widget child, GlobalKey boundaryKey) => MaterialApp(
 );
 
 void main() {
+  setUpAll(
+    () => Directory('/tmp/fusionplay-preview').createSync(recursive: true),
+  );
   setUpAll(() async {
     final loader = FontLoader('MiSans')
       ..addFont(rootBundle.load('assets/fonts/MiSansUI.ttf'));

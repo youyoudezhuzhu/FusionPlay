@@ -244,6 +244,8 @@ class FusionPlayDiagnosticLogger(
                 details["reason"] = event.reason
             }
             is AppEvent.NowPlaying -> {
+                event.packetSummary?.let { details["input_decision"] = it }
+                details["title_lyric_present"] = !event.lyricLine.isNullOrBlank()
                 details["title_present"] = !event.title.isNullOrBlank()
                 details["title_length"] = event.title?.length
                 details["artist_present"] = !event.artist.isNullOrBlank()
@@ -280,6 +282,10 @@ class FusionPlayDiagnosticLogger(
                 details["album_length"] = event.album?.length
                 details["artwork_present"] =
                     !event.artworkUrl.isNullOrBlank()
+                details["resolved_artwork_present"] = event.resolvedArtwork != null
+                event.didlFields?.let { details["didl_fields"] = it }
+                details["lyrics_text_present"] = !event.lyricsText.isNullOrBlank()
+                details["lyrics_uri_present"] = !event.lyricsUri.isNullOrBlank()
                 details["content_type"] = event.contentType
                 details["media_kind"] = event.mediaKind
                 details["duration_ms"] = event.durationMs

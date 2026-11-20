@@ -110,6 +110,12 @@ jobs:
           mkdir -p ../artifacts/releases
           cp build/app/outputs/flutter-apk/app-release.apk "../artifacts/releases/FusionPlay-Android-$VERSION.apk"
 
+      - name: Test Android receiver state and metadata
+        working-directory: flutter/android
+        env:
+          FUSIONPLAY_ABIS: arm64-v8a
+        run: bash gradlew :app:testReleaseUnitTest
+
       - name: Verify APK signing certificate
         id: signing
         working-directory: flutter

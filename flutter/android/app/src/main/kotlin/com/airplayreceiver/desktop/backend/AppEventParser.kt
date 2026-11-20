@@ -110,6 +110,10 @@ object AppEventParser {
             )
 
             "now_playing", "metadata" -> AppEvent.NowPlaying(
+                packetSummary = payload.string("packet_summary"),
+                lyricLine = payload.string("lyric_line"),
+                trackChanged = payload.boolean("track_changed"),
+                trackId = payload.string("track_id"),
                 title = payload.string("title", "track", "name"),
                 artist = payload.string("artist", "album_artist"),
                 album = payload.string("album"),
@@ -205,6 +209,7 @@ object AppEventParser {
                 mediaKind = payload.string("media_kind", "kind"),
                 durationMs = payload.long("duration_ms"),
                 startPositionMs = payload.long("start_position_ms") ?: 0,
+                didlFields = payload.string("didl_fields"),
                 lyricsText = payload.string(
                     "lyrics_text",
                     "lyrics",

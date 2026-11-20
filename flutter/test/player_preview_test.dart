@@ -13,7 +13,7 @@ import 'package:fusionplay_android_flutter/ui/glass_backdrop.dart';
 import 'package:fusionplay_android_flutter/ui/player_view.dart';
 
 final String _coverData =
-    'data:image/png;base64,${base64Encode(File('/tmp/fusionplay-cover.png').readAsBytesSync())}';
+    'data:image/png;base64,${base64Encode(File('../fusionplay-ui-audit-codex/assets/cover.png').readAsBytesSync())}';
 
 LyricsDocument _lyrics() => const LyricsDocument(
   origin: 'embedded',
@@ -119,7 +119,7 @@ Future<void> _capture(
   addTearDown(tester.view.resetPhysicalSize);
   addTearDown(tester.view.resetDevicePixelRatio);
   final key = GlobalKey();
-  final streamSequence = streamLines ?? [if (streamLine != null) streamLine];
+  final streamSequence = streamLines ?? [?streamLine];
   if (streamSequence.isNotEmpty) {
     for (final line in streamSequence) {
       await tester.pumpWidget(
@@ -159,6 +159,9 @@ Future<void> _capture(
 }
 
 void main() {
+  setUpAll(
+    () => Directory('/tmp/fusionplay-preview').createSync(recursive: true),
+  );
   setUpAll(() async {
     final loader = FontLoader('MiSans')
       ..addFont(rootBundle.load('assets/fonts/MiSansUI.ttf'));

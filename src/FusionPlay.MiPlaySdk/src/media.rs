@@ -1597,33 +1597,38 @@ impl TsDemuxer {
         // available can schedule valid audio arbitrarily far in the future.
         // Keep RTP time only as a compatibility fallback for malformed PES.
         let pts_micros = pes_pts_micros(&pes).or(rtp_pts_micros);
-        let mut elementary = pes[payload_offset..].to_vec();
-        if is_adts(&elementary) {
+        let input = &pes[payload_offset..];
+        let private_iv = pes_private_data_iv(&pes, payload_offset);
+        let mut elementary = input.to_vec();
+        let apparent_adts = is_adts(input);
+        if apparent_adts && (private_iv.is_none() || input.len() < 16) {
             return Ok(Some(AudioPes {
                 payload: elementary,
                 pts_micros,
             }));
         }
-        if self.keys.is_none()
-            && self.legacy_fixed_media
-            && let Some(iv) = pes_private_data_iv(&pes, payload_offset)
-        {
-            self.keys = Some(StreamKeys {
-                auth_key: [0; 16],
-                stream_key: [
-                    0x2b, 0x7e, 0x15, 0x16, 0x28, 0xae, 0xd2, 0xa6, 0xab, 0xf7, 0x15, 0x88, 0x09,
-                    0xcf, 0x4f, 0x3c,
-                ],
-                stream_iv: iv,
-            });
-        }
-        let Some(keys) = self.keys.as_mut() else {
+        // A private IV allows ciphertext to be identified even when its first
+        // bytes coincide with ADTS sync. Commit key state only after choosing
+        // the representation, since clear TV frames may also carry private data.
+        let candidate = self.keys.clone().or_else(|| {
+            private_iv
+                .filter(|_| self.legacy_fixed_media)
+                .map(|iv| StreamKeys {
+                    auth_key: [0; 16],
+                    stream_key: [
+                        0x2b, 0x7e, 0x15, 0x16, 0x28, 0xae, 0xd2, 0xa6, 0xab, 0xf7, 0x15, 0x88,
+                        0x09, 0xcf, 0x4f, 0x3c,
+                    ],
+                    stream_iv: iv,
+                })
+        });
+        let Some(mut keys) = candidate else {
             return Ok(Some(AudioPes {
                 payload: elementary,
                 pts_micros,
             }));
         };
-        if let Some(iv) = pes_private_data_iv(&pes, payload_offset) {
+        if let Some(iv) = private_iv {
             keys.stream_iv = iv;
         }
         let encrypted_len = elementary.len().min(256) / 16 * 16;
@@ -1634,6 +1639,14 @@ impl TsDemuxer {
             decryptor
                 .decrypt_padded::<NoPadding>(&mut elementary[..encrypted_len])
                 .map_err(|_| anyhow::anyhow!("decrypt media AES-CBC prefix"))?;
+        }
+        // The ADTS framer can join a frame across several PES payloads.
+        // Accept an incomplete decrypted frame only when the original header
+        // is incompatible with the receiver's AAC format.
+        if apparent_adts && !prefer_decrypted_adts(input, &elementary) {
+            elementary.copy_from_slice(input);
+        } else {
+            self.keys = Some(keys);
         }
         Ok(Some(AudioPes {
             payload: elementary,
@@ -1707,6 +1720,21 @@ fn adts_frame_len(data: &[u8]) -> Option<usize> {
             | (usize::from(data[4]) << 3)
             | (usize::from(data[5]) >> 5),
     )
+}
+
+fn prefer_decrypted_adts(clear: &[u8], decrypted: &[u8]) -> bool {
+    fn supported_frame_len(data: &[u8]) -> Option<usize> {
+        if adts_sample_rate(data) != Some(MIPLAY_SAMPLE_RATE_HZ) {
+            return None;
+        }
+        let header_len = adts_header_len(data)?;
+        let frame_len = adts_frame_len(data)?;
+        (data.len() >= header_len && frame_len > header_len).then_some(frame_len)
+    }
+
+    supported_frame_len(decrypted).is_some_and(|frame_len| {
+        frame_len <= decrypted.len() || supported_frame_len(clear).is_none()
+    })
 }
 
 const ADTS_SAMPLE_RATES: [u32; 13] = [
@@ -4078,6 +4106,82 @@ mod tests {
         assert!(is_adts(&decrypted.payload));
         assert_eq!(&decrypted.payload[256..], clear_tail.as_slice());
         assert_eq!(demuxer.keys.unwrap().stream_iv, private_iv);
+    }
+
+    #[test]
+    fn adts_sync_in_ciphertext_does_not_bypass_pes_decryption() {
+        // First block of a synthetic 683-byte, 48 kHz silence frame. With this
+        // per-PES IV its ciphertext also starts with ADTS sync (22.05 kHz).
+        let iv: [u8; 16] = hex::decode("10035bad46d1797be653491b05875c66")
+            .unwrap()
+            .try_into()
+            .unwrap();
+        let key: [u8; 16] = hex::decode("2b7e151628aed2a6abf7158809cf4f3c")
+            .unwrap()
+            .try_into()
+            .unwrap();
+        let mut plain = vec![0x35; 683];
+        plain[..16].copy_from_slice(&hex::decode("fff94c805561a82111450014500146ff").unwrap());
+        let mut cipher = plain.clone();
+        cbc::Encryptor::<Aes128>::new_from_slices(&key, &iv)
+            .unwrap()
+            .encrypt_padded::<NoPadding>(&mut cipher[..256], 256)
+            .unwrap();
+        assert_eq!(adts_sample_rate(&cipher), Some(22_050));
+
+        let mut header = vec![0, 0, 1, 0xc0, 0, 0, 0x80, 1, 17, 0x80];
+        header.extend(iv);
+        for negotiated in [false, true] {
+            let keys = negotiated.then_some(StreamKeys {
+                auth_key: [0; 16],
+                stream_key: key,
+                stream_iv: [1; 16],
+            });
+            let mut demuxer = TsDemuxer::new(keys);
+            demuxer.legacy_fixed_media = !negotiated;
+            // A clear frame from a mixed source must not install a fallback key
+            // or advance the negotiated IV merely because it has private data.
+            let short_clear = [0xff, 0xf9, 0x4c, 0x80, 0x01, 0x1f, 0xfc, 0];
+            demuxer.pes = [header.as_slice(), &short_clear].concat();
+            assert_eq!(demuxer.finish_pes().unwrap().unwrap().payload, short_clear);
+            demuxer.pes = [header.as_slice(), &plain].concat();
+            assert_eq!(demuxer.finish_pes().unwrap().unwrap().payload, plain);
+            assert_eq!(
+                demuxer.keys.as_ref().map(|k| k.stream_iv),
+                negotiated.then_some([1; 16])
+            );
+            demuxer.pes = [header.as_slice(), &cipher].concat();
+            let decoded = demuxer.finish_pes().unwrap().unwrap();
+            assert_eq!(adts_sample_rate(&decoded.payload), Some(48_000));
+            assert_eq!(decoded.payload, plain);
+            let mut framer = AdtsFramer::default();
+            demuxer.pes = [header.as_slice(), &cipher[..256]].concat();
+            let first = demuxer.finish_pes().unwrap().unwrap();
+            assert_eq!(first.payload, plain[..256]);
+            assert!(framer.push(&first.payload).is_empty());
+
+            let mut continuation = plain[256..].to_vec();
+            cbc::Encryptor::<Aes128>::new_from_slices(&key, &iv)
+                .unwrap()
+                .encrypt_padded::<NoPadding>(&mut continuation[..256], 256)
+                .unwrap();
+            demuxer.pes = [header.as_slice(), continuation.as_slice()].concat();
+            let second = demuxer.finish_pes().unwrap().unwrap();
+            assert_eq!(framer.push(&second.payload), vec![plain.clone()]);
+
+            assert_eq!(demuxer.keys.unwrap().stream_iv, iv);
+        }
+    }
+
+    #[test]
+    fn ambiguous_adts_keeps_supported_clear_header_over_wrong_rate_or_partial_candidate() {
+        let clear = [0xff, 0xf9, 0x4c, 0x80, 0x01, 0x1f, 0xfc, 0];
+        let mut candidate = clear;
+        candidate[2] = 0x5c; // 22.05 kHz
+        assert!(!super::prefer_decrypted_adts(&clear, &candidate));
+        candidate[2] = clear[2];
+        candidate[4] = 0x04; // 32-byte frame carried in a shorter slice
+        assert!(!super::prefer_decrypted_adts(&clear, &candidate));
     }
 
     #[test]

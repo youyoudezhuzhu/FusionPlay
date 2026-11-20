@@ -6,6 +6,55 @@ import org.junit.Test
 
 class AirPlayMetadataContinuityTest {
     @Test
+    fun titleLyricIsPublishedWithoutResettingClock() {
+        val current = AppState(activeMediaSource = MediaSource.AIRPLAY,
+            playback = PlaybackSnapshot(protocol = "AirPlay", title = "上一句", positionMs = 42000))
+        val event = AppEventParser.parse(
+            """{"type":"now_playing","source":"airplay","title":"晴天","artist":"周杰伦","lyric_line":"故事的小黄花","track_changed":false}"""
+        ) as AppEvent.NowPlaying
+        val result = AppStateTransitions.nowPlaying(current, event).playback
+        assertEquals("晴天", result.title)
+        assertEquals("周杰伦", result.artist)
+        assertEquals("故事的小黄花", result.lyrics?.lines?.single()?.text)
+        assertEquals(42000L, result.positionMs)
+    }
+
+    @Test
+    fun stableDmapIdKeepsProgressThroughTitleLines() {
+        val current = AppState(
+            activeMediaSource = MediaSource.AIRPLAY,
+            playback = PlaybackSnapshot(protocol = "AirPlay", title = "Line A",
+                trackIdentity = "abcd", positionMs = 42000, sourceEpoch = 7),
+        )
+        val event = AppEventParser.parse(
+            """{"type":"now_playing","source":"airplay","epoch":7,"track_id":"abcd","title":"Line B"}"""
+        ) as AppEvent.NowPlaying
+        val next = AppStateTransitions.nowPlaying(current, event)
+        assertEquals("Line B", next.playback.title)
+        assertEquals(42000L, next.playback.positionMs)
+        assertEquals(0L, AppStateTransitions.nowPlaying(next, event.copy(trackId = "def0")).playback.positionMs)
+    }
+
+    @Test
+    fun dlnaRelativeCoverResolvesWithEmbeddedLyrics() {
+        val event = AppEventParser.parse(
+            """{"type":"dlna_media","source":"dlna","url":"https://example.test/music/a.mp3","title":"Track","artwork_url":"../art/a.jpg","lyrics_text":"[00:01.00]Line A"}"""
+        ) as AppEvent.DlnaMedia
+        val next = AppStateTransitions.dlnaMedia(AppState(activeMediaSource = MediaSource.DLNA), event)
+        assertEquals("https://example.test/art/a.jpg", next.playback.coverArt)
+        assertEquals("Line A", next.playback.lyrics?.lines?.first()?.text)
+    }
+
+    @Test
+    fun dlnaCoverAcceptsSpacesWithoutReencodingSignedQuery() {
+        val event = AppEventParser.parse(
+            """{"type":"dlna_media","url":"http://example.test/My Music/a.mp3","artwork_url":"../Cover Art/a.jpg?token=a%2Fb&size=300"}"""
+        ) as AppEvent.DlnaMedia
+        val next = AppStateTransitions.dlnaMedia(AppState(activeMediaSource = MediaSource.DLNA), event)
+        assertEquals("http://example.test/Cover%20Art/a.jpg?token=a%2Fb&size=300", next.playback.coverArt)
+    }
+
+    @Test
     fun trackTakeoverKeepsVisualMetadataAndControlsUntilFreshEventsArrive() {
         val playback = PlaybackSnapshot(
             title = "Old title",

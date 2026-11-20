@@ -100,6 +100,10 @@ sealed interface AppEvent {
         override val rawJson: String,
         val source: String? = null,
         val epoch: Long? = null,
+        val trackId: String? = null,
+        val lyricLine: String? = null,
+        val trackChanged: Boolean? = null,
+        val packetSummary: String? = null,
     ) : AppEvent {
         override val type = "now_playing"
     }
@@ -197,6 +201,7 @@ sealed interface AppEvent {
         val mediaKind: String?,
         val durationMs: Long?,
         val startPositionMs: Long,
+        val didlFields: String? = null,
         val lyricsText: String? = null,
         val lyricsUri: String? = null,
         val bitrateBps: Long? = null,
@@ -208,6 +213,10 @@ sealed interface AppEvent {
         val epoch: Long? = null,
     ) : AppEvent {
         override val type = "dlna_media"
+        internal val resolvedArtwork: String? = artworkUrl?.trim()?.let { artwork ->
+            if (artwork.startsWith("data:image/", ignoreCase = true)) artwork
+            else OfflineLyricsResolver.resolveMetadataUri(artwork, url)?.toASCIIString()
+        }
     }
 
     data class DlnaSeek(

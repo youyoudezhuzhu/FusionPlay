@@ -12,6 +12,7 @@ Future<void> _pumpSettings(
   required bool isAndroid,
   Future<UpdateCheckResult> Function()? onCheckUpdate,
   Future<UpdateInstallResult> Function()? onInstallUpdate,
+  DownloadUpdate? onDownload,
   Size size = const Size(480, 1100),
 }) async {
   final initialFocus = FocusNode(debugLabel: 'settings-update-test');
@@ -40,7 +41,10 @@ Future<void> _pumpSettings(
           onExportLogs: () async {},
           isAndroid: isAndroid,
           onCheckUpdate: onCheckUpdate,
-          onInstallUpdate: onInstallUpdate,
+          onDownloadUpdate: onDownload ?? (_, _) async {},
+          onInstallUpdate: onInstallUpdate == null
+              ? null
+              : (_) => onInstallUpdate(),
         ),
       ),
     ),
@@ -94,10 +98,17 @@ void main() {
     final checkCompleter = Completer<UpdateCheckResult>();
     final installCompleter = Completer<UpdateInstallResult>();
     var installCalls = 0;
+    final downloaded = Completer<void>();
+    late DownloadProgress report;
+
     await _pumpSettings(
       tester,
       isAndroid: true,
       onCheckUpdate: () => checkCompleter.future,
+      onDownload: (_, progress) {
+        report = progress;
+        return downloaded.future;
+      },
       onInstallUpdate: () {
         installCalls++;
         return installCompleter.future;
@@ -126,13 +137,26 @@ void main() {
     expect(find.textContaining('发现新版本 1.4.0'), findsOneWidget);
     expect(find.textContaining('安装包大小'), findsOneWidget);
     expect(find.textContaining('第 1 条更新说明'), findsOneWidget);
-    expect(find.text('下载并安装'), findsOneWidget);
+    expect(find.text('下载更新'), findsOneWidget);
     expect(find.text('取消'), findsOneWidget);
 
-    await tester.tap(find.text('下载并安装'));
+    await tester.tap(find.text('下载更新'));
     await tester.pump();
     await tester.pump();
-    expect(find.text('正在下载更新…'), findsOneWidget);
+    report(4096, 8192);
+    await tester.pump();
+    expect(find.text('已下载 50%'), findsOneWidget);
+    expect(
+      tester
+          .widget<LinearProgressIndicator>(find.byType(LinearProgressIndicator))
+          .value,
+      .5,
+    );
+    expect(installCalls, 0);
+    downloaded.complete();
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('安装'));
+    await tester.pump();
     expect(installCalls, 1);
 
     installCompleter.complete(
@@ -167,7 +191,7 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.textContaining('发现新版本 1.4.0'), findsOneWidget);
-    expect(find.text('下载并安装'), findsOneWidget);
+    expect(find.text('下载更新'), findsOneWidget);
     expect(find.text('取消'), findsOneWidget);
     // 更新说明在受限高度的 ScrollView 中，可滚动查看末尾条目。
     expect(find.textContaining('第 60 条更新说明'), findsOneWidget);
@@ -176,7 +200,7 @@ void main() {
       const Offset(0, -200),
     );
     await tester.pump();
-    expect(find.text('下载并安装'), findsOneWidget);
+    expect(find.text('下载更新'), findsOneWidget);
   });
 
   testWidgets('available 对话框点取消不会触发下载', (tester) async {
@@ -202,6 +226,29 @@ void main() {
 
     expect(find.textContaining('发现新版本'), findsNothing);
     expect(installCalls, 0);
+  });
+
+  testWidgets('重新打开时直接安装已校验的缓存包', (tester) async {
+    var installs = 0;
+    await _pumpSettings(
+      tester,
+      isAndroid: true,
+      onCheckUpdate: () async => const UpdateCheckResult(
+        status: UpdateCheckStatus.available,
+        downloaded: true,
+      ),
+      onDownload: (_, _) async => fail('缓存包不应再次下载'),
+      onInstallUpdate: () async {
+        installs++;
+        return const UpdateInstallResult(status: UpdateInstallStatus.started);
+      },
+    );
+    await _tapCheckUpdate(tester);
+    await tester.pumpAndSettle();
+    expect(find.text('下载更新'), findsNothing);
+    await tester.tap(find.text('安装'));
+    await tester.pumpAndSettle();
+    expect(installs, 1);
   });
 
   testWidgets('up_to_date：提示已是最新版本', (tester) async {
@@ -263,26 +310,39 @@ void main() {
   });
 
   testWidgets('permission_required：提示去系统设置允许安装未知应用', (tester) async {
+    var downloads = 0;
+    var installs = 0;
     await _pumpSettings(
       tester,
       isAndroid: true,
       onCheckUpdate: () async => _available,
-      onInstallUpdate: () async => const UpdateInstallResult(
-        status: UpdateInstallStatus.permissionRequired,
-        message: '请允许安装未知应用',
-      ),
+      onDownload: (_, _) async {
+        downloads++;
+      },
+      onInstallUpdate: () async => ++installs == 2
+          ? const UpdateInstallResult(status: UpdateInstallStatus.started)
+          : const UpdateInstallResult(
+              status: UpdateInstallStatus.permissionRequired,
+              message: '请允许安装未知应用',
+            ),
     );
 
     await _tapCheckUpdate(tester);
     await tester.pumpAndSettle();
-    await tester.tap(find.text('下载并安装'));
+    await tester.tap(find.text('下载更新'));
     await tester.pump();
     await tester.pumpAndSettle();
 
-    expect(find.text('需要安装权限'), findsOneWidget);
+    await tester.tap(find.text('安装'));
+    await tester.pumpAndSettle();
+    expect(find.textContaining('返回后点击'), findsOneWidget);
     expect(find.byType(GlassDialog), findsOneWidget);
     expect(find.byType(AlertDialog), findsNothing);
-    expect(find.textContaining('允许'), findsWidgets);
+    await tester.tap(find.text('安装'));
+    await tester.pumpAndSettle();
+    expect(find.text('安装器已打开'), findsOneWidget);
+    expect(downloads, 1);
+    expect(installs, 2);
   });
 
   testWidgets('downloadAndInstall error：展示 message', (tester) async {
@@ -290,6 +350,7 @@ void main() {
       tester,
       isAndroid: true,
       onCheckUpdate: () async => _available,
+      onDownload: (_, _) async => throw StateError('下载校验失败'),
       onInstallUpdate: () async => const UpdateInstallResult(
         status: UpdateInstallStatus.error,
         message: '下载校验失败',
@@ -298,11 +359,11 @@ void main() {
 
     await _tapCheckUpdate(tester);
     await tester.pumpAndSettle();
-    await tester.tap(find.text('下载并安装'));
+    await tester.tap(find.text('下载更新'));
     await tester.pump();
     await tester.pumpAndSettle();
 
-    expect(find.text('下载更新失败'), findsOneWidget);
+    expect(find.text('下载更新'), findsOneWidget);
     expect(find.text('下载校验失败'), findsOneWidget);
   });
 }

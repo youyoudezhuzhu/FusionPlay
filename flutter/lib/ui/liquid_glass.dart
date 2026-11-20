@@ -17,7 +17,7 @@ import 'remote_focus.dart';
 /// - [card]    Level 1: plain content cards / small chips (light tint, soft rim)
 /// - [control] Level 2: interactive controls (buttons, toggles, dock controls)
 /// - [panel]   Level 3: menus, sheets, dialogs (deep tint, stronger rim)
-enum GlassLevel { card, control, panel }
+enum GlassLevel { card, control, panel, popup }
 
 @immutable
 class GlassSpec {
@@ -33,8 +33,14 @@ class GlassSpec {
     required this.shadowBlur,
     required this.shadowOffsetY,
     this.gradient,
+    this.refraction = .85,
+    this.specular = .30,
+    this.thickness = 14,
   });
 
+  final double refraction;
+  final double specular;
+  final double thickness;
   final Color tint;
   final double blur;
   final double radius;
@@ -103,7 +109,7 @@ class GlassSpec {
   static GlassSpec of(GlassLevel level) => switch (level) {
     GlassLevel.card => card,
     GlassLevel.control => control,
-    GlassLevel.panel => panel,
+    GlassLevel.panel || GlassLevel.popup => panel,
   };
 }
 
@@ -132,9 +138,9 @@ class LiquidGlass extends StatefulWidget {
     this.blurSigma,
     this.tint,
     this.tintGradient,
-    this.refraction = 1.0,
-    this.specular = 1.0,
-    this.thickness = 16.0,
+    this.refraction,
+    this.specular,
+    this.thickness,
     this.absorption = 0.35,
     this.animate = false,
     this.forceFallback = false,
@@ -164,13 +170,13 @@ class LiquidGlass extends StatefulWidget {
   final Gradient? tintGradient;
 
   /// Strength of the real SDF backdrop displacement (0 disables refraction).
-  final double refraction;
+  final double? refraction;
 
   /// Rim/sheen strength multiplier, 0 disables highlights.
-  final double specular;
+  final double? specular;
 
   /// Optical thickness in logical pixels; controls the bevel width.
-  final double thickness;
+  final double? thickness;
 
   /// Beer-Lambert-style bottom/right edge darkening, 0..1.
   final double absorption;
@@ -246,9 +252,9 @@ class _LiquidGlassState extends State<LiquidGlass> {
             ? _RefractiveSurface(
                 backdrop: backdrop,
                 borderRadius: widget.borderRadius,
-                refraction: widget.refraction,
-                specular: widget.specular,
-                thickness: widget.thickness,
+                refraction: widget.refraction ?? spec.refraction,
+                specular: widget.specular ?? spec.specular,
+                thickness: widget.thickness ?? spec.thickness,
                 absorption: widget.absorption,
                 tint: tint,
                 sheen: _sheen,
@@ -275,7 +281,7 @@ class _LiquidGlassState extends State<LiquidGlass> {
                             tint: tint,
                             gradient: widget.tintGradient ?? spec.gradient,
                             borderRadius: widget.borderRadius,
-                            specular: widget.specular,
+                            specular: widget.specular ?? spec.specular,
                             absorption: widget.absorption,
                             focused: focused,
                           ),
@@ -295,8 +301,8 @@ class _LiquidGlassState extends State<LiquidGlass> {
       behavior: HitTestBehavior.translucent,
       onPointerDown: (event) => _pointer(event.localPosition, pressed: true),
       onPointerMove: (event) => _pointer(event.localPosition),
-      onPointerUp: (event) => _pointer(event.localPosition, pressed: false),
-      onPointerCancel: (_) => _pointer(const Offset(-1, -1), pressed: false),
+      onPointerUp: (_) => _sheen.value = const _Sheen(),
+      onPointerCancel: (_) => _sheen.value = const _Sheen(),
       child: MouseRegion(
         onHover: (event) => _pointer(event.localPosition),
         onExit: (_) => _sheen.value = _sheen.value.copyWith(clear: true),
@@ -346,14 +352,12 @@ class _RefractiveSurfaceState extends State<_RefractiveSurface> {
   static Future<ui.FragmentProgram?>? _programFuture;
 
   final GlobalKey _key = GlobalKey(debugLabel: 'refractive-glass-surface');
-  final ValueNotifier<Rect?> _globalRect = ValueNotifier(null);
   ui.FragmentShader? _shader;
 
   @override
   void initState() {
     super.initState();
     _loadShader();
-    _scheduleGeometry();
   }
 
   Future<void> _loadShader() async {
@@ -363,32 +367,14 @@ class _RefractiveSurfaceState extends State<_RefractiveSurface> {
       ));
       if (!mounted || program == null) return;
       setState(() => _shader = program.fragmentShader());
-      _scheduleGeometry();
-    } catch (_) {
-      // Fall back to _GlassPaint when the shader cannot be loaded.
+    } catch (error) {
+      debugPrint('FusionPlay glass shader unavailable, using blur: $error');
     }
   }
 
   @override
-  void didUpdateWidget(covariant _RefractiveSurface oldWidget) {
-    super.didUpdateWidget(oldWidget);
-    _scheduleGeometry();
-  }
-
-  void _scheduleGeometry() {
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted) return;
-      final box = _key.currentContext?.findRenderObject();
-      if (box is! RenderBox || !box.hasSize) return;
-      final origin = box.localToGlobal(Offset.zero);
-      final next = origin & box.size;
-      if (_globalRect.value != next) _globalRect.value = next;
-    });
-  }
-
-  @override
   void dispose() {
-    _globalRect.dispose();
+    _shader?.dispose();
     super.dispose();
   }
 
@@ -401,26 +387,27 @@ class _RefractiveSurfaceState extends State<_RefractiveSurface> {
         Positioned.fill(
           child: SizedBox.expand(
             key: _key,
-            child: RepaintBoundary(
-              child: shader == null
-                  ? const SizedBox()
-                  : ValueListenableBuilder<Rect?>(
-                      valueListenable: _globalRect,
-                      builder: (context, rect, _) => CustomPaint(
-                        painter: _RefractionPainter(
-                          shader: shader,
-                          backdrop: widget.backdrop,
-                          globalRect: rect,
-                          borderRadius: widget.borderRadius,
-                          refraction: widget.refraction,
-                          specular: widget.specular,
-                          thickness: widget.thickness,
-                          absorption: widget.absorption,
-                          tint: widget.tint,
-                        ),
-                      ),
+            child: shader == null
+                ? BackdropFilter(
+                    filter: ui.ImageFilter.blur(
+                      sigmaX: widget.spec.blur,
+                      sigmaY: widget.spec.blur,
                     ),
-            ),
+                    child: const SizedBox.expand(),
+                  )
+                : CustomPaint(
+                    painter: _RefractionPainter(
+                      shader: shader,
+                      backdrop: widget.backdrop,
+                      surfaceKey: _key,
+                      borderRadius: widget.borderRadius,
+                      refraction: widget.refraction,
+                      specular: widget.specular,
+                      thickness: widget.thickness,
+                      absorption: widget.absorption,
+                      tint: widget.tint,
+                    ),
+                  ),
           ),
         ),
         Positioned.fill(
@@ -451,7 +438,7 @@ class _RefractionPainter extends CustomPainter {
   _RefractionPainter({
     required this.shader,
     required this.backdrop,
-    required this.globalRect,
+    required this.surfaceKey,
     required this.borderRadius,
     required this.refraction,
     required this.specular,
@@ -462,7 +449,7 @@ class _RefractionPainter extends CustomPainter {
 
   final ui.FragmentShader shader;
   final GlassBackdropTexture backdrop;
-  final Rect? globalRect;
+  final GlobalKey surfaceKey;
   final double borderRadius;
   final double refraction;
   final double specular;
@@ -472,14 +459,18 @@ class _RefractionPainter extends CustomPainter {
 
   @override
   void paint(Canvas canvas, Size size) {
-    final rect = globalRect;
-    if (rect == null || size.isEmpty) return;
+    final box = surfaceKey.currentContext?.findRenderObject();
+    if (box is! RenderBox || size.isEmpty) return;
+    final origin = box.localToGlobal(Offset.zero);
+    final axisX = box.localToGlobal(const Offset(1, 0)) - origin;
+    final axisY = box.localToGlobal(const Offset(0, 1)) - origin;
+    if (!origin.isFinite || !axisX.isFinite || !axisY.isFinite) return;
     final texture = backdrop;
     shader
       ..setFloat(0, size.width)
       ..setFloat(1, size.height)
-      ..setFloat(2, rect.left)
-      ..setFloat(3, rect.top)
+      ..setFloat(2, origin.dx - texture.origin.dx)
+      ..setFloat(3, origin.dy - texture.origin.dy)
       ..setFloat(4, texture.image.width.toDouble())
       ..setFloat(5, texture.image.height.toDouble())
       ..setFloat(6, texture.pixelRatio)
@@ -491,7 +482,11 @@ class _RefractionPainter extends CustomPainter {
       ..setFloat(12, tint.r)
       ..setFloat(13, tint.g)
       ..setFloat(14, tint.b)
-      ..setFloat(15, tint.a);
+      ..setFloat(15, tint.a)
+      ..setFloat(16, axisX.dx)
+      ..setFloat(17, axisX.dy)
+      ..setFloat(18, axisY.dx)
+      ..setFloat(19, axisY.dy);
     shader.setImageSampler(0, texture.image);
     canvas.drawRect(Offset.zero & size, Paint()..shader = shader);
   }
@@ -500,7 +495,7 @@ class _RefractionPainter extends CustomPainter {
   bool shouldRepaint(_RefractionPainter oldDelegate) =>
       oldDelegate.shader != shader ||
       oldDelegate.backdrop != backdrop ||
-      oldDelegate.globalRect != globalRect ||
+      oldDelegate.surfaceKey != surfaceKey ||
       oldDelegate.borderRadius != borderRadius ||
       oldDelegate.refraction != refraction ||
       oldDelegate.specular != specular ||
@@ -544,103 +539,40 @@ class _GlassPaint extends CustomPainter {
       canvas.drawRRect(rrect, Paint()..shader = gradient.createShader(rect));
     }
 
-    // 1b. Optical body shading: a soft top-left lift and bottom-right
-    // absorption give the pane a thickness gradient before the rim is drawn.
-    canvas.drawRRect(
-      rrect,
-      Paint()
-        ..shader = LinearGradient(
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-          colors: [
-            Colors.white.withValues(alpha: .085 * strength),
-            Colors.white.withValues(alpha: .012 * strength),
-            Colors.black.withValues(alpha: .10 * absorption),
-          ],
-          stops: const [0.0, .48, 1.0],
-        ).createShader(rect),
-    );
-
-    // 1c. Edge lens band. This is the high-quality fallback for real
-    // screen-space displacement: a thin, bright inner band whose width and
-    // opacity follow the glass thickness, like the compressed edge of a lens.
-    final lensBand = Paint()
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = (2.0 + 0.10 * (spec.blur - 14).clamp(0.0, 18.0)).clamp(
-        1.6,
-        4.0,
-      )
-      ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 1.4)
-      ..shader = LinearGradient(
-        begin: Alignment.topLeft,
-        end: Alignment.bottomRight,
-        colors: [
-          Colors.white.withValues(alpha: .19 * strength),
-          Colors.white.withValues(alpha: .035 * strength),
-          Colors.white.withValues(alpha: .12 * strength),
-        ],
-        stops: const [0.0, .58, 1.0],
-      ).createShader(rect);
-    canvas.drawRRect(rrect.deflate(2.2), lensBand);
-
-    // 1d. A faint refracted caustic just inside the bottom edge.
-    final caustic = Paint()
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = 1.0
-      ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 2.4)
-      ..shader = LinearGradient(
-        begin: Alignment.topCenter,
-        end: Alignment.bottomCenter,
-        colors: [
-          Colors.transparent,
-          Colors.white.withValues(alpha: .08 * strength),
-        ],
-      ).createShader(rect);
-    canvas.drawRRect(rrect.deflate(4.0), caustic);
-
     // 2. Dynamic specular highlight: follows the pointer; brightens on press.
     final state = sheen.value;
     final pointer = state.pointer;
-    final highlightCenter = pointer != null && pointer.dx >= 0
-        ? pointer
-        : Offset(size.width * .22, size.height * .06);
-    final intensity =
-        (spec.sheenAlpha * strength * (state.pressed ? 1.45 : 1.0)).clamp(
-          0.0,
-          .8,
-        );
-    if (intensity > 0.001) {
-      final radius = size.longestSide * .95;
+    final intensity = (spec.sheenAlpha * strength * (state.pressed ? .8 : .5))
+        .clamp(0.0, .15);
+    if (pointer != null && intensity > .001) {
+      final radius = size.shortestSide * 1.25;
       final paint = Paint()
-        ..shader =
-            RadialGradient(
-              colors: [
-                Colors.white.withValues(alpha: intensity),
-                Colors.white.withValues(alpha: intensity * .22),
-                Colors.white.withValues(alpha: 0),
-              ],
-              stops: const [0.0, .45, 1.0],
-            ).createShader(
-              Rect.fromCircle(center: highlightCenter, radius: radius),
-            );
+        ..shader = RadialGradient(
+          colors: [
+            Colors.white.withValues(alpha: intensity),
+            Colors.white.withValues(alpha: intensity * .22),
+            Colors.white.withValues(alpha: 0),
+          ],
+          stops: const [0.0, .45, 1.0],
+        ).createShader(Rect.fromCircle(center: pointer, radius: radius));
       canvas.drawRRect(rrect, paint);
     }
 
     // 3. Rim: bright inner edge top/left, fading to a faint bottom/right.
     final rimPaint = Paint()
       ..style = PaintingStyle.stroke
-      ..strokeWidth = 1.1
+      ..strokeWidth = .8
       ..shader = LinearGradient(
         begin: Alignment.topLeft,
         end: Alignment.bottomRight,
         colors: [
-          Colors.white.withValues(alpha: .58 * strength),
+          Colors.white.withValues(alpha: .24 * strength),
           Colors.white.withValues(alpha: .10 * strength),
-          Colors.white.withValues(alpha: .30 * strength),
+          Colors.white.withValues(alpha: .14 * strength),
         ],
         stops: const [0.0, .55, 1.0],
       ).createShader(rect);
-    canvas.drawRRect(rrect.deflate(0.55), rimPaint);
+    canvas.drawRRect(rrect.deflate(.4), rimPaint);
 
     // 4. Subtle bottom/right inner dark edge (depth without a plastic shadow).
     final edgeAlpha = (spec.edgeAlpha * absorption).clamp(0.0, .5);
@@ -761,12 +693,11 @@ class GlassDialog extends StatelessWidget {
           ),
           child: RepaintBoundary(
             child: LiquidGlass(
-              level: GlassLevel.panel,
+              level: GlassLevel.popup,
               interactive: true,
               borderRadius: 24,
               padding: padding,
-              forceFallback: true,
-              refraction: 0,
+              refraction: .85,
               specular: .18,
               thickness: 8,
               child: Material(

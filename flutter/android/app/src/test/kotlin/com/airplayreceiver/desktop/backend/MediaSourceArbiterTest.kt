@@ -1,10 +1,43 @@
 package com.airplayreceiver.desktop.backend
 
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Test
 
 class MediaSourceArbiterTest {
+    @Test
+    fun waitForMatchingCoreResultBeforeResuming() = runBlocking {
+        val events = MutableSharedFlow<AppEvent>()
+        fun reply(id: String, ok: Boolean) = AppEvent.CommandResult(id, "takeover", ok, null, "{}")
+        SourceTakeoverPolicy.awaitCoreTakeover(events, "current") {
+            events.emit(reply("unrelated", false))
+            events.emit(reply("current", true))
+        }
+        val rejected = runCatching {
+            SourceTakeoverPolicy.awaitCoreTakeover(events, "current") {
+                events.emit(reply("current", false))
+            }
+        }
+        assertEquals(true, rejected.isFailure)
+        val missing = runCatching {
+            SourceTakeoverPolicy.awaitCoreTakeover(events, "current", timeoutMillis = 30) {
+                events.emit(reply("old", true))
+            }
+        }
+        assertEquals(true, missing.isFailure)
+    }
+
+    @Test
+    fun inactiveSourcesCannotChangeDeviceVolume() {
+        for (sender in MediaSource.entries) {
+            assertEquals(true, SourceTakeoverPolicy.acceptsDeviceVolume(null, sender))
+            for (owner in MediaSource.entries) {
+                assertEquals(owner == sender, SourceTakeoverPolicy.acceptsDeviceVolume(owner, sender))
+            }
+        }
+    }
+
     @Test
     fun airPlayToMiPlaySilencesAirPlayBeforeCommittingMiPlay() = runBlocking {
         val arbiter = MediaSourceArbiter()

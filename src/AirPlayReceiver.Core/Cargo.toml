@@ -22,6 +22,7 @@ hmac = "0.12"
 httparse = "1.10"
 if-addrs = { path = "../FusionPlay.AndroidIfAddrs" }
 md-5 = "0.10"
+quick-xml = ">=0.41, <0.43"
 rand = "0.8"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

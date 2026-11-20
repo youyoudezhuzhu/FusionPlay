@@ -136,6 +136,9 @@ double _meanRegionDiff(Uint8List a, Uint8List b, int width) {
 }
 
 void main() {
+  setUpAll(
+    () => Directory('/tmp/fusionplay-preview').createSync(recursive: true),
+  );
   testWidgets('real liquid glass refracts a high-contrast backdrop', (
     tester,
   ) async {

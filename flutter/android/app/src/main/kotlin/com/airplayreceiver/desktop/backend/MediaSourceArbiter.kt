@@ -1,5 +1,12 @@
 package com.airplayreceiver.desktop.backend
 
+import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.flow.SharedFlow
+import kotlinx.coroutines.flow.filterIsInstance
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 
@@ -10,6 +17,30 @@ enum class MediaSource {
 }
 
 internal object SourceTakeoverPolicy {
+    fun acceptsDeviceVolume(owner: MediaSource?, sender: MediaSource): Boolean =
+        owner == null || owner == sender
+
+    suspend fun awaitCoreTakeover(
+        events: SharedFlow<AppEvent>,
+        requestId: String,
+        timeoutMillis: Long = 3_000,
+        dispatch: suspend () -> Unit,
+    ) = coroutineScope {
+        val reply = async(start = CoroutineStart.UNDISPATCHED) {
+            events.filterIsInstance<AppEvent.CommandResult>().first {
+                it.requestId == requestId && it.command == "takeover"
+            }
+        }
+        try {
+            dispatch()
+            val result = withTimeoutOrNull(timeoutMillis) { reply.await() }
+                ?: error("播放源切换确认超时")
+            check(result.succeeded) { result.message ?: "播放源切换失败" }
+        } finally {
+            reply.cancel()
+        }
+    }
+
     fun shouldSuspend(
         previousSource: String?,
         newSource: String,

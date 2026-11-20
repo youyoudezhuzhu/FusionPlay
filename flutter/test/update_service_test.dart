@@ -24,6 +24,8 @@ void main() {
     test('解析 available 的全部字段', () {
       final result = UpdateCheckResult.fromMap(const {
         'status': 'available',
+        'downloaded': true,
+        'releaseKey': 'release-a',
         'versionName': '1.4.0',
         'versionCode': 10400,
         'notes': '修复若干问题',
@@ -33,6 +35,8 @@ void main() {
       });
 
       expect(result.status, UpdateCheckStatus.available);
+      expect(result.releaseKey, 'release-a');
+      expect(result.downloaded, isTrue);
       expect(result.versionName, '1.4.0');
       expect(result.versionCode, 10400);
       expect(result.notes, '修复若干问题');
@@ -174,6 +178,43 @@ void main() {
       expect(install.status, UpdateInstallStatus.error);
       expect(install.message, '当前安装包不支持在线更新');
     });
+  });
+
+  test('下载通道仅接收当前安装包的进度，安装独立调用', () async {
+    final calls = <String>[];
+    _mockUpdateChannel((call) async {
+      calls.add(call.method);
+      expect(call.arguments, {'releaseKey': 'current'});
+      if (call.method == 'install') return {'status': 'permission_required'};
+      for (final key in ['previous', 'current']) {
+        await TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+            .handlePlatformMessage(
+              AndroidUpdateService.channelName,
+              const StandardMethodCodec().encodeMethodCall(
+                MethodCall('progress', {
+                  'releaseKey': key,
+                  'bytes': 42,
+                  'total': 100,
+                }),
+              ),
+              (_) {},
+            );
+      }
+      return {'status': 'ready'};
+    });
+    final progress = <(int, int)>[];
+    final service = AndroidUpdateService();
+    await service.download(
+      'current',
+      (bytes, total) => progress.add((bytes, total)),
+    );
+    expect(progress, [(42, 100)]);
+    expect(calls, ['download']);
+    expect(
+      (await service.install('current')).status,
+      UpdateInstallStatus.permissionRequired,
+    );
+    expect(calls, ['download', 'install']);
   });
 
   group('Controller 的更新入口', () {
