@@ -24,8 +24,8 @@ const fusionPlayVersion = String.fromEnvironment(
 abstract final class _GlassStyle {
   static const cardRadius = 22.0;
   static const rowRadius = 16.0;
-  static const surface = Color(0xB315181D);
-  static const surfaceBorder = Color(0x1FFFFFFF);
+  static const surface = Color(0x24151822);
+  static const surfaceBorder = Color(0x12FFFFFF);
   static const rowHighlight = Color(0x1AFFFFFF);
   static const divider = Color(0x0DFFFFFF);
   static const textPrimary = Color(0xEBFFFFFF);

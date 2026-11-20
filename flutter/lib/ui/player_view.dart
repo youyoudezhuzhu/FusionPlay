@@ -786,12 +786,11 @@ class _PlayerViewState extends State<PlayerView> {
       final compact = panelHeight < 560 || panelWidth < 300;
       final dense = compact && panelHeight < 330;
       final padding = compact ? 8.0 : 16.0;
-      // Reserve space for metadata, timeline, transport and volume first.
-      // Use remaining height for artwork rather than an arbitrary 238px cut.
-      // Conservative reserve includes title/artist, timeline, transport,
-      // volume and spacing.  The 900x400 / 980x420 previews previously
-      // overflowed because 183px underestimated the real controls stack.
-      final controlsBudget = dense ? 206.0 : (compact ? 248.0 : 286.0);
+      // Budget for the actual compact controls: title (~21), artist (~15),
+      // timeline (40 + time labels), transport (~56), volume (28-30),
+      // and symmetric gaps. Avoid the previous 248px over-reservation,
+      // which shrank the cover disproportionately on 21:9 phones.
+      final controlsBudget = dense ? 204.0 : (compact ? 220.0 : 286.0);
       final cover = math
           .min(
             panelWidth - padding * 2,
@@ -802,6 +801,74 @@ class _PlayerViewState extends State<PlayerView> {
       final playback = widget.state.playback;
       final (title, artist) = _displayMetadata(playback);
       final artistLine = _cleanArtist(artist);
+      // On short ultrawide displays, stacking artwork above all controls
+      // limits the cover to ~114px at 900x400. Use the available horizontal
+      // space instead; the right column has its own centered control stack.
+      if (compact && panelHeight >= 350 && panelHeight <= 460 &&
+          panelWidth >= 330) {
+        final innerWidth = panelWidth - padding * 2;
+        final artworkSize = math.min(
+          innerWidth * .46,
+          math.min(panelHeight * .43, 190.0),
+        );
+        return Padding(
+          padding: EdgeInsets.all(padding),
+          child: Row(
+            key: const ValueKey('player-controls-column'),
+            children: [
+              SizedBox(
+                width: artworkSize,
+                child: Center(
+                  child: _breathingArtwork(
+                    size: artworkSize,
+                    child: _artworkCard(artworkSize, radius: 16),
+                  ),
+                ),
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Text(
+                      title,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      textAlign: TextAlign.center,
+                      style: const TextStyle(
+                        fontSize: 17,
+                        height: 1.12,
+                        color: Colors.white,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                    if (artistLine != null && artistLine.isNotEmpty)
+                      Text(
+                        artistLine,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        textAlign: TextAlign.center,
+                        style: TextStyle(
+                          fontSize: 11,
+                          color: Colors.white.withValues(alpha: .64),
+                        ),
+                      ),
+                    const SizedBox(height: 4),
+                    _liquidTimeline(compact: true),
+                    const SizedBox(height: 5),
+                    Transform.translate(
+                      offset: const Offset(0, -5),
+                      child: Center(child: _liquidTransport(compact: true)),
+                    ),
+                    const SizedBox(height: 5),
+                    _liquid21Volume(compact: true),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        );
+      }
       return Padding(
         padding: EdgeInsets.all(padding),
         child: Column(
@@ -839,9 +906,9 @@ class _PlayerViewState extends State<PlayerView> {
               ),
             SizedBox(height: compact ? 1 : 4),
             _liquidTimeline(compact: compact),
-            SizedBox(height: compact ? 0 : 4),
+            SizedBox(height: dense ? 7 : (compact ? 10 : 16)),
             Center(child: _liquidTransport(compact: compact)),
-            SizedBox(height: dense ? 8 : (compact ? 10 : 20)),
+            SizedBox(height: dense ? 7 : (compact ? 10 : 16)),
             _liquid21Volume(compact: compact),
           ],
         ),
@@ -868,11 +935,12 @@ class _PlayerViewState extends State<PlayerView> {
         padding: EdgeInsets.symmetric(horizontal: compact ? 7 : 10),
         shape: const lg.LiquidRoundedSuperellipse(borderRadius: 999),
         useOwnLayer: true,
-        quality: lg.GlassQuality.standard,
+        quality: lg.GlassQuality.premium,
         settings: const lg.LiquidGlassSettings(
           thickness: 14,
           blur: 4,
-          glassColor: Color(0x18FFFFFF),
+          glassColor: Color(0x0DFFFFFF),
+          chromaticAberration: 0.35,
         ),
         child: Row(
           children: [
@@ -1023,9 +1091,9 @@ class _PlayerViewState extends State<PlayerView> {
           ],
           SizedBox(height: dense ? 2 : (compact ? 6 : 20)),
           _liquidTimeline(compact: compact),
-          SizedBox(height: dense ? 2 : (compact ? 4 : 10)),
+          SizedBox(height: dense ? 7 : (compact ? 10 : 16)),
           Center(child: _liquidTransport(compact: compact)),
-          SizedBox(height: compact ? 6 : 14),
+          SizedBox(height: dense ? 7 : (compact ? 10 : 16)),
           _liquid21Volume(compact: compact),
         ],
       ),
@@ -1121,9 +1189,11 @@ class _PlayerViewState extends State<PlayerView> {
             },
           ),
         ),
+        // Move labels closer to the painted track (centered in its 40px
+        // hit target) without reducing the seekable touch area.
         SizedBox(height: compact ? 0 : 2),
         Transform.translate(
-          offset: Offset(0, compact ? -4 : -2),
+          offset: Offset(0, compact ? -10 : -8),
           child: Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
@@ -1273,12 +1343,12 @@ class _PlayerViewState extends State<PlayerView> {
             padding: EdgeInsets.zero,
             shape: const lg.LiquidRoundedSuperellipse(borderRadius: 999),
             useOwnLayer: true,
-            quality: lg.GlassQuality.standard,
+            quality: lg.GlassQuality.premium,
             settings: const lg.LiquidGlassSettings(
               thickness: 9,
               blur: 2,
-              glassColor: Color(0x12FFFFFF),
-              chromaticAberration: 0,
+              glassColor: Color(0x0CFFFFFF),
+              chromaticAberration: 0.35,
             ),
             child: Material(
               color: Colors.transparent,
@@ -1386,12 +1456,12 @@ class _PlayerViewState extends State<PlayerView> {
           onPressed: onTap,
           size: 36,
           useOwnLayer: true,
-          quality: lg.GlassQuality.standard,
+          quality: lg.GlassQuality.premium,
           settings: const lg.LiquidGlassSettings(
             thickness: 9,
             blur: 2,
-            glassColor: Color(0x1FFFFFFF),
-            chromaticAberration: 0,
+            glassColor: Color(0x0DFFFFFF),
+            chromaticAberration: 0.35,
           ),
         ),
       ),
