@@ -57,6 +57,11 @@ abstract final class FusionGlassColors {
   static const popupTint = Color(0x84191B28);
   static const solidPanel = Color(0xFF252530);
   static const panelBlur = 24.0;
+  // Darken blend leaves channels below the knee unchanged. The artwork card
+  // itself stays outside this backdrop-only highlight treatment.
+  static const backdropHighlightLimit = Color(0xB83A3A3A);
+  static const supportingText = Color(0xEBFFFFFF);
+  static const inactiveRail = Color(0x99FFFFFF);
 }
 
 abstract final class FusionTypography {
@@ -340,7 +345,13 @@ ThemeData fusionTheme() {
       textStyle: typography.bodyMedium,
       labelTextStyle: WidgetStatePropertyAll(typography.bodyMedium),
     ),
-    tooltipTheme: TooltipThemeData(textStyle: typography.bodySmall),
+    tooltipTheme: TooltipThemeData(
+      textStyle: typography.bodySmall!.copyWith(color: Colors.white),
+      decoration: const BoxDecoration(
+        color: FusionGlassColors.solidPanel,
+        borderRadius: BorderRadius.all(Radius.circular(8)),
+      ),
+    ),
     textButtonTheme: TextButtonThemeData(
       style: ButtonStyle(
         textStyle: WidgetStatePropertyAll(typography.labelLarge),

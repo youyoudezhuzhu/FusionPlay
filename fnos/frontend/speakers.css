@@ -13,8 +13,9 @@
 * { box-sizing:border-box }
 [hidden]{display:none!important}
 body {margin:0; min-height:100vh; isolation:isolate}
-.scene {position:fixed;inset:0;z-index:-1;overflow:hidden;background:linear-gradient(130deg,#373a41,#202227 68%,#191b20)}
+.scene {isolation:isolate;position:fixed;inset:0;z-index:-1;overflow:hidden;background:linear-gradient(130deg,#373a41,#202227 68%,#191b20)}
 .scene img {width:100%;height:100%;object-fit:fill;filter:blur(clamp(16px,6.1vmin,65px));transform:scale(-1.14,1.14)}
+.scene:has(img:not([hidden]))::before {content:"";position:absolute;inset:0;z-index:1;background:var(--fusion-backdrop-highlight-limit);mix-blend-mode:darken}
 .scene::after {content:"";position:absolute;inset:0;background:radial-gradient(ellipse at 56% 47%,#12172866,transparent 84%),linear-gradient(#10172550,#10172575)}
 .defs {position:absolute;width:0;height:0;pointer-events:none}
 header,main {width:min(100% - 48px,984px); margin-inline:auto}
@@ -26,7 +27,7 @@ h1,h2,p{margin:0} h1{font-size:clamp(28px,3.2vw,38px);line-height:1.18;letter-sp
 .heading,h1:has(+form){margin-bottom:24px}.context{font-weight:550;color:#ede1eb;margin-bottom:5px}
 a,button {color:inherit;text-decoration:none;cursor:pointer}
 button,.button,select,input:not([type=range]) {font:inherit;border:1px solid #ffffff38;border-radius:var(--fusion-field-radius);background:#ffffff0d;color:white;padding:10px 16px}
-input:not([type=range]),select {min-width:0;max-width:100%}select option {background:#373246}
+input:not([type=range]),select {min-width:0;max-width:100%}select option {background:#373246;color:white}input::placeholder{color:var(--fusion-supporting-text);opacity:1}
 button:disabled {cursor:default;opacity:.48}
 button:hover:not(:disabled),a.button:hover {background:#ffffff24}
 :focus-visible{outline:2px solid white;outline-offset:3px}
@@ -49,7 +50,7 @@ button:hover:not(:disabled),a.button:hover {background:#ffffff24}
 .footer{justify-content:flex-end}.bind .footer{margin-top:12px}
 .primary:not(:disabled),.primary:not(:disabled):hover {background:#f2f2f5;color:#17191d;border-color:transparent;font-weight:600}
 .device-row{margin-bottom:14px}.editor{display:grid;grid-template-columns:minmax(170px,.75fr) minmax(0,2fr);padding:clamp(16px,3vw,30px);gap:24px 34px}
-.controls{display:flex;flex-direction:column;gap:14px}.modes{display:grid;grid-template-columns:1fr 1fr;gap:7px}.modes button{border-radius:12px}.modes [aria-pressed=true]{color:#17191d;background:#f2f2f5}
+.controls{display:flex;flex-direction:column;gap:14px}.modes{display:grid;grid-template-columns:1fr 1fr;gap:7px}.modes button{border-radius:12px}.modes button[aria-pressed=true],.modes button[aria-pressed=true]:hover{color:#17191d;background:#f2f2f5}
 .response{margin-top:auto}.response output{display:block;font-size:clamp(22px,2.6vw,32px);font-variant-numeric:tabular-nums}
 input[type=range]{width:100%;accent-color:var(--accent);cursor:pointer}
 /* Keep the native input for hit testing, keyboard and accessibility. The
@@ -62,7 +63,7 @@ input[type=range]{width:100%;accent-color:var(--accent);cursor:pointer}
     html:not(.solid-surfaces) .probe-slider:has(.probe-lens[style]) input{opacity:0}
     html:not(.solid-surfaces) .probe-slider:has(.probe-lens[style]) .probe-track{
       display:block;position:absolute;inset-inline:10px;height:6px;border-radius:3px;
-      background:linear-gradient(to right,#ffffffce calc(var(--fraction)*100%),#ffffff30 0)}
+      background:linear-gradient(to right,#ffffffce calc(var(--fraction)*100%),var(--fusion-inactive-rail) 0)}
     html:not(.solid-surfaces) .probe-lens{display:block;visibility:hidden;position:absolute;top:50%;
       left:calc(10px + (100% - 20px)*var(--fraction));width:20px;height:17px;
       transform:translate(-50%,-50%);border-radius:999px;border:1px solid #ffffff65;
@@ -118,3 +119,6 @@ dialog::backdrop {background:rgb(0 0 0 / .42)}
 dialog h2 {font-size:20px;line-height:1.35}
 dialog .footer {margin-top:20px}
 @media(prefers-reduced-transparency:reduce),(forced-colors:active){dialog.card{background:var(--fusion-solid-panel)}}
+
+/* Canvas chart colours must follow the browser's high-contrast palette too. */
+@media(forced-colors:active){#graph{color:CanvasText;background-color:Canvas;border-color:GrayText}}

@@ -254,7 +254,10 @@ Widget _updateDetail(String text) => Padding(
   padding: const EdgeInsets.only(bottom: 4),
   child: Text(
     text,
-    style: const TextStyle(fontSize: 13, color: Color(0x8CFFFFFF)),
+    style: const TextStyle(
+      fontSize: 13,
+      color: FusionGlassColors.supportingText,
+    ),
   ),
 );
 

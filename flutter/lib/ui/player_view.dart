@@ -716,7 +716,7 @@ class _PlayerViewState extends State<PlayerView> {
       overflow: TextOverflow.ellipsis,
       style: TextStyle(
         fontSize: 12,
-        color: Colors.white.withValues(alpha: .84),
+        color: FusionGlassColors.supportingText,
         fontWeight: FusionTypography.mediumFontWeight,
         fontVariations: FusionTypography.medium,
       ),
@@ -880,7 +880,7 @@ class _PlayerViewState extends State<PlayerView> {
                 textAlign: TextAlign.center,
                 style: TextStyle(
                   fontSize: compact ? 11 : 14,
-                  color: Colors.white.withValues(alpha: .64),
+                  color: FusionGlassColors.supportingText,
                 ),
               ),
             SizedBox(height: compact ? 1 : 4),
@@ -926,7 +926,7 @@ class _PlayerViewState extends State<PlayerView> {
                 child: Icon(
                   icon,
                   size: compact ? 16 : 18,
-                  color: Colors.white70,
+                  color: FusionGlassColors.supportingText,
                 ),
               ),
               const SizedBox(width: 4),
@@ -943,7 +943,7 @@ class _PlayerViewState extends State<PlayerView> {
                   upFocusNode: _playEnabled ? _playPauseFocus : null,
                   focusBorderColor: Colors.white,
                   activeColor: Colors.white.withValues(alpha: .82),
-                  inactiveColor: Colors.white.withValues(alpha: .18),
+                  inactiveColor: FusionGlassColors.inactiveRail,
                   onChanged: (value) => setState(() => _volumeDrag = value),
                   onChangeEnd: (value) => _commitVolume((value * 100).round()),
                 ),
@@ -953,7 +953,7 @@ class _PlayerViewState extends State<PlayerView> {
                 '$percent',
                 style: TextStyle(
                   fontSize: compact ? 9 : 10,
-                  color: Colors.white.withValues(alpha: .48),
+                  color: FusionGlassColors.supportingText,
                   fontFeatures: const [FontFeature.tabularFigures()],
                 ),
               ),
@@ -1080,7 +1080,7 @@ class _PlayerViewState extends State<PlayerView> {
               overflow: TextOverflow.ellipsis,
               style: TextStyle(
                 fontSize: compact ? 12 : 15,
-                color: Colors.white70,
+                color: FusionGlassColors.supportingText,
               ),
             ),
           ],
@@ -1184,7 +1184,7 @@ class _PlayerViewState extends State<PlayerView> {
                 downFocusNode: _playEnabled ? _playPauseFocus : null,
                 focusBorderColor: Colors.white,
                 activeColor: Colors.white,
-                inactiveColor: Colors.white.withValues(alpha: .18),
+                inactiveColor: FusionGlassColors.inactiveRail,
                 onChangeStart: (_) => setState(() {
                   seekPositionMs = _visiblePositionMs.toDouble();
                   pendingSeekTimer?.cancel();
@@ -1234,7 +1234,7 @@ class _PlayerViewState extends State<PlayerView> {
                   _hasPlayback ? _formatDuration(position) : '0:00',
                   style: TextStyle(
                     fontSize: labelFont,
-                    color: Colors.white.withValues(alpha: .42),
+                    color: FusionGlassColors.supportingText,
                     fontFeatures: const [FontFeature.tabularFigures()],
                   ),
                 ),
@@ -1244,7 +1244,7 @@ class _PlayerViewState extends State<PlayerView> {
                       : '-0:00',
                   style: TextStyle(
                     fontSize: labelFont,
-                    color: Colors.white.withValues(alpha: .42),
+                    color: FusionGlassColors.supportingText,
                     fontFeatures: const [FontFeature.tabularFigures()],
                   ),
                 ),
@@ -1558,7 +1558,7 @@ class _PlayerViewState extends State<PlayerView> {
       durationMs: playback.durationMs,
       trackKey: _trackKeyOf(playback),
       foreground: Colors.white,
-      muted: Colors.white.withValues(alpha: .50),
+      muted: FusionGlassColors.supportingText,
       activeColor: Colors.white,
       activeFontSize: activeFontSize,
       inactiveFontSize: inactiveFontSize,
@@ -1891,7 +1891,7 @@ class _StreamingLyricsView extends StatelessWidget {
         for (var index = 0; index < visible.length; index++) {
           final isCurrent = index == visible.length - 1;
           final age = visible.length - 1 - index;
-          final opacity = isCurrent ? 1.0 : (0.58 - age * .075).clamp(.20, .58);
+          final opacity = isCurrent ? 1.0 : (.96 - age * .025).clamp(.86, .94);
           final fontSize = isCurrent
               ? activeFontSize
               : (activeFontSize * .62).clamp(13.0, 22.0);
@@ -1940,7 +1940,7 @@ class _StreamingLyricsView extends StatelessWidget {
                           visible[index].translation!.trim(),
                           style: TextStyle(
                             color: Colors.white.withValues(
-                              alpha: isCurrent ? .80 : opacity * .85,
+                              alpha: isCurrent ? .96 : 1,
                             ),
                             fontSize: (fontSize * .58).clamp(11.0, 20.0),
                             height: 1.22,

@@ -5,6 +5,7 @@ import 'dart:js_interop';
 import 'package:flutter/material.dart';
 import '../../models/app_state.dart';
 import '../../ui/liquid_glass.dart';
+import '../../theme/fusion_theme.dart';
 import '../../ui/settings_view.dart';
 import 'player_location.dart';
 
@@ -249,12 +250,22 @@ class _FnosSettingsState extends State<FnosSettings> {
   Widget build(BuildContext context) {
     final current = config;
     if (loadError != null) {
-      return TextButton(onPressed: load, child: Text('$loadError，点击重试'));
+      return TextButton(
+        style: TextButton.styleFrom(
+          foregroundColor: FusionGlassColors.supportingText,
+        ),
+        onPressed: load,
+        child: Text('$loadError，点击重试'),
+      );
     }
     if (current == null) {
       return const Padding(
         padding: EdgeInsets.all(24),
-        child: Center(child: CircularProgressIndicator()),
+        child: Center(
+          child: CircularProgressIndicator(
+            color: FusionGlassColors.supportingText,
+          ),
+        ),
       );
     }
     final receiver = current['receiver'] as Map;

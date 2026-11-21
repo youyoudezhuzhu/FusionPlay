@@ -123,10 +123,13 @@ window.FP = window.FP || {};
 
     function draw(width, height) {
       if (!width || !height) return;
-      const accent = cssVar('--accent');
-      const border = cssVar('--border');
-      const muted = cssVar('--muted');
-      const card = cssVar('--card');
+      // Resolve system colours on the element. A bare CanvasText keyword
+      // given to a 2D context can resolve against the wrong colour scheme.
+      const system = forcedColors.matches ? getComputedStyle(canvas) : null;
+      const accent = system ? system.color : cssVar('--accent');
+      const border = system ? system.borderTopColor : cssVar('--border');
+      const muted = system ? system.color : cssVar('--muted');
+      const card = system ? system.backgroundColor : cssVar('--card');
       const fontFamily = cssVar('--font') || 'sans-serif';
       const compact = width < 320;
       const pad = {
@@ -421,6 +424,9 @@ window.FP = window.FP || {};
       resizeObserver = new ResizeObserver(function () { resize(); });
       resizeObserver.observe(canvas);
     }
+    const forcedColors = window.matchMedia('(forced-colors:active)');
+    const palettes = [forcedColors, window.matchMedia('(prefers-color-scheme:dark)')];
+    for (const palette of palettes) palette.addEventListener('change', resize);
     window.addEventListener('resize', resize);
     resize();
 
@@ -438,6 +444,7 @@ window.FP = window.FP || {};
       getSelected: function () { return state.selected; },
       destroy: function () {
         if (resizeObserver) resizeObserver.disconnect();
+        for (const palette of palettes) palette.removeEventListener('change', resize);
         window.removeEventListener('resize', resize);
         canvas.removeEventListener('pointerdown', onPointerDown);
         canvas.removeEventListener('pointermove', onPointerMove);

@@ -10,6 +10,7 @@ from io import BytesIO
 from PIL import Image, ImageChops, ImageStat
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from functools import partial
+from surface_contrast import check_contrast
 from playwright.sync_api import sync_playwright, expect
 
 repo = Path(__file__).resolve().parents[2]
@@ -23,6 +24,7 @@ parser.add_argument(
     help="Pinned @trimjs/web-app 0.6.0 tarball used by build-fpk.sh",
 )
 parser.add_argument("--output", type=Path, required=True)
+parser.add_argument("--contrast-only", action="store_true", help="Measure rendered text on light and dark artwork")
 args = parser.parse_args()
 if (
     hashlib.sha256(args.sdk_archive.read_bytes()).hexdigest()
@@ -145,6 +147,12 @@ with tempfile.TemporaryDirectory() as work:
         errors = []
         page.on("pageerror", lambda e: errors.append(str(e)))
 
+        if args.contrast_only:
+            check_contrast(page, base, out)
+            assert not errors, errors
+            b.close()
+            raise SystemExit(0)
+
         def snap(name):
             page.evaluate("document.fonts.ready")
             page.mouse.move(0, 0)
@@ -199,6 +207,18 @@ with tempfile.TemporaryDirectory() as work:
             page.locator("flutter-view").wait_for(state="attached")
             page.wait_for_timeout(1500)
             sem()
+
+        # An unavailable config must leave a visible, actionable retry on glass.
+        def unavailable(route):
+            route.fulfill(status=503, json={"error":"fixture unavailable"})
+        page.route("**/api/config", unavailable)
+        open_settings()
+        retry = page.get_by_role("button", name="读取飞牛设置失败，点击重试")
+        expect(retry).to_be_visible()
+        snap("settings-retry")
+        page.unroute("**/api/config", unavailable)
+        retry.click()
+        expect(page.get_by_role("button", name="编辑名称")).to_be_visible()
 
         for name, label in [
             ("logs", "日志与故障信息"),
@@ -271,13 +291,24 @@ with tempfile.TemporaryDirectory() as work:
         center = (24, 24, a.width - 24, a.height - 24)
         assert ImageChops.difference(a, pressed).crop(center).getbbox(), "no contact displacement"
         assert ImageChops.difference(a, restored).getbbox() is None, "contact did not settle"
-        lens.evaluate("e=>e.style.setProperty('--surface-lens','brightness(1)')")
-        delta = ImageChops.difference(a, raster())
-        w, h = delta.size
-        inner = ImageStat.Stat(delta.crop((24, 24, w - 24, h - 24))).mean
-        rim = ImageStat.Stat(delta.crop((2, 20, 10, h - 20))).mean
-        print("optical difference", rim, inner, flush=True)
-        assert max(rim) > max(inner) + 0.2
+        def verify_rim(original, calibrated):
+            previous = lens.evaluate("e=>e.style.getPropertyValue('--surface-lens')")
+            lens.evaluate("e=>e.style.setProperty('--surface-lens','brightness(1)')")
+            delta = ImageChops.difference(original, raster())
+            lens.evaluate("(e,filter)=>e.style.setProperty('--surface-lens',filter)", previous)
+            w, h = delta.size
+            inner = ImageStat.Stat(delta.crop((24, 24, w - 24, h - 24))).mean
+            rim = ImageStat.Stat(delta.crop((2, 20, 10, h - 20))).mean
+            print("optical difference", rim, inner, flush=True)
+            assert max(inner) == 0 and min(rim) > 0
+            if calibrated:
+                assert max(rim) > max(inner) + 0.2
+
+        # Check the production highlight treatment first, then the original
+        # full-range calibration grid without any artwork or artwork scrim.
+        verify_rim(a, calibrated=False)
+        page.add_style_tag(content=".scene::before{display:none!important}")
+        verify_rim(raster(), calibrated=True)
         page.evaluate("fpSetEffects(false)")
         html("curve-off", "speakers.html?instance=room-1#curve", "#editor", False)
         for section, room, selector in [

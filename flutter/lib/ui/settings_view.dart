@@ -31,8 +31,8 @@ abstract final class _GlassStyle {
   static const rowHighlight = Color(0x1AFFFFFF);
   static const divider = Color(0x0DFFFFFF);
   static const textPrimary = Color(0xEBFFFFFF);
-  static const textSecondary = Color(0x8CFFFFFF);
-  static const textDisabled = Color(0x59FFFFFF);
+  static const textSecondary = FusionGlassColors.supportingText;
+  static const textDisabled = Color(0xA6FFFFFF);
   static const icon = Color(0xB8FFFFFF);
   static const iconMuted = Color(0x94FFFFFF);
   // Monochrome glass accent: the selected device identity uses the same
@@ -43,7 +43,7 @@ abstract final class _GlassStyle {
   static const inputFill = Color(0x14FFFFFF);
   static const inputBorder = Color(0x1FFFFFFF);
   static const inputFocusBorder = Color(0x73FFFFFF);
-  static const hint = Color(0x73FFFFFF);
+  static const hint = FusionGlassColors.supportingText;
   static const actionFill = Color(0x1AFFFFFF);
   static const actionFillDisabled = Color(0x0DFFFFFF);
   static const actionPrimaryFill = Color(0xE6FFFFFF);
@@ -832,7 +832,7 @@ class _SettingsViewState extends State<SettingsView> {
                       size: isSelected ? 22 : 20,
                       color: isSelected
                           ? _GlassStyle.accent
-                          : _GlassStyle.iconMuted.withValues(alpha: .45),
+                          : _GlassStyle.iconMuted,
                     ),
                   ),
                 ),

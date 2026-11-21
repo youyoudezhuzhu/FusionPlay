@@ -94,6 +94,13 @@ class PlayerBackdrop extends StatelessWidget {
                 ),
         ),
       ),
+      if (source?.trim().isNotEmpty == true)
+        const DecoratedBox(
+          decoration: BoxDecoration(
+            color: FusionGlassColors.backdropHighlightLimit,
+            backgroundBlendMode: BlendMode.darken,
+          ),
+        ),
     ],
   );
 }
@@ -396,6 +403,24 @@ class _ArtworkCardState extends State<ArtworkCard>
     final transform = Matrix4.identity()
       ..setEntry(3, 2, .0012)
       ..rotateY(frame.rotationY);
+    final placeholder = ColoredBox(
+      color: widget.hasPlayback
+          ? const Color(0xFFB8B8B8)
+          : const Color(0x1A1A1A1A),
+      child: Center(
+        child: SvgPicture.asset(
+          'assets/music-note-placeholder.svg',
+          width: (widget.size * .22).clamp(72, 128),
+          height: (widget.size * .22).clamp(72, 128),
+          colorFilter: ColorFilter.mode(
+            widget.hasPlayback
+                ? const Color(0xFF353535)
+                : const Color(0xFFDFE1E8),
+            BlendMode.srcIn,
+          ),
+        ),
+      ),
+    );
     return SizedBox.square(
       dimension: widget.size,
       child: Opacity(
@@ -405,22 +430,7 @@ class _ArtworkCardState extends State<ArtworkCard>
           transform: transform,
           child: RepaintBoundary(
             child: provider == null
-                ? ColoredBox(
-                    color: widget.hasPlayback
-                        ? const Color(0xFFB8B8B8)
-                        : const Color(0x1A1A1A1A),
-                    child: Center(
-                      child: SvgPicture.asset(
-                        'assets/music-note-placeholder.svg',
-                        width: (widget.size * .22).clamp(72, 128),
-                        height: (widget.size * .22).clamp(72, 128),
-                        colorFilter: const ColorFilter.mode(
-                          Color(0xFF565656),
-                          BlendMode.srcIn,
-                        ),
-                      ),
-                    ),
-                  )
+                ? placeholder
                 : Image(
                     image: provider,
                     fit: BoxFit.cover,
@@ -434,11 +444,10 @@ class _ArtworkCardState extends State<ArtworkCard>
                           uri.toString(),
                           fit: BoxFit.cover,
                           webHtmlElementStrategy: WebHtmlElementStrategy.prefer,
-                          errorBuilder: (_, _, _) =>
-                              const ColoredBox(color: Color(0x1A1A1A1A)),
+                          errorBuilder: (_, _, _) => placeholder,
                         );
                       }
-                      return const ColoredBox(color: Color(0x1A1A1A1A));
+                      return placeholder;
                     },
                   ),
           ),

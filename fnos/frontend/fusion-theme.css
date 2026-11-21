@@ -18,4 +18,7 @@
   --fusion-popup-tint: #191B2884;
   --fusion-solid-panel: #252530;
   --fusion-panel-blur: 24px;
+  --fusion-backdrop-highlight-limit: #3A3A3AB8;
+  --fusion-supporting-text: #FFFFFFEB;
+  --fusion-inactive-rail: #FFFFFF99;
 }

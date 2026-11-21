@@ -15,7 +15,7 @@ def stylesheet():
     for name in ("primary", "onPrimary", "background", "onSurface", "onSurfaceVariant",
                  "outlineVariant", "surface", "surfaceContainerHigh", "inverseSurface",
                  "inverseOnSurface", "cardRadius", "fieldRadius", "cardSpacing", "blurRadius",
-                 "settingsTint", "popupTint", "solidPanel", "panelBlur"):
+                 "settingsTint", "popupTint", "solidPanel", "panelBlur", "backdropHighlightLimit", "supportingText", "inactiveRail"):
         value = values[name]
         if match := re.fullmatch(r"Color\(0xFF([0-9A-F]{6})\)", value):
             css = "#" + match[1]

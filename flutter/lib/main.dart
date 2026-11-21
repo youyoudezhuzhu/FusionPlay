@@ -556,7 +556,10 @@ class _FusionPlayHomeState extends State<FusionPlayHome> {
           width: 64,
           child: Text(
             label,
-            style: const TextStyle(fontSize: 13, color: Color(0x8CFFFFFF)),
+            style: const TextStyle(
+              fontSize: 13,
+              color: FusionGlassColors.supportingText,
+            ),
           ),
         ),
         Expanded(
