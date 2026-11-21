@@ -175,18 +175,15 @@ impl PcmOutput for EngineSink {
             channels,
             samples,
         );
-        {
+        // AirPlay reports its slider value in a separate dB-based volume
+        // event. Linear PCM gain is the input to the speaker's audio curve.
+        if source != Source::AirPlay {
+            let percent = (sender_gain.clamp(0.0, 1.0) * 100.0).round() as u8;
             let mut state = self.state.state.write().unwrap();
-            match source {
-                Source::AirPlay => {
-                    state.sender_volume.airplay_percent = Some((sender_gain.clamp(0.0, 1.0) * 100.0).round() as u8);
-                }
-                Source::Dlna => {
-                    state.sender_volume.dlna_percent = Some((sender_gain.clamp(0.0, 1.0) * 100.0).round() as u8);
-                }
-                Source::MiPlay => {
-                    state.sender_volume.miplay_percent = Some((sender_gain.clamp(0.0, 1.0) * 100.0).round() as u8);
-                }
+            if source == Source::Dlna {
+                state.sender_volume.dlna_percent = Some(percent);
+            } else {
+                state.sender_volume.miplay_percent = Some(percent);
             }
         }
     }
@@ -1080,6 +1077,18 @@ mod tests {
         let media = state.snapshot().media;
         assert_eq!(media.title.as_deref(), Some("Starlight"));
         assert_eq!(media.lyrics_text.as_deref(), Some("line one"));
+    }
+
+    #[test]
+    fn airplay_pcm_does_not_replace_the_reported_slider_percentage() {
+        let engine = AudioEngine::new(Default::default(), crate::audio::NullBackend::new()).unwrap();
+        let state = crate::state::AppState::new();
+        let arbiter = Arc::new(Arbiter::new());
+        let dlna = DlnaPlayer::new(engine.clone(), arbiter.clone(), state.clone());
+        let sink = EngineSink::new(engine, arbiter, state.clone());
+        handle_core_event(serde_json::json!({"type":"volume","source":"airplay","db":-6.02,"percent":80}).to_string(), state.clone(), dlna);
+        PcmOutput::write(sink.as_ref(), PcmSource::AirPlay, 0, 0.5, 48000, 2, &[0.25; 4]);
+        assert_eq!(state.snapshot().sender_volume.airplay_percent, Some(80));
     }
 
     #[test]

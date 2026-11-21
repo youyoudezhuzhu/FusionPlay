@@ -543,6 +543,7 @@ pub fn start_audio(
     stream.play().context("无法启动 Windows 音频输出")?;
 
     let handler = Arc::new(ReceiverAudioHandler {
+        system_manages_volume: false,
         buffer,
         gain_bits,
         volume_db_bits,
@@ -605,7 +606,6 @@ pub fn start_audio_external(
                 let mut scratch: Vec<f32> = Vec::with_capacity(max_frames * channels);
                 while !stop.load(Ordering::Acquire) {
                     scratch.clear();
-                    let sender_gain = f32::from_bits(gain_bits.load(Ordering::Relaxed));
                     if let Ok(mut queued) = buffer.lock() {
                         let take = queued.samples.len().min(max_frames * channels);
                         scratch.extend(queued.samples.drain(..take));
@@ -614,6 +614,7 @@ pub fn start_audio_external(
                         std::thread::sleep(std::time::Duration::from_millis(2));
                         continue;
                     }
+                    let sender_gain = f32::from_bits(gain_bits.load(Ordering::Relaxed));
                     output.write(
                         PcmSource::AirPlay,
                         0,
@@ -629,6 +630,7 @@ pub fn start_audio_external(
     };
 
     let handler = Arc::new(ReceiverAudioHandler {
+        system_manages_volume: false,
         buffer,
         gain_bits,
         volume_db_bits,
@@ -706,6 +708,7 @@ pub fn start_audio(
     let stream = AndroidAudioOutput { commands };
 
     let handler = Arc::new(ReceiverAudioHandler {
+        system_manages_volume: true,
         buffer,
         gain_bits,
         volume_db_bits,
@@ -972,6 +975,8 @@ where
 }
 
 pub struct ReceiverAudioHandler {
+    /// Android applies the volume event to STREAM_MUSIC. Desktop sinks apply PCM gain.
+    system_manages_volume: bool,
     buffer: Arc<Mutex<AudioBuffer>>,
     gain_bits: Arc<AtomicU32>,
     /// Receiver volume in dB (0.0 = full scale, -144.0 = mute), reported to the
@@ -1231,6 +1236,19 @@ impl ReceiverAudioHandler {
             });
     }
 
+    fn set_output_volume_db(&self, db: f32) {
+        let db = db.clamp(-144.0, 0.0);
+        let gain = if self.system_manages_volume {
+            1.0
+        } else if db <= -144.0 {
+            0.0
+        } else {
+            10.0_f32.powf(db / 20.0)
+        };
+        self.gain_bits.store(gain.to_bits(), Ordering::Relaxed);
+        self.volume_db_bits.store(db.to_bits(), Ordering::Relaxed);
+    }
+
     /// Apply a UI volume percentage (0..=100) to the receiver's local output
     /// gain and remember the matching attenuation for sender volume queries.
     ///
@@ -1240,12 +1258,7 @@ impl ReceiverAudioHandler {
     pub fn apply_local_volume_percent(&self, percent: u8, lease: Option<MediaLease>) {
         let percent = percent.min(100);
         let db = airplay_percent_to_db(percent);
-        // AirPlay volume is mapped to Android's STREAM_MUSIC volume in the
-        // Kotlin host; the PCM source must stay at unity gain or the two
-        // attenuations multiply. Keep only the reported state for
-        // GET_PARAMETER volume / the UI.
-        self.gain_bits.store(1.0_f32.to_bits(), Ordering::Relaxed);
-        self.volume_db_bits.store(db.to_bits(), Ordering::Relaxed);
+        self.set_output_volume_db(db);
         let Some(lease) = lease else {
             return;
         };
@@ -1870,13 +1883,12 @@ impl AudioHandler for ReceiverAudioHandler {
         let Some(lease) = self.arbiter.current_lease(MediaSource::AirPlayAudio) else {
             return;
         };
+        if volume.is_nan() {
+            return;
+        }
         let percent = airplay_db_to_percent(volume);
         self.arbiter.run_if_current(lease, || {
-            // See apply_local_volume_percent: Kotlin maps this AirPlay volume
-            // to the real Android media stream, so do not attenuate PCM here.
-            self.gain_bits.store(1.0_f32.to_bits(), Ordering::Relaxed);
-            self.volume_db_bits
-                .store(volume.clamp(-144.0, 0.0).to_bits(), Ordering::Relaxed);
+            self.set_output_volume_db(volume);
             self.events.emit(CoreEvent::Volume {
                 source: "airplay",
                 epoch: lease.epoch(),
@@ -2398,6 +2410,7 @@ mod tests {
         let buffer = Arc::new(Mutex::new(AudioBuffer::new(48_000, 2)));
         (
             ReceiverAudioHandler {
+                system_manages_volume: true,
                 buffer: Arc::clone(&buffer),
                 gain_bits: Arc::new(AtomicU32::new(1.0_f32.to_bits())),
                 volume_db_bits: Arc::new(AtomicU32::new(0.0_f32.to_bits())),

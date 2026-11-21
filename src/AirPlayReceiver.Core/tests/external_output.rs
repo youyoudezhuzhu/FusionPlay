@@ -7,7 +7,7 @@ use fusionplay_core::{
 };
 use shairplay::{AudioCodec, AudioFormat, AudioHandler, AudioSession};
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicU32, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 #[derive(Default)]
@@ -34,9 +34,9 @@ impl PcmOutput for CountingSink {
         self.sender_gain_bits.store(sender_gain.to_bits(), Ordering::Relaxed);
         self.rate.store(sample_rate, Ordering::Relaxed);
         self.channels.store(channels as u32, Ordering::Relaxed);
-        self.frames
-            .fetch_add((samples.len() / channels.max(1) as usize) as u64, Ordering::Relaxed);
         self.writes.fetch_add(1, Ordering::Relaxed);
+        self.frames
+            .fetch_add((samples.len() / channels.max(1) as usize) as u64, Ordering::Release);
     }
 
     fn flush(&self, source: PcmSource) {
@@ -70,18 +70,25 @@ fn external_output_forwards_pcm_and_sender_gain() {
     let mut session: Box<dyn AudioSession> = AudioHandler::audio_init(&*runtime.handler, format);
     // Sender volume: -6.02 dB -> linear 0.5.
     AudioHandler::on_volume(&*runtime.handler, -6.02);
-    session.audio_process(&[0.25f32; 960 * 2]);
-
-    let deadline = Instant::now() + Duration::from_secs(2);
-    while sink.frames.load(Ordering::Relaxed) < 960 && Instant::now() < deadline {
-        std::thread::sleep(Duration::from_millis(5));
-    }
-    assert_eq!(sink.frames.load(Ordering::Relaxed), 960, "frames forwarded");
+    let mut render_block = || {
+        let expected = sink.frames.load(Ordering::Acquire) + 960;
+        session.audio_process(&[0.25f32; 960 * 2]);
+        let deadline = Instant::now() + Duration::from_secs(2);
+        while sink.frames.load(Ordering::Acquire) < expected && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        assert_eq!(sink.frames.load(Ordering::Acquire), expected, "frames forwarded");
+        f32::from_bits(sink.sender_gain_bits.load(Ordering::Relaxed))
+    };
+    let gain = render_block();
+    assert!((gain - 0.5).abs() < 0.01, "sender gain forwarded, got {gain}");
+    runtime.handler.apply_local_volume_percent(0, None);
+    assert_eq!(render_block(), 0.0, "the host slider must mute PCM");
+    runtime.handler.apply_local_volume_percent(100, None);
+    assert_eq!(render_block(), 1.0, "full volume restores unity gain");
     assert!(sink.writes.load(Ordering::Relaxed) >= 1);
     assert_eq!(sink.rate.load(Ordering::Relaxed), 48_000);
     assert_eq!(sink.channels.load(Ordering::Relaxed), 2);
-    let gain = f32::from_bits(sink.sender_gain_bits.load(Ordering::Relaxed));
-    assert!((gain - 0.5).abs() < 0.01, "sender gain forwarded, got {gain}");
     assert_eq!(runtime.sample_rate, 48_000);
     assert_eq!(runtime.channels, 2);
 
@@ -91,6 +98,4 @@ fn external_output_forwards_pcm_and_sender_gain() {
         sink.flushed_airplay.load(Ordering::Relaxed),
         "dropping the receiver flushes the external sink"
     );
-    // Keep Mutex import used on all feature combinations.
-    let _ = Mutex::new(0u8);
 }
