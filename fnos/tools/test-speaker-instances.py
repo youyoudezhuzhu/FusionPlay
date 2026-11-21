@@ -95,6 +95,15 @@ def verify(base, media_port, root):
     rooms = {"default": "Living room", "study": "Study"}
     instances = await_value("instance directory", lambda: fetch(base + "/api/instances"))
     assert {row["id"]: row["name"] for row in instances["instances"]} == rooms, instances
+    # IPv6 is optional on NAS kernels. When loopback IPv6 is available,
+    # both address families must reach each speaker's advertised RTSP port.
+    addresses = ["127.0.0.1"]
+    try:
+        with socket.socket(socket.AF_INET6) as probe:
+            probe.bind(("::1", 0))
+        addresses.append("::1")
+    except OSError:
+        pass
     ports, ids = {}, set()
     for room, name in rooms.items():
         def ready():
@@ -102,6 +111,11 @@ def verify(base, media_port, root):
             return snapshot if all(p["state"] == "waiting" for p in snapshot["protocols"].values()) else None
 
         snapshot = await_value(f"{room} all three receivers ready", ready)
+        for address in addresses:
+            with socket.create_connection((address, snapshot["protocols"]["airplay"]["port"]), timeout=3) as rtsp:
+                rtsp.sendall(b"OPTIONS * RTSP/1.0\r\nCSeq: 1\r\n\r\n")
+                with rtsp.makefile("rb") as response:
+                    assert response.readline().startswith(b"RTSP/1.0 200"), (room, address)
         ports[room] = snapshot["protocols"]["dlna"]["port"]
         with urlopen(f"http://127.0.0.1:{ports[room]}/description.xml", timeout=3) as desc:
             device = ET.fromstring(desc.read())

@@ -2021,6 +2021,7 @@ dependencies = [
  "rubato",
  "sha1",
  "sha2",
+ "socket2",
  "subtle",
  "symphonia",
  "thiserror 2.0.21",
