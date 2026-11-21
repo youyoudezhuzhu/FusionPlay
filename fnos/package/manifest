@@ -5,7 +5,7 @@
 #   - source 第三方固定 thirdparty
 # 打包时按原生后台的架构写入 platform，x86_64 取 x86，AArch64 取 arm。
 appname               = fusionplay-fnos
-version               = 0.2.6
+version               = 1.7.9
 display_name          = "FusionPlay"
 desc                  = "把 AirPlay 2 / DLNA / 小米妙播音频接到飞牛 NAS 的音频输出设备（多声卡、发送端主音量、校准）"
 source                = thirdparty
@@ -14,7 +14,7 @@ maintainer            = "youyoudezhuzhu"
 maintainer_url        = https://github.com/youyoudezhuzhu/FusionPlay
 distributor           = "youyoudezhuzhu"
 distributor_url       = https://github.com/youyoudezhuzhu/FusionPlay
-changelog             = "修复覆盖升级时服务提前占用端口和残留 PID 造成的启用异常。保留音箱绑定、音量曲线及配对数据。"
+changelog             = "支持 x86_64 和 ARM64 独立安装包。可在播放器中切换音箱实例，选择 NAS 授权目录保存更新包，并在应用中心手动安装。"
 desktop_uidir         = ui
 desktop_applaunchname = fusionplay-fnos.main
 service_port          = 18080

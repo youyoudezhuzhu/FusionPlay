@@ -18,33 +18,47 @@ cleanup() {
 trap cleanup EXIT
 die() { echo "FAIL: $*" >&2; exit 1; }
 
-first_arm_rehearsal=false
+same_version_rehearsal=false
 case $# in
     0|1)
         NEW="${1:-$SELF_DIR/../dist/$FPK_FILENAME}"
         OLD="$SANDBOX/$FPK_FILENAME"
-        if [ "$FPK_PLATFORM" = x86 ]; then
-            baseline_tag=fnos-v0.2.5
-            expected_hash=544174910c5daf44cdc17c531938c59b731238c6d0ef3054c0cf25a3cdda6faa
+        tar -xzOf "$NEW" manifest > "$SANDBOX/candidate-manifest"
+        candidate_version=$(sim_manifest_get "$SANDBOX/candidate-manifest" version)
+        repo=youyoudezhuzhu/FusionPlay
+        gh api --paginate "repos/$repo/releases?per_page=100" \
+            --jq '.[] | select(.draft == false and .prerelease == false) | .tag_name as $tag | .assets[] | [$tag, .name, (.digest // "-")] | @tsv' \
+            > "$SANDBOX/release-assets"
+        baseline=$(python3 - "$SANDBOX/release-assets" "$candidate_version" "$FPK_FILENAME" <<'PYBASE'
+import re, sys
+from pathlib import Path
+
+def version(text):
+    return tuple(map(int, text.split(".")))
+
+catalog, candidate, filename = sys.argv[1:]
+compatible = []
+for line in Path(catalog).read_text().splitlines():
+    tag, name, digest = line.split("\t")
+    match = re.fullmatch(r"fnos-v(\d+\.\d+\.\d+)", tag)
+    if match and name == filename and version(match[1]) <= version(candidate):
+        # Prefer an actual upgrade, even if the candidate is already published.
+        compatible.append((version(match[1]) < version(candidate), version(match[1]), tag, digest))
+if compatible:
+    _, _, tag, digest = max(compatible)
+    print(tag, digest)
+PYBASE
+        )
+        if [ -n "$baseline" ]; then
+            read -r baseline_tag digest <<< "$baseline"
+            [[ "$digest" =~ ^sha256:[0-9a-f]{64}$ ]] || die "missing SHA-256 for $baseline_tag/$FPK_FILENAME"
+            gh release download "$baseline_tag" --repo "$repo" --pattern "$FPK_FILENAME" --dir "$SANDBOX"
+            echo "${digest#sha256:}  $OLD" | sha256sum -c -
+            if [ "$baseline_tag" = "fnos-v$candidate_version" ]; then same_version_rehearsal=true; fi
         else
-            tar -xzOf "$NEW" manifest > "$SANDBOX/candidate-manifest"
-            if [ "$(sim_manifest_get "$SANDBOX/candidate-manifest" version)" = 0.2.6 ]; then
-                # No previous ARM release exists. Exercise the hooks on the
-                # real candidate and explicitly distinguish this from an upgrade.
-                first_arm_rehearsal=true
-                OLD="$NEW"
-            else
-                baseline_tag=fnos-v0.2.6
-                expected_hash=$(gh release view "$baseline_tag" --repo youyoudezhuzhu/FusionPlay \
-                    --json assets --jq '.assets[] | select(.name == "fusionplay-fnos-arm64.fpk") | .digest')
-                [[ "$expected_hash" =~ ^sha256:[0-9a-f]{64}$ ]] || die "missing ARM64 release digest"
-                expected_hash=${expected_hash#sha256:}
-            fi
-        fi
-        if ! "$first_arm_rehearsal"; then
-            gh release download "$baseline_tag" --repo youyoudezhuzhu/FusionPlay \
-                --pattern "$FPK_FILENAME" --dir "$SANDBOX"
-            echo "$expected_hash  $OLD" | sha256sum -c -
+            # First published package for this architecture.
+            same_version_rehearsal=true
+            OLD="$NEW"
         fi
         ;;
     2) OLD="$1"; NEW="$2" ;;
@@ -59,8 +73,8 @@ for path in "$SANDBOX"/{old,new}/manifest; do
 done
 OLD_VER=$(sim_manifest_get "$SANDBOX/old/manifest" version)
 NEW_VER=$(sim_manifest_get "$SANDBOX/new/manifest" version)
-if "$first_arm_rehearsal"; then
-    echo "First ARM64 FPK $NEW_VER: exercising the replacement hooks with the same build"
+if "$same_version_rehearsal"; then
+    echo "No earlier published $FPK_PLATFORM FPK: exercising same-version replacement ($NEW_VER)"
 else
     [ "$OLD_VER" != "$NEW_VER" ] && [ "$(printf '%s\n' "$OLD_VER" "$NEW_VER" | sort -V | tail -1)" = "$NEW_VER" ] ||
         die "覆盖升级需要递增的版本：$OLD_VER → $NEW_VER"

@@ -336,10 +336,9 @@ mod tests {
     #[test]
     #[ignore]
     fn saves_published_packages_without_overwriting() {
-        for (platform, tag) in [
-            (Platform::Windows, "windows-v1.3.2"),
-            (Platform::NasX86, "fnos-v0.2.5"),
-        ] {
+        for platform in [Platform::Windows, Platform::NasX86, Platform::NasArm] {
+            let info = check(platform, "0.0.0").unwrap();
+            let tag = info["releaseKey"].as_str().unwrap();
             let pkg = resolve(platform, "0.0.0", tag).unwrap();
             let dir = tempfile::tempdir().unwrap();
             assert!(download(
