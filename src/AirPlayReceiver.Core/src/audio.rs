@@ -555,7 +555,7 @@ pub fn start_audio(
         progress_timebase: AtomicU32::new(0),
         remote_controls: Mutex::new(RemoteControls::default()),
         client_connections: Mutex::new(ClientConnections::default()),
-        current_session: Arc::new(Mutex::new(None)),
+        current_session: Mutex::default(),
     });
 
     Ok(AudioRuntime {
@@ -641,7 +641,7 @@ pub fn start_audio_external(
         progress_timebase: AtomicU32::new(0),
         remote_controls: Mutex::new(RemoteControls::default()),
         client_connections: Mutex::new(ClientConnections::default()),
-        current_session: Arc::new(Mutex::new(None)),
+        current_session: Mutex::default(),
     });
 
     Ok(AudioRuntime {
@@ -718,7 +718,7 @@ pub fn start_audio(
         progress_timebase: AtomicU32::new(0),
         remote_controls: Mutex::new(RemoteControls::default()),
         client_connections: Mutex::new(ClientConnections::default()),
-        current_session: Arc::new(Mutex::new(None)),
+        current_session: Mutex::default(),
     });
 
     Ok(AudioRuntime {
@@ -993,7 +993,18 @@ pub struct ReceiverAudioHandler {
     client_connections: Mutex<ClientConnections>,
     /// Last logical AirPlay session, retained across a sender's temporary
     /// audio-stream teardown so pause/resume does not discard now-playing data.
-    current_session: Arc<Mutex<Option<Arc<AudioSessionState>>>>,
+    current_session: Mutex<LogicalClientSession>,
+}
+
+// AP2 can deliver DMAP, artwork and RTP progress after SETUP but before the
+// first audio packet initializes the decoder. Keep only the latest values for
+// this logical client and publish them once its audio has a playback lease.
+#[derive(Default)]
+struct LogicalClientSession {
+    active: Option<Arc<AudioSessionState>>,
+    metadata: Option<TrackMetadata>,
+    cover_path: Option<String>,
+    rtp_progress: Option<(u32, u32, u32)>,
 }
 
 struct AudioSessionState {
@@ -1141,10 +1152,7 @@ impl ClientConnections {
 
 impl ReceiverAudioHandler {
     fn current_session(&self) -> Option<Arc<AudioSessionState>> {
-        self.current_session
-            .lock()
-            .ok()
-            .and_then(|slot| slot.clone())
+        self.current_session.lock().ok()?.active.clone()
     }
 
     fn emit_stream_started(&self, state: &AudioSessionState, lease: MediaLease) {
@@ -1792,12 +1800,21 @@ impl AudioHandler for ReceiverAudioHandler {
             cached_session.as_deref(),
         ));
         if let Ok(mut current) = self.current_session.lock() {
-            *current = Some(Arc::clone(&session_state));
+            if let Some(metadata) = current.metadata.take() {
+                *session_state.metadata.lock().unwrap() = Some(metadata);
+            }
+            if let Some(path) = current.cover_path.take() {
+                *session_state.cover_art_path.lock().unwrap() = Some(path);
+            }
+            if let Some((start, position, end)) = current.rtp_progress.take() {
+                *session_state.progress.lock().unwrap() = progress_milliseconds(
+                    start, position, end, self.progress_timebase.load(Ordering::Relaxed),
+                );
+            }
+            current.active = Some(Arc::clone(&session_state));
         }
         self.emit_stream_started(&session_state, lease);
-        if resumes_logical_session {
-            self.emit_cached_session_state(&session_state, lease);
-        }
+        self.emit_cached_session_state(&session_state, lease);
         let initially_playing = !session_state.suspended.load(Ordering::Acquire);
         self.events.emit(CoreEvent::Status {
             state: if initially_playing {
@@ -1871,8 +1888,19 @@ impl AudioHandler for ReceiverAudioHandler {
 
     fn on_metadata(&self, metadata: &TrackMetadata) {
         report_unknown_dmap_tags(&self.events, &metadata.unknown_tags);
-        let Some(session) = self.current_session() else {
-            return;
+        let session = {
+            let mut current = self.current_session.lock().unwrap();
+            if let Some(active) = &current.active {
+                Arc::clone(active)
+            } else {
+                let (merged, changed, _) = merge_track_metadata(current.metadata.as_ref(), metadata);
+                if changed {
+                    current.cover_path = None;
+                    current.rtp_progress = None;
+                }
+                current.metadata = Some(merged);
+                return;
+            }
         };
         let merge_packet = |prior: Option<&TrackMetadata>| {
             let (merged, changed, decision) = merge_track_metadata(prior, metadata);
@@ -1923,12 +1951,7 @@ impl AudioHandler for ReceiverAudioHandler {
     }
 
     fn on_coverart(&self, coverart: &[u8]) {
-        let Some(session) = self.current_session() else {
-            return;
-        };
-        let Some(lease) = session.lease() else {
-            return;
-        };
+        let mut client = self.current_session.lock().unwrap();
         let filename = if coverart.starts_with(b"\x89PNG\r\n\x1a\n") {
             "png"
         } else {
@@ -1945,6 +1968,12 @@ impl AudioHandler for ReceiverAudioHandler {
             .join(format!("cover-art-{:016x}.{filename}", hasher.finish()));
         if std::fs::write(&path, coverart).is_ok() {
             let path_string = path.to_string_lossy();
+            let Some(session) = client.active.clone() else {
+                client.cover_path = Some(path_string.into_owned());
+                return;
+            };
+            drop(client);
+            let Some(lease) = session.lease() else { return };
             if let Ok(mut cached) = session.cover_art_path.lock() {
                 *cached = Some(path_string.to_string());
             }
@@ -1959,8 +1988,13 @@ impl AudioHandler for ReceiverAudioHandler {
     }
 
     fn on_progress(&self, start: u32, current: u32, end: u32) {
-        let Some(session) = self.current_session() else {
-            return;
+        let session = {
+            let mut client = self.current_session.lock().unwrap();
+            let Some(active) = &client.active else {
+                client.rtp_progress = Some((start, current, end));
+                return;
+            };
+            Arc::clone(active)
         };
         let Some(lease) = session.lease() else {
             return;
@@ -2053,7 +2087,7 @@ impl AudioHandler for ReceiverAudioHandler {
         // disconnected earlier. Auxiliary connections from the same active
         // sender do not take this branch.
         if let Ok(mut current) = self.current_session.lock() {
-            current.take();
+            *current = LogicalClientSession::default();
         }
         self.events.emit(CoreEvent::ClientConnected { address });
         self.events.emit(CoreEvent::Status {
@@ -2072,7 +2106,7 @@ impl AudioHandler for ReceiverAudioHandler {
             return;
         }
         if let Ok(mut current) = self.current_session.lock() {
-            current.take();
+            *current = LogicalClientSession::default();
         }
         self.events.emit(CoreEvent::ClientDisconnected { address });
         self.events.emit(CoreEvent::Status {
@@ -2376,11 +2410,36 @@ mod tests {
                 progress_timebase: AtomicU32::new(0),
                 remote_controls: Mutex::new(RemoteControls::default()),
                 client_connections: Mutex::new(ClientConnections::default()),
-                current_session: Arc::new(Mutex::new(None)),
+                current_session: Mutex::default(),
             },
             arbiter,
             buffer,
         )
+    }
+
+    #[test]
+    fn opening_metadata_before_pcm_follows_only_its_logical_client() {
+        let (mut handler, _, _) = test_handler();
+        let dir = tempfile::tempdir().unwrap();
+        handler.artwork_dir = dir.path().to_owned();
+        let track = |title: &str, artist: &str| TrackMetadata {
+            title: Some(title.into()), artist: Some(artist.into()), ..Default::default()
+        };
+        handler.on_client_connected("10.0.0.1:1");
+        handler.on_metadata(&track("Abandoned", "First sender"));
+        handler.on_coverart(b"previous cover");
+        handler.on_client_disconnected("10.0.0.1:1");
+        handler.on_client_connected("10.0.0.2:1");
+        handler.on_metadata(&track("Song", "Artist"));
+        handler.on_metadata(&track("First line", "Song - Artist"));
+        assert!(handler.current_session().is_none());
+        let _audio = handler.audio_init(audio_format());
+        let active = handler.current_session().unwrap();
+        let cached = active.metadata.lock().unwrap();
+        let meta = cached.as_ref().unwrap();
+        assert_eq!(meta.title.as_deref(), Some("First line"));
+        assert_eq!(meta.lyric_credit, Some(("Song".to_owned(), "Artist".to_owned())));
+        assert!(active.cover_art_path.lock().unwrap().is_none());
     }
 
     #[test]
