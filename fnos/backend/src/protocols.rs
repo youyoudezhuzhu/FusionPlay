@@ -344,6 +344,7 @@ impl ProtocolHosts {
             output_device: None,
             airplay_enabled: config.protocols.airplay.enabled,
             dlna_enabled: config.protocols.dlna.enabled,
+            dlna_initial_volume: 100,
             // fnOS is an audio receiver: advertise the audio-only AirPlay
             // profile so iPhones do not offer video/AirPlay mirroring to it.
             airplay_audio_only: true,

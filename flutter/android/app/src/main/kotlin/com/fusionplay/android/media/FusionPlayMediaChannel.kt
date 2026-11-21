@@ -18,6 +18,7 @@ import androidx.core.graphics.scale
 import androidx.core.net.toUri
 import java.io.ByteArrayOutputStream
 import java.io.InputStream
+import java.io.File
 import java.net.HttpURLConnection
 import java.net.URI
 import java.net.URL
@@ -197,6 +198,7 @@ object FusionPlayMediaChannel {
 
     suspend fun setArtwork(
         uri: URI,
+        downloadedArtwork: File? = null,
         report: ((String, Map<String, Any?>) -> Unit)? = null,
     ) {
         val request = artworkRequests.begin()
@@ -236,6 +238,14 @@ object FusionPlayMediaChannel {
                             details["downloaded_bytes"] = bytes.size
                             decodeSampledBytes(bytes).also { bitmap ->
                                 outcome = if (bitmap == null) "decode_failed" else "decoded"
+                                if (bitmap != null && downloadedArtwork != null) {
+                                    try {
+                                        downloadedArtwork.writeBytes(bytes)
+                                    } catch (error: java.io.IOException) {
+                                        downloadedArtwork.delete()
+                                        details["cache_error"] = error.javaClass.simpleName
+                                    }
+                                }
                             }
                         }
                     } catch (error: Exception) {

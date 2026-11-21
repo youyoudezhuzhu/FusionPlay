@@ -294,6 +294,7 @@ impl ProtocolHosts {
             output_device: None,
             airplay_enabled: settings.air_play_enabled,
             dlna_enabled: settings.dlna_enabled,
+            dlna_initial_volume: 100,
             // Windows 1.3.0 is an audio receiver: advertise the audio-only
             // profile so iPhones do not offer mirroring/video we cannot show.
             airplay_audio_only: true,

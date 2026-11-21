@@ -39,6 +39,7 @@ import io.flutter.plugin.common.EventChannel
 import io.flutter.plugin.common.MethodCall
 import io.flutter.plugin.common.MethodChannel
 import java.io.Closeable
+import java.io.File
 import java.net.URI
 import java.nio.file.Paths
 import java.util.concurrent.atomic.AtomicBoolean
@@ -103,6 +104,7 @@ class FusionPlayRuntime(
     private var lastDesiredCoreConfiguration: CoreReceiverConfiguration? = null
     private var lastDesiredMiPlayConfiguration: MiPlayReceiverConfiguration? = null
     private var appliedMiPlayConfiguration: MiPlayReceiverConfiguration? = null
+    private var downloadedDlnaArtwork: File? = null
     private var lastPublishedArtwork: Triple<String?, Long?, String?>? = null
     private var lastPublishedMetadata: MediaMetadataProjection? = null
     private var lastPublishedPlaying: Boolean? = null
@@ -1062,6 +1064,7 @@ class FusionPlayRuntime(
             ) {
                 // STREAM_MUSIC owns the percent. Player gain only handles DLNA
                 // mute and devices whose system volume cannot be changed.
+                val previousPercent = FusionPlayMediaChannel.currentSystemMediaVolumePercent()
                 val applied = event.percent?.let(FusionPlayMediaChannel::setSystemMediaVolumePercent)
                 networkPlayer.setDlnaVolume(
                     fallbackPercent = event.percent?.takeIf { applied == false },
@@ -1074,6 +1077,7 @@ class FusionPlayRuntime(
                 }, mapOf(
                     "epoch" to event.epoch,
                     "requested_percent" to event.percent,
+                    "previous_system_percent" to previousPercent,
                     "system_percent" to FusionPlayMediaChannel.currentSystemMediaVolumePercent(),
                     "muted" to event.muted,
                 ))
@@ -1117,6 +1121,7 @@ class FusionPlayRuntime(
                 artworkJob = null
                 FusionPlayMediaChannel.clear()
                 mediaSessionHasMedia = false
+                clearDownloadedDlnaArtwork()
                 lastPublishedArtwork = null
                 lastPublishedMetadata = null
                 lastPublishedPlaying = null
@@ -1166,6 +1171,7 @@ class FusionPlayRuntime(
         if (artworkKey != lastPublishedArtwork) {
             lastPublishedArtwork = artworkKey
             artworkJob?.cancel()
+            clearDownloadedDlnaArtwork()
             artworkJob = scope.launch {
                 if (artwork.isNullOrBlank()) {
                     FusionPlayMediaChannel.clearArtwork()
@@ -1177,10 +1183,21 @@ class FusionPlayRuntime(
                             artwork.startsWith("http://", ignoreCase = true) ||
                                 artwork.startsWith("https://", ignoreCase = true) ||
                                 artwork.startsWith("file:", ignoreCase = true) ->
-                                if (dlna && artwork.startsWith("http", ignoreCase = true)) {
-                                    FusionPlayMediaChannel.setArtwork(URI.create(artwork)) { outcome, details ->
-                                        diagnosticLogger.write("dlna", "artwork_http", outcome,
-                                            details + ("epoch" to playback.sourceEpoch))
+                                if (dlna && isRemoteArtwork(artwork)) {
+                                    val file = File.createTempFile("dlna-remote-cover-", ".img", context.cacheDir)
+                                    try {
+                                        FusionPlayMediaChannel.setArtwork(URI.create(artwork), file) { outcome, details ->
+                                            diagnosticLogger.write("dlna", "artwork_http", outcome,
+                                                details + ("epoch" to playback.sourceEpoch))
+                                        }
+                                        if (lastPublishedArtwork == artworkKey && file.length() > 0) {
+                                            downloadedDlnaArtwork = file
+                                            diagnosticLogger.write("dlna", "artwork_cache", "published",
+                                                mapOf("epoch" to playback.sourceEpoch, "bytes" to file.length()))
+                                            publishState(viewModel.state.value)
+                                        }
+                                    } finally {
+                                        if (downloadedDlnaArtwork != file) file.delete()
                                     }
                                 } else {
                                     bridge.setArtwork(URI.create(artwork))
@@ -1195,6 +1212,23 @@ class FusionPlayRuntime(
                 }
             }
         }
+    }
+
+    private fun isRemoteArtwork(artwork: String): Boolean =
+        artwork.startsWith("http://", ignoreCase = true) ||
+            artwork.startsWith("https://", ignoreCase = true)
+
+    private fun clearDownloadedDlnaArtwork() {
+        downloadedDlnaArtwork?.delete()
+        downloadedDlnaArtwork = null
+    }
+
+    private fun playerArtwork(state: AppState): String? {
+        val playback = state.playback
+        val artwork = playback.coverArt ?: return null
+        if (state.activeMediaSource != MediaSource.DLNA || !isRemoteArtwork(artwork)) return artwork
+        val key = Triple(artwork, playback.sourceEpoch, playback.mediaUrl)
+        return downloadedDlnaArtwork?.absolutePath.takeIf { lastPublishedArtwork == key }
     }
 
     // Lyrics rarely change but the whole state map is re-sent on every
@@ -1265,7 +1299,7 @@ class FusionPlayRuntime(
             "title" to state.playback.title,
             "artist" to state.playback.artist,
             "album" to state.playback.album,
-            "coverArt" to state.playback.coverArt,
+            "coverArt" to playerArtwork(state),
             "embeddedArtwork" to networkPlayer.embeddedArtworkPath.takeIf {
                 state.activeMediaSource == MediaSource.DLNA &&
                     networkPlayer.source == MediaSource.DLNA &&
@@ -1370,6 +1404,7 @@ class FusionPlayRuntime(
     }
 
     override fun close() {
+        clearDownloadedDlnaArtwork()
         if (!closed.compareAndSet(false, true)) return
         networkPlayer.close()
         bridge.close()

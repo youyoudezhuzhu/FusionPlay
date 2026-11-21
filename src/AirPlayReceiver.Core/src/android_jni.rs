@@ -84,6 +84,7 @@ impl AndroidCoreProtocol {
             output_device,
             airplay_enabled: self == Self::AirPlay,
             dlna_enabled: self == Self::Dlna,
+            dlna_initial_volume: 100,
             // FusionPlay is an audio receiver: advertise the audio-only
             // AirPlay profile so iPhones do not offer video/mirroring.
             airplay_audio_only: true,
@@ -524,6 +525,7 @@ pub extern "system" fn Java_com_airplayreceiver_desktop_nativebridge_FusionPlayN
     name: JString,
     state_path: JString,
     output_device_id: JString,
+    initial_volume_percent: jint,
 ) -> jstring {
     let protocol = match java_string(&mut env, protocol)
         .ok()
@@ -567,7 +569,8 @@ pub extern "system" fn Java_com_airplayreceiver_desktop_nativebridge_FusionPlayN
     let (tx, rx) = mpsc::unbounded_channel();
     let events = Arc::clone(&host.core_events);
     let arbiter = Arc::clone(&host.core_arbiter);
-    let settings = protocol.settings(receiver_name, state_path, output_device);
+    let mut settings = protocol.settings(receiver_name, state_path, output_device);
+    settings.dlna_initial_volume = initial_volume_percent.clamp(0, 100) as u8;
     let runtime_handle = host.runtime.handle().clone();
     let join = std::thread::Builder::new()
         .name(protocol.thread_name().into())

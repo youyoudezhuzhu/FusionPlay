@@ -28,6 +28,7 @@ pub struct Settings {
     pub output_device: Option<String>,
     pub airplay_enabled: bool,
     pub dlna_enabled: bool,
+    pub dlna_initial_volume: u8,
     /// Advertise AirPlay as an audio-only speaker (AirPort10,115 model, no
     /// video/HLS feature bits). fnOS sets this so iPhones stop offering video.
     /// Android/desktop keep the existing video-capable Apple TV profile.
@@ -320,6 +321,7 @@ pub async fn run_receiver_with_arbiter(
             mac,
             Arc::clone(&events),
             Arc::clone(&arbiter),
+            settings.dlna_initial_volume,
         )
         .await
         {
@@ -649,6 +651,7 @@ pub fn parse_settings_from(arguments: impl IntoIterator<Item = String>) -> Resul
         output_device,
         airplay_enabled,
         dlna_enabled,
+        dlna_initial_volume: 100,
         airplay_audio_only: false,
         airplay_latency_frames: DEFAULT_AIRPLAY_LATENCY_FRAMES,
         audio_output: None,

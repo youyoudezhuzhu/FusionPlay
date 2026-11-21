@@ -1,5 +1,6 @@
 package com.airplayreceiver.desktop.backend
 
+import com.fusionplay.android.media.FusionPlayMediaChannel
 import com.airplayreceiver.desktop.nativebridge.FusionPlayNative
 import com.airplayreceiver.desktop.nativebridge.NativeCallback
 import java.io.Closeable
@@ -163,6 +164,7 @@ class CoreProcessService(
                         configuration.receiverName,
                         configuration.statePath,
                         configuration.outputDeviceId,
+                        FusionPlayMediaChannel.currentSystemMediaVolumePercent(),
                     )
                     appliedConfigurations[protocol] = configuration
                     emitLog(

@@ -68,6 +68,7 @@ impl DmrService {
         device_key: [u8; 6],
         events: Arc<EventSink>,
         arbiter: Arc<PlaybackArbiter>,
+        initial_volume: u8,
     ) -> Result<Self> {
         // Prefer a dual-stack listener so IPv6 control points can fetch the
         // description/SCPD; fall back to IPv4-only when the host has no IPv6.
@@ -100,10 +101,11 @@ impl DmrService {
         let device_uuid = stable_device_uuid(device_key);
         let udn = format!("uuid:{device_uuid}");
         let gena = Arc::new(GenaHub::default());
-        let controller = Arc::new(DmrController::new(
+        let controller = Arc::new(DmrController::with_initial_volume(
             Arc::clone(&events),
             Arc::clone(&gena),
             Arc::clone(&arbiter),
+            initial_volume,
         ));
         let weak_controller = Arc::downgrade(&controller);
         arbiter.register_suspender(MediaSource::Dlna, move |lease| {
@@ -324,9 +326,19 @@ pub struct DmrController {
 }
 
 impl DmrController {
+    #[cfg(test)]
     fn new(events: Arc<EventSink>, gena: Arc<GenaHub>, arbiter: Arc<PlaybackArbiter>) -> Self {
+        Self::with_initial_volume(events, gena, arbiter, 100)
+    }
+
+    fn with_initial_volume(
+        events: Arc<EventSink>,
+        gena: Arc<GenaHub>,
+        arbiter: Arc<PlaybackArbiter>,
+        initial_volume: u8,
+    ) -> Self {
         Self {
-            state: Mutex::new(DmrState::default()),
+            state: Mutex::new(DmrState { volume: initial_volume.min(100), ..DmrState::default() }),
             events,
             gena,
             arbiter,
@@ -4309,6 +4321,21 @@ mod tests {
             DmrController::new(Arc::clone(&events), Arc::new(GenaHub::default()), arbiter),
             events,
         )
+    }
+
+    #[test]
+    fn rendering_control_starts_at_the_hosts_media_volume() {
+        let events = Arc::new(EventSink::new());
+        let arbiter = Arc::new(PlaybackArbiter::new(Arc::clone(&events)));
+        let controller = DmrController::with_initial_volume(
+            events,
+            Arc::new(GenaHub::default()),
+            arbiter,
+            25,
+        );
+        assert_eq!(controller.snapshot().unwrap().volume, 25);
+        assert!(initial_event_body(ServiceKind::RenderingControl, &controller)
+            .contains("val=&quot;25&quot;"));
     }
 
     fn shared_controller() -> (Arc<DmrController>, Arc<PlaybackArbiter>) {
