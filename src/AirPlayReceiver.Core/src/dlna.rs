@@ -380,6 +380,30 @@ impl DmrController {
         }
     }
 
+    /// The fnOS decoder has produced PCM. Keep a pause that arrived while
+    /// buffering, and ignore an acknowledgement from a replaced decoder.
+    pub(crate) fn audio_decoder_ready(&self, epoch: u64, uri: &str) {
+        {
+            let Ok(mut state) = self.state.lock() else { return };
+            if !state.renderer_active || state.current_uri.as_deref() != Some(uri)
+                || !state.lease.is_some_and(|l| l.epoch() == epoch && self.arbiter.is_current(l))
+            {
+                return;
+            }
+            state.ready = true;
+            if state.transport_state != TransportState::Transitioning {
+                return;
+            }
+            state.transport_state = if state.rate > 0.0 {
+                TransportState::Playing
+            } else {
+                TransportState::PausedPlayback
+            };
+            state.last_update = Instant::now();
+        }
+        self.notify_transport();
+    }
+
     /// Handles commands that target the locally rendered DLNA session.
     ///
     /// `None` means that DLNA is not active and the caller should preserve the

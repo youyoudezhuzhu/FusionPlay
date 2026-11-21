@@ -343,6 +343,7 @@ impl ProtocolHosts {
 
     fn start_core(&self, config: &Config, state_dir: &Path) -> Result<()> {
         let (commands, receiver) = tokio::sync::mpsc::unbounded_channel();
+        self.dlna.bind_core(commands.clone());
         let state = Arc::clone(&self.state);
         let dlna = Arc::clone(&self.dlna);
         let events = Arc::new(EventSink::with_callback(Arc::new(move |json: String| {

@@ -158,6 +158,7 @@ const STATE_UPDATE_INTERVAL: Duration = Duration::from_millis(250);
 pub struct DlnaTrack<'a> {
     #[serde(rename = "url")]
     pub uri: &'a str,
+    pub epoch: Option<u64>,
     pub title: Option<&'a str>,
     pub artist: Option<&'a str>,
     pub album: Option<&'a str>,
@@ -210,6 +211,7 @@ pub struct DlnaPlayer {
     /// replaces it; `stop()` and the arbiter suspend hook raise the token.
     current: Mutex<Option<CurrentPlayback>>,
     paused: AtomicBool,
+    core_commands: Mutex<Option<tokio::sync::mpsc::UnboundedSender<String>>>,
     timeout_ms: AtomicU64,
     stats: Mutex<Option<DlnaStats>>,
     /// P2-1: opt-in auto-advance hook. The 1.3.x DLNA control plane is
@@ -230,6 +232,7 @@ impl DlnaPlayer {
             state,
             current: Mutex::new(None),
             paused: AtomicBool::new(false),
+            core_commands: Mutex::new(None),
             timeout_ms: AtomicU64::new(DEFAULT_TIMEOUT.as_millis() as u64),
             stats: Mutex::new(None),
             auto_advance: AtomicBool::new(false),
@@ -247,6 +250,25 @@ impl DlnaPlayer {
             }),
         );
         player
+    }
+
+    pub(crate) fn bind_core(&self, tx: tokio::sync::mpsc::UnboundedSender<String>) {
+        *self.core_commands.lock().unwrap() = Some(tx);
+    }
+
+    fn announce_decoded(&self, track: &DlnaTrack<'_>) {
+        let mut state = self.state.state.write().unwrap();
+        if self.paused.load(Ordering::Acquire) {
+            state.dlna.state = "paused".into();
+        } else {
+            state.dlna.state = "playing".into();
+        }
+        drop(state);
+        if let (Some(epoch), Some(tx)) = (track.epoch, self.core_commands.lock().unwrap().as_ref()) {
+            let _ = tx.send(serde_json::json!({
+                "command": "dlna_audio_ready", "epoch": epoch, "uri": track.uri
+            }).to_string());
+        }
     }
 
     /// Override connect/read timeout (tests and slow NAS tuning).
@@ -855,8 +877,7 @@ impl DlnaPlayer {
 
             if !announced_playing {
                 announced_playing = true;
-                let mut state = self.state.state.write().unwrap();
-                state.dlna.state = "playing".into();
+                self.announce_decoded(track);
             }
             if last_state_update.elapsed() >= STATE_UPDATE_INTERVAL {
                 last_state_update = Instant::now();
@@ -1072,8 +1093,7 @@ impl DlnaPlayer {
 
             if !announced_playing {
                 announced_playing = true;
-                let mut state = self.state.state.write().unwrap();
-                state.dlna.state = "playing".into();
+                self.announce_decoded(track);
             }
             if last_state_update.elapsed() >= STATE_UPDATE_INTERVAL {
                 last_state_update = Instant::now();
