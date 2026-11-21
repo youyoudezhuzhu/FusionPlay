@@ -7,6 +7,7 @@ import 'package:fusionplay_android_flutter/main.dart';
 import 'package:fusionplay_android_flutter/models/app_state.dart';
 import 'package:fusionplay_android_flutter/theme/fusion_theme.dart';
 import 'package:fusionplay_android_flutter/ui/liquid_glass.dart';
+import 'package:fusionplay_android_flutter/ui/app_menu.dart';
 import 'package:fusionplay_android_flutter/ui/settings_view.dart';
 
 const _runtimeChannel = MethodChannel('com.fusionplay.android/runtime');
@@ -91,6 +92,42 @@ void main() {
   tearDown(() {
     controller.dispose();
     _clearChannels();
+  });
+
+  testWidgets('speaker discovery can add a visible action to an open menu', (
+    tester,
+  ) async {
+    Widget menu(List<String> labels) => MaterialApp(
+      home: Scaffold(
+        body: FusionMorphOverlay(
+          stage: MorphStage.menu,
+          anchorRect: const Rect.fromLTWH(720, 12, 34, 34),
+          menuItems: [
+            for (final label in labels)
+              FusionMenuItem(
+                icon: const Icon(Icons.speaker),
+                label: label,
+                onSelected: () {},
+              ),
+          ],
+          menuFocusNodes: const [],
+          settingsChild: const SizedBox.shrink(),
+          settingsTitle: '',
+          onDismiss: () {},
+          onClosed: () {},
+          onSettingsClose: () {},
+          forceFallback: true,
+        ),
+      ),
+    );
+    await tester.pumpWidget(menu(['设置']));
+    await tester.pumpAndSettle();
+    final panel = find.byKey(const ValueKey('morph-container'));
+    final height = tester.getSize(panel).height;
+    await tester.pumpWidget(menu(['设置', '切换音箱']));
+    await tester.pumpAndSettle();
+    expect(tester.getSize(panel).height, height + 46);
+    expect(find.text('切换音箱').hitTestable(), findsOneWidget);
   });
 
   testWidgets('三点按钮打开锚定菜单，非 Android 不显示检查更新', (tester) async {

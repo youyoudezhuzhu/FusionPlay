@@ -350,7 +350,9 @@ class _FusionMorphOverlayState extends State<FusionMorphOverlay>
   void didUpdateWidget(covariant FusionMorphOverlay oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.stage != widget.stage ||
-        oldWidget.anchorRect != widget.anchorRect) {
+        oldWidget.anchorRect != widget.anchorRect ||
+        (widget.stage == MorphStage.menu &&
+            widget.menuItems.length != oldWidget.menuItems.length)) {
       final target = widget.stage;
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (!mounted || widget.stage != target) return;
