@@ -630,13 +630,31 @@ impl DmrController {
             .state
             .lock()
             .map_err(|_| anyhow!("DLNA playback state is unavailable"))?;
+        self.validate_owner(&state, peer)
+    }
+
+    fn validate_owner(&self, state: &DmrState, peer: IpAddr) -> Result<()> {
         if state.current_uri.is_none() {
+            self.log_control_rejection("no_media_selected", state.owner_peer, peer);
             bail!("DLNA media URI has not been set");
         }
         if state.owner_peer.is_some_and(|owner| owner != peer) {
+            self.log_control_rejection("owner_mismatch", state.owner_peer, peer);
             bail!("DLNA command belongs to a different control point");
         }
         Ok(())
+    }
+
+    fn log_control_rejection(&self, reason: &str, owner: Option<IpAddr>, peer: IpAddr) {
+        let family = |address: IpAddr| if address.is_ipv4() { "ipv4" } else { "ipv6" };
+        let owner_family = owner.map(family).unwrap_or("none");
+        let peer_family = family(peer);
+        self.events.emit(CoreEvent::Log {
+            level: "info",
+            message: &format!(
+                "DLNA AVTransport rejected: reason={reason} owner_family={owner_family} requester_family={peer_family}"
+            ),
+        });
     }
 
     fn owned_current_lease(&self, peer: IpAddr) -> Result<MediaLease> {
@@ -644,9 +662,7 @@ impl DmrController {
             .state
             .lock()
             .map_err(|_| anyhow!("DLNA playback state is unavailable"))?;
-        if state.owner_peer.is_some_and(|owner| owner != peer) {
-            bail!("DLNA command belongs to a different control point");
-        }
+        self.validate_owner(&state, peer)?;
         state
             .lease
             .filter(|lease| self.arbiter.is_current(*lease))
@@ -1165,21 +1181,22 @@ impl DmrController {
     }
 
     fn seek(&self, position_ms: u64) -> Result<()> {
-        self.seek_inner(position_ms)
+        self.seek_inner(position_ms, None)
     }
 
     fn seek_from(&self, peer: IpAddr, position_ms: u64) -> Result<()> {
-        self.ensure_owner(peer)?;
-        self.seek_inner(position_ms)
+        self.seek_inner(position_ms, Some(peer))
     }
 
-    fn seek_inner(&self, position_ms: u64) -> Result<()> {
+    fn seek_inner(&self, position_ms: u64, peer: Option<IpAddr>) -> Result<()> {
         let (position_ms, duration_ms, lease) = {
             let mut state = self
                 .state
                 .lock()
                 .map_err(|_| anyhow!("DLNA 播放状态不可用"))?;
-            if state.current_uri.is_none() {
+            if let Some(peer) = peer {
+                self.validate_owner(&state, peer)?;
+            } else if state.current_uri.is_none() {
                 bail!("尚未设置 DLNA 媒体地址");
             }
             let lease = state.lease.filter(|lease| self.arbiter.is_current(*lease));
@@ -5173,6 +5190,28 @@ mod tests {
         assert_eq!(snapshot.transport_state, TransportState::Transitioning);
         assert_eq!(snapshot.position_ms, 0);
         assert_eq!(snapshot.current_uri, "https://example.test/owned.mp4");
+    }
+
+    #[test]
+    fn rejected_seek_distinguishes_address_family_mismatch_from_missing_media() {
+        let (controller, events) = controller_with_events();
+        let ipv4: IpAddr = "192.0.2.10".parse().unwrap();
+        let ipv6: IpAddr = "2001:db8::10".parse().unwrap();
+
+        assert!(controller.seek_from(ipv4, 30_000).is_err());
+        controller
+            .set_transport_uri_from("https://example.test/track.mp3", "", Some(ipv4))
+            .unwrap();
+        controller.play_from(ipv4).unwrap();
+        assert!(controller.seek_from(ipv6, 30_000).is_err());
+        controller.seek_from(ipv4, 30_000).unwrap();
+
+        let events = events.captured_events();
+        assert!(events.iter().any(|event| event["message"]
+            == "DLNA AVTransport rejected: reason=no_media_selected owner_family=none requester_family=ipv4"));
+        assert!(events.iter().any(|event| event["message"]
+            == "DLNA AVTransport rejected: reason=owner_mismatch owner_family=ipv4 requester_family=ipv6"));
+        assert_eq!(events.iter().filter(|event| event["type"] == "dlna_seek").count(), 1);
     }
 
     #[test]
