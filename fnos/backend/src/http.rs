@@ -344,6 +344,28 @@ fn handle(
         let Some((id, target)) = scoped.split_once('/') else {
             return respond_error(respond, 404, "未知实例接口");
         };
+        if method == "PUT" && target == "curve" {
+            #[derive(serde::Deserialize)]
+            struct Edit { device_id: String, curve: VolumeCurve, original: VolumeCurve }
+            let result = serde_json::from_slice::<Edit>(&request.body).map_err(anyhow::Error::from)
+                .and_then(|edit| app.update_config(|cfg| {
+                    let dedicated = cfg.audio.instances.iter()
+                        .any(|room| room.id == id && room.device_id == edit.device_id);
+                    let device = cfg.audio.devices.iter_mut().find(|d| d.id == edit.device_id)
+                        .context("输出设备已移除")?;
+                    anyhow::ensure!(dedicated || (id == "default" && device.enabled),
+                        "音箱绑定已改变，请重新打开实例");
+                    anyhow::ensure!(device.curve == edit.original,
+                        "曲线已在其他页面更新，请重新加载");
+                    edit.curve.validate().map_err(anyhow::Error::msg)?;
+                    device.curve = edit.curve;
+                    Ok(())
+                }));
+            return match result {
+                Ok(_) => respond_json(respond, json!({"ok":true})),
+                Err(error) => respond_error(respond, 409, &error.to_string()),
+            };
+        }
         let route = match (method, target) {
             ("GET", "status") | ("POST", "player") => format!("/api/{target}"),
             ("GET", art) if art.strip_prefix("artwork/").is_some_and(artwork_filename) => format!("/{art}"),
@@ -362,6 +384,34 @@ fn handle(
         path = route;
     }
     match (method, path.as_str()) {
+        ("POST", "/api/instances") => {
+            #[derive(serde::Deserialize)]
+            struct Create { name: String, device_id: String }
+            let id = format!("speaker-{:x}", std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)?.as_nanos());
+            let result = serde_json::from_slice::<Create>(&request.body).map_err(anyhow::Error::from)
+                .and_then(|create| app.update_config(|cfg| {
+                    anyhow::ensure!(!cfg.audio.instances.iter().any(|s| s.device_id == create.device_id),
+                        "这只音箱已绑定其他实例");
+                    if let Some(device) = cfg.audio.devices.iter_mut().find(|d| d.id == create.device_id) {
+                        device.enabled = false;
+                    } else {
+                        let device = app.engine.devices().into_iter().find(|d| d.id == create.device_id)
+                            .context("未找到此输出设备，请刷新设备列表")?;
+                        cfg.audio.devices.push(crate::config::DeviceSetting {
+                            id: device.id, name: device.name, enabled: false, ..Default::default()
+                        });
+                    }
+                    cfg.audio.instances.push(crate::config::SpeakerInstance {
+                        id: id.clone(), name: create.name.trim().to_owned(), device_id: create.device_id
+                    });
+                    Ok(())
+                }));
+            return match result {
+                Ok(_) => respond_json(respond, json!({"id":id})),
+                Err(error) => respond_error(respond, 409, &error.to_string()),
+            };
+        }
         ("GET", "/api/instances") => {
             let cfg = app.config.read().unwrap();
             let mut devices = cfg.audio.devices.iter().filter(|device| device.enabled);

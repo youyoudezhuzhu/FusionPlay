@@ -308,3 +308,20 @@ fn failed_worker_creation_restores_persisted_and_live_device_ownership() {
     assert!(app.engine.settings().devices[0].enabled);
     assert_eq!(http.request("GET", "/api/instances/office/status", None).0, 404);
 }
+
+#[test]
+fn speaker_curve_writes_follow_persisted_binding() {
+    let dir = tempfile::tempdir().unwrap();
+    let (_, http) = start_app(dir.path(), vec![device("usb", VolumeCurve::default())]);
+    let create = serde_json::json!({"device_id":"usb","name":"Study"}).to_string();
+    let (code, response) = http.request("POST", "/api/instances", Some(&create));
+    assert_eq!(code, 200, "{response}");
+    let body: serde_json::Value = serde_json::from_str(&response).unwrap();
+    let route = format!("/api/instances/{}/curve", body["id"].as_str().unwrap());
+    let edit = serde_json::json!({"device_id":"usb", "original":VolumeCurve::default(),
+        "curve":{"kind":"soft","points":[]}}).to_string();
+    assert_eq!(http.request("PUT", "/api/instances/default/curve", Some(&edit)).0, 409);
+    assert_eq!(http.request("PUT", &route, Some(&edit)).0, 200);
+    assert_eq!(http.request("PUT", &route, Some(&edit)).0, 409);
+    assert_eq!(http.request("POST", "/api/instances", Some(&create)).0, 409);
+}
