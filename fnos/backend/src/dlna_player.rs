@@ -100,6 +100,10 @@ use crate::state::SharedState;
 /// The unified engine's master mix format.
 const TARGET_RATE: u32 = 48_000;
 const TARGET_CHANNELS: usize = 2;
+/// Keep the file decoder ahead of playback without filling the 300 ms device ring.
+const PCM_LEAD: Duration = Duration::from_millis(60);
+const PCM_BATCH_FRAMES: usize = TARGET_RATE as usize / 50;
+const CONTROL_POLL: Duration = Duration::from_millis(10);
 
 /// Default connect/read timeout for DLNA HTTP transfers. LAN media servers are
 /// expected to answer quickly; a stalled server must fail instead of hanging.
@@ -485,6 +489,19 @@ impl DlnaPlayer {
         // `release` is a no-op and `current_source` belongs to that source —
         // leave it alone.
         let reason = abort.end_reason();
+        if let Ok((summary, _)) = &playback {
+            let output = self.engine.status();
+            tracing::info!(
+                target: "dlna",
+                end_reason = ?reason,
+                source_rate = summary.source_rate,
+                pcm_rate = TARGET_RATE,
+                media_ms = summary.position_ms(0),
+                wall_ms = started.elapsed().as_millis() as u64,
+                ring_dropped_frames = output.dropped_frames,
+                "DLNA PCM 播放统计"
+            );
+        }
         let still_owner = self.arbiter.accepts(lease);
         let new_source = self.arbiter.current().map(|current| current.source);
         // Flushing drops the device rings. Always flush when we still own the
@@ -689,6 +706,7 @@ impl DlnaPlayer {
         let mut pcm: Vec<f32> = Vec::new();
         let mut consecutive_errors = 0u32;
         let mut last_state_update = Instant::now();
+        let mut clock = PcmClock::new(self, abort, seek_slot);
         let mut announced_playing = false;
         let mut position_base_ms = request.base_ms;
         let mut skip_frames =
@@ -709,7 +727,8 @@ impl DlnaPlayer {
                 break;
             }
             if self.paused.load(Ordering::Acquire) {
-                std::thread::sleep(Duration::from_millis(15));
+                clock.next = None;
+                std::thread::sleep(CONTROL_POLL);
                 continue;
             }
             if let Some(target_ms) = take_pending_seek(seek_slot) {
@@ -732,6 +751,7 @@ impl DlnaPlayer {
                         self.engine.flush(Source::Dlna);
                         summary.decoded_frames = 0;
                         summary.output_frames = 0;
+                        clock.next = None;
                         position_base_ms = actual_ms;
                         skip_frames = 0;
                         announced_playing = true;
@@ -873,7 +893,7 @@ impl DlnaPlayer {
                 skip_frames = 0;
             }
 
-            summary.push_frames(&self.engine, epoch, &pcm);
+            clock.push(&mut summary, epoch, &pcm);
 
             if !announced_playing {
                 announced_playing = true;
@@ -890,10 +910,19 @@ impl DlnaPlayer {
             pcm.clear();
             converter.finish(&mut pcm)?;
             if !pcm.is_empty() && !abort.aborted() {
-                summary.push_frames(&self.engine, epoch, &pcm);
+                clock.push(&mut summary, epoch, &pcm);
             }
         }
 
+        clock.finish();
+        if let Some(target_ms) = take_pending_seek(seek_slot).filter(|_| !abort.aborted()) {
+            return Ok(DecodeOutcome::SeekFallback {
+                target_ms,
+                byte_seekable,
+                content_length,
+                duration_ms: probed_duration_ms,
+            });
+        }
         summary.bytes_read = bytes.load(Ordering::Relaxed);
         self.publish_progress(track, &summary, &bytes, started, position_base_ms);
         Ok(DecodeOutcome::Finished {
@@ -961,6 +990,7 @@ impl DlnaPlayer {
         let mut timestamp: u64 = 0;
         let mut consecutive_errors = 0u32;
         let mut last_state_update = Instant::now();
+        let mut clock = PcmClock::new(self, abort, seek_slot);
         let mut announced_playing = false;
         let position_base_ms = request.base_ms;
         let mut skip_frames =
@@ -980,7 +1010,8 @@ impl DlnaPlayer {
                 break;
             }
             if self.paused.load(Ordering::Acquire) {
-                std::thread::sleep(Duration::from_millis(15));
+                clock.next = None;
+                std::thread::sleep(CONTROL_POLL);
                 continue;
             }
             if let Some(target_ms) = take_pending_seek(seek_slot) {
@@ -1089,7 +1120,7 @@ impl DlnaPlayer {
                 skip_frames = 0;
             }
 
-            summary.push_frames(&self.engine, epoch, &pcm);
+            clock.push(&mut summary, epoch, &pcm);
 
             if !announced_playing {
                 announced_playing = true;
@@ -1105,10 +1136,19 @@ impl DlnaPlayer {
             pcm.clear();
             converter.finish(&mut pcm)?;
             if !pcm.is_empty() && !abort.aborted() {
-                summary.push_frames(&self.engine, epoch, &pcm);
+                clock.push(&mut summary, epoch, &pcm);
             }
         }
 
+        clock.finish();
+        if let Some(target_ms) = take_pending_seek(seek_slot).filter(|_| !abort.aborted()) {
+            return Ok(DecodeOutcome::SeekFallback {
+                target_ms,
+                byte_seekable: false,
+                content_length: None,
+                duration_ms: track.duration_ms,
+            });
+        }
         summary.bytes_read = bytes.load(Ordering::Relaxed);
         self.publish_progress(track, &summary, &bytes, started, position_base_ms);
         Ok(DecodeOutcome::Finished {
@@ -1231,6 +1271,69 @@ fn estimate_seek_target(
         byte,
         time_ms: estimated_ms.min(target_ms),
     })
+}
+
+/// Pace local/HTTP audio against monotonic time. Blocking ALSA writes happen
+/// on another thread and cannot slow down this producer.
+struct PcmClock<'a> {
+    player: &'a DlnaPlayer,
+    abort: &'a AbortHandle,
+    seek: &'a Mutex<Option<u64>>,
+    next: Option<Instant>,
+}
+
+impl<'a> PcmClock<'a> {
+    fn new(player: &'a DlnaPlayer, abort: &'a AbortHandle, seek: &'a Mutex<Option<u64>>) -> Self {
+        Self {
+            player,
+            abort,
+            seek,
+            next: None,
+        }
+    }
+
+    fn push(&mut self, summary: &mut PlaySummary, epoch: u64, pcm: &[f32]) {
+        for chunk in pcm.chunks(PCM_BATCH_FRAMES * TARGET_CHANNELS) {
+            if !self.wait(PCM_LEAD) {
+                return;
+            }
+            let now = Instant::now();
+            // Rebase after a stalled read instead of dumping overdue audio
+            // into the device queue to catch up.
+            let next = self.next.unwrap_or(now).max(now);
+            summary.push_frames(&self.player.engine, epoch, chunk);
+            let frames = chunk.len() / TARGET_CHANNELS;
+            self.next = Some(next + Duration::from_secs_f64(frames as f64 / TARGET_RATE as f64));
+        }
+    }
+
+    fn finish(&mut self) {
+        // Give the output worker time to consume the remaining lead before
+        // run_track releases the lease and clears the device rings.
+        self.wait(Duration::ZERO);
+    }
+
+    fn wait(&mut self, lead: Duration) -> bool {
+        loop {
+            if self.abort.aborted() || self.seek.lock().unwrap().is_some() {
+                return false;
+            }
+            if self.player.paused.load(Ordering::Acquire) {
+                self.next = None;
+                std::thread::sleep(CONTROL_POLL);
+                continue;
+            }
+            let remaining = self.next
+                .map(|next| {
+                    next.saturating_duration_since(Instant::now()).saturating_sub(lead)
+                })
+                .unwrap_or_default();
+            if remaining.is_zero() {
+                return true;
+            }
+            std::thread::sleep(remaining.min(CONTROL_POLL));
+        }
+    }
 }
 
 #[derive(Default)]

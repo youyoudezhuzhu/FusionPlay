@@ -636,9 +636,19 @@ fn content_length_wav_plays_as_48k_stereo_and_releases_arbiter() {
     let wav = wav_bytes(44_100, 2, 1.5);
     let (port, server) = serve_content_length(wav, "audio/wav");
 
-    harness
-        .player
-        .play_uri(&format!("http://127.0.0.1:{port}/media/a.wav"))
+    let receiver = play_in_background(
+        Arc::clone(&harness.player),
+        format!("http://127.0.0.1:{port}/media/a.wav"),
+    );
+    assert!(wait_for(|| harness.backend.frames() > 0, Duration::from_secs(5)));
+    let first_frames = harness.backend.frames();
+    assert!(
+        first_frames <= 12_000,
+        "fast HTTP sent {first_frames} frames before the sink could play them"
+    );
+    receiver
+        .recv_timeout(Duration::from_secs(5))
+        .expect("content-length WAV should finish")
         .expect("content-length WAV should play");
     server.join().unwrap();
 
@@ -681,6 +691,11 @@ fn content_length_wav_plays_as_48k_stereo_and_releases_arbiter() {
     let stats = harness.player.stats().expect("stats are recorded");
     assert!(stats.finished);
     assert!(stats.decoded_frames > 0 && stats.output_frames > 0);
+    assert!(
+        stats.elapsed >= Duration::from_millis(1_450),
+        "fast HTTP WAV must take its audio duration to play, got {:?}",
+        stats.elapsed
+    );
     assert!(stats.bytes_read > 0);
     assert!(stats.error.is_none());
 }
@@ -1009,6 +1024,13 @@ fn flv_aac_audio_plays_from_disk() {
         .expect("FLV AAC audio playback should work");
 
     assert!(harness.backend.frames() > 20_000, "no FLV audio reached the engine");
+    let stats = harness.player.stats().unwrap();
+    let pcm_duration = Duration::from_secs_f64(stats.output_frames as f64 / 48_000.0);
+    assert!(
+        stats.elapsed + Duration::from_millis(50) >= pcm_duration,
+        "FLV decoded in {:?} but contains {pcm_duration:?} of audio",
+        stats.elapsed
+    );
     harness.backend.assert_48k_stereo();
     let state = harness.state.snapshot();
     assert_eq!(state.media.title.as_deref(), Some("Overture"));
