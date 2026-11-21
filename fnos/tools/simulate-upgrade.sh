@@ -87,7 +87,10 @@ echo "▶ 升级测试：$APPNAME  $OLD_VERSION  →  $NEW_VERSION"
 # ── 1. 重建一个 +1 版本的测试二进制（不改仓库，只改临时副本的 Cargo.toml）────────
 echo
 echo "=== 准备：构建 $NEW_VERSION 测试二进制 ==="
-BK="$SANDBOX/backend"
+# The decoder also imports shared_audio modules relative to fnos/backend.
+BK="$SANDBOX/fnos/backend"
+mkdir -p "$SANDBOX/src"
+ln -s "$REPO/src/shared_audio" "$SANDBOX/src/shared_audio"
 mkdir -p "$BK"
 ( cd "$ROOT/backend" && tar --exclude='./target' -cf - . ) | tar -xf - -C "$BK" || die "复制 backend 失败"
 [ -f "$BK/Cargo.toml" ] || die "临时 backend 缺 Cargo.toml"
