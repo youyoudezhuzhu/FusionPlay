@@ -246,7 +246,9 @@ fn output_groups_persist_without_changing_calibration_or_receiver_identity() {
 #[test]
 fn catalog_scopes_commands_and_never_falls_back_to_default_for_missing_speakers() {
     let dir = tempfile::tempdir().unwrap();
-    let (app, http) = start_app(dir.path(), vec![device("hw:main", VolumeCurve::default())]);
+    let mut usb = device("hw:usb", VolumeCurve::default());
+    usb.enabled = false;
+    let (app, http) = start_app(dir.path(), vec![device("hw:main", VolumeCurve::default()), usb]);
     let mut cfg = serde_json::to_value(app.snapshot()).unwrap();
     cfg["audio"]["instances"] = serde_json::json!([{"id":"kitchen","name":"Kitchen","device_id":"hw:usb"}]);
     assert_eq!(http.request("PUT", "/api/config", Some(&cfg.to_string())).0, 200);
