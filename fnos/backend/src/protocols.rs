@@ -810,6 +810,12 @@ fn handle_miplay_event(value: Value, state: SharedState, sink: Arc<EngineSink>) 
     let kind = value.get("event").and_then(Value::as_str).unwrap_or_default();
     let text = |key: &str| value.get(key).and_then(Value::as_str).map(|v| v.to_string());
     match kind {
+        "host_pcm_health" => {
+            let audio = sink.engine.status();
+            tracing::info!(short_blocks = value["short_blocks"].as_u64(),
+                late_ticks = value["late_ticks"].as_u64(), ring_drops = audio.dropped_frames,
+                "妙播输出统计");
+        }
         "discovery_backend_failed" => {
             let mut runtime = state.state.write().unwrap();
             if runtime.miplay.enabled {

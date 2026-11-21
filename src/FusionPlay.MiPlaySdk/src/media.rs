@@ -2587,6 +2587,11 @@ fn spawn_external_audio_output(
                 .unwrap_or(MIPLAY_DEFAULT_HOST_OUTPUT_LATENCY_MILLIS)
                 .min(MIPLAY_MAX_OUTPUT_LATENCY_MILLIS);
             let mut latency_refresh_countdown = 0_u32;
+            let period = StdDuration::from_millis(10);
+            let mut deadline = Instant::now();
+            let mut next_report = deadline + StdDuration::from_secs(10);
+            let mut missed_ticks = 0_u32;
+            let mut short_blocks = 0_u32;
             while !stop_for_thread.load(Ordering::Acquire) {
                 if latency_refresh_countdown == 0 {
                     if let Some(measured) = sink
@@ -2617,7 +2622,7 @@ fn spawn_external_audio_output(
                     }
                     latency_telemetry.update_buffered_frames(0);
                     scratch.fill(0.0);
-                } else if let Ok(mut queue) = queue.try_lock() {
+                } else if let Ok(mut queue) = queue.lock() {
                     latency_telemetry.update_buffered_frames(queue.buffered_frames());
                     let synchronized_frames = synchronized_buffer_frames(host_output_latency_millis);
                     let mut leading_silence_frames = 0_usize;
@@ -2636,7 +2641,7 @@ fn spawn_external_audio_output(
                         )
                     {
                         synchronization_mode = "sender_clock";
-                        if should_hard_drop_late_frames(timed_playback_started, schedule_error, true)
+                        if should_hard_drop_late_frames(timed_playback_started, schedule_error, false)
                         {
                             let late_frames = ((-schedule_error)
                                 * MIPLAY_SOURCE_SAMPLE_RATE as f64
@@ -2655,7 +2660,7 @@ fn spawn_external_audio_output(
                             schedule_error += dropped as f64 * 1_000_000.0
                                 / MIPLAY_SOURCE_SAMPLE_RATE as f64;
                         }
-                        if schedule_error > 0.0 {
+                        if !timed_playback_started && schedule_error > 0.0 {
                             leading_silence_frames = (schedule_error
                                 * MIPLAY_SOURCE_SAMPLE_RATE as f64
                                 / 1_000_000.0)
@@ -2673,7 +2678,7 @@ fn spawn_external_audio_output(
                                 render_tick = false;
                             }
                         }
-                        timed_playback_started = true;
+                        timed_playback_started = render_tick;
                         queue.scheduled_playback_rate(schedule_error, 1.0)
                     } else {
                         timed_playback_started = false;
@@ -2718,6 +2723,9 @@ fn spawn_external_audio_output(
                             Some(playback_rate),
                             0,
                         );
+                        if queue.buffered_frames() < frames_per_tick - leading_silence_frames {
+                            short_blocks += 1;
+                        }
                         for (frame_index, frame) in scratch.chunks_mut(CHANNELS).enumerate() {
                             if frame_index < leading_silence_frames {
                                 frame[0] = 0.0;
@@ -2734,8 +2742,7 @@ fn spawn_external_audio_output(
                     }
                     latency_telemetry.update_buffered_frames(queue.buffered_frames());
                 } else {
-                    // The decoder holds the queue briefly; emit silence instead
-                    // of blocking this realtime-paced thread.
+                    // The queue is poisoned.
                     scratch.fill(0.0);
                 }
                 if non_silent && !signal_reported {
@@ -2750,7 +2757,19 @@ fn spawn_external_audio_output(
                 // applies it; scaling the samples here as well would apply the
                 // volume twice (quadratic volume curve).
                 sink.write(gain, MIPLAY_SAMPLE_RATE_HZ, CHANNELS as u16, &scratch);
-                std::thread::sleep(StdDuration::from_millis(10));
+                deadline += period;
+                let now = Instant::now();
+                if now.saturating_duration_since(deadline) >= period {
+                    missed_ticks += 1;
+                    deadline = now;
+                }
+                if now >= next_report {
+                    events(json!({"event":"host_pcm_health", "short_blocks":short_blocks, "late_ticks":missed_ticks}));
+                    next_report = now + StdDuration::from_secs(10);
+                    missed_ticks = 0;
+                    short_blocks = 0;
+                }
+                std::thread::sleep(deadline.saturating_duration_since(now));
             }
             sink.flush();
         })
@@ -3982,6 +4001,41 @@ mod tests {
         assert!(should_hard_drop_late_frames(false, -3_000.0, false));
         assert!(!should_hard_drop_late_frames(true, -500_000.0, false));
         assert!(should_hard_drop_late_frames(true, -26_000.0, true));
+    }
+
+    #[cfg(not(target_os = "android"))]
+    #[test]
+    fn external_output_waits_for_queued_pcm_on_contention() {
+        use super::{spawn_external_audio_output, MiPlayPresentationClock};
+        use std::sync::{Arc, Mutex, atomic::{AtomicBool, AtomicU32}};
+        use std::sync::mpsc::{channel, Sender};
+        struct Sink { started: Sender<()>, signal: Sender<bool> }
+        impl crate::MiPlayPcmOutput for Sink {
+            fn output_latency_millis(&self) -> Option<f64> {
+                let _ = self.started.send(());
+                Some(25.0)
+            }
+            fn write(&self, _: f32, _: u32, _: u16, samples: &[f32]) {
+                let _ = self.signal.send(samples.iter().all(|sample| *sample > 0.1));
+            }
+            fn flush(&self) {}
+        }
+        let queue = Arc::new(Mutex::new(PcmQueue::new()));
+        let mut guard = queue.lock().unwrap();
+        guard.push(&vec![0.5; (synchronized_buffer_frames(25.0) + 1024) * 2]);
+        let (started, ready) = channel();
+        let (signal, output) = channel();
+        let pump = spawn_external_audio_output(queue.clone(), Arc::new(AtomicBool::new(false)),
+            Arc::new(AtomicU32::new(100)), Arc::new(MiPlayPresentationClock::new()),
+            Arc::new(MiPlayLatencyTelemetry::new()), Arc::new(Sink { started, signal }),
+            Arc::new(|_| {}));
+        let started = ready.recv_timeout(StdDuration::from_secs(2));
+        let premature = output.recv_timeout(StdDuration::from_millis(30));
+        drop(guard);
+        assert!(started.is_ok());
+        assert!(premature.is_err(), "contention inserted a silent block");
+        assert_eq!(output.recv_timeout(StdDuration::from_secs(2)).unwrap(), true);
+        drop(pump);
     }
 
     #[test]
