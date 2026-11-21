@@ -736,7 +736,7 @@ dependencies = [
 
 [[package]]
 name = "fusionplay-windows-host"
-version = "1.7.12"
+version = "1.7.13"
 dependencies = [
  "airplay-receiver-core",
  "anyhow",
