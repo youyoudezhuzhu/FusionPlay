@@ -101,13 +101,9 @@ jobs:
           cargo --version
           uname -m
 
-      - name: Install official ARM64 fnpack
+      - name: Install emulator for the pinned fnpack tool
         if: matrix.arch == 'arm64'
-        run: |
-          curl --fail --location --retry 3 https://static2.fnnas.com/fnpack/fnpack-1.3.3-linux-arm -o "$RUNNER_TEMP/fnpack"
-          echo "213c05a3df07ff881110d9f227926cd2d19601fc4f621815e673bd9ec0ff9373  $RUNNER_TEMP/fnpack" | sha256sum -c -
-          chmod 0755 "$RUNNER_TEMP/fnpack"
-          echo "FPK_FNPACK=$RUNNER_TEMP/fnpack" >> "$GITHUB_ENV"
+        run: sudo apt-get install -y --no-install-recommends qemu-user
 
       # 后端单测使用 null 音频后端（CI 无声卡），不会打开真实 /dev/snd。
       # （audio_engine_mock 的 drift 断言已改为串行 + 稳定不变量 + 确定性收敛测试，不再 flaky）

@@ -24,11 +24,8 @@ REPO="$(cd "$ROOT/.." && pwd)"
 PKG="$ROOT/package"
 STAGE_ROOT="${APP_BUILD_ROOT:-/tmp/fusionplay-fnos-build}"
 source "$ROOT/tools/fpk-platform.sh"
-if [ "$FPK_PLATFORM" = arm ]; then
-    FNPACK="$(command -v "${FPK_FNPACK:-fnpack}" || true)"
-else
-    FNPACK="${FPK_FNPACK:-$ROOT/tools/fnpack-linux-amd64}"
-fi
+FNPACK="$ROOT/tools/fnpack-linux-amd64"
+PACKER=("$FNPACK")
 DIST="$ROOT/dist"
 
 die() { echo "❌ $*" >&2; exit 1; }
@@ -41,7 +38,11 @@ manifest_get() {
 
 export PATH="$HOME/.cargo/bin:/usr/local/cargo/bin:$PATH"
 if [ -z "${FPK_BACKEND_BIN:-}" ]; then command -v cargo >/dev/null || die "缺少 cargo"; fi
-[ -x "$FNPACK" ] || die "缺少本机 fnpack。请按 fnos/fnos-build.md 安装，或设置 FPK_FNPACK。"
+[ -x "$FNPACK" ] || die "缺少 fnpack 可执行文件：$FNPACK"
+if [ "$FPK_PLATFORM" = arm ]; then
+    command -v qemu-x86_64 >/dev/null || die "缺少 qemu-x86_64，请安装 qemu-user 运行仓库内的 fnpack。"
+    PACKER=(qemu-x86_64 "$FNPACK")
+fi
 [ -f "$REPO/LICENSE" ] || die "仓库根缺少 LICENSE（AGPL 分发必需）"
 grep -q "GNU AFFERO GENERAL PUBLIC LICENSE" "$REPO/LICENSE" \
     || die "LICENSE 不是 AGPL 文本（本项目为 AGPL-3.0-only）"
@@ -158,7 +159,7 @@ chmod 0755 "$STAGE"/cmd/* "$STAGE/app/bin/fusionplay-fnos"
 PACK_LOG="$STAGE_ROOT/$FPK_PLATFORM/fnpack-build.log"
 echo "▶ fnpack build（$APPNAME $VERSION）"
 set +e
-( cd "$STAGE" && "$FNPACK" build ) 2>&1 | tee "$PACK_LOG"
+( cd "$STAGE" && "${PACKER[@]}" build ) 2>&1 | tee "$PACK_LOG"
 set -e
 # ★ fnpack 打包失败时也可能返回 0，必须解析输出（总纲 §4.1）
 if ! grep -q "Packing successfully" "$PACK_LOG"; then

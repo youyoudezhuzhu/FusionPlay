@@ -34,17 +34,9 @@ fnos/
 | Rust stable | 编译 `fnos/backend`（cpal → ALSA） | <https://rustup.rs> |
 | `libasound2-dev` + `pkg-config` | alsa-sys / cpal | `sudo apt-get install -y libasound2-dev pkg-config` |
 | `tar` / `curl` / `python3` | 打包、检查、模拟测试 | 系统自带或 apt |
-| `fnpack` | 生成 `.fpk` | x86_64 使用仓库自带工具，ARM64 使用飞牛官方 Linux ARM 工具 |
+| `fnpack` | 生成 `.fpk` | 使用仓库固定的 `fnos/tools/fnpack-linux-amd64` |
 
-在 ARM64 Linux 构建机安装官方 fnpack。以下命令在仓库根目录运行。
-
-```sh
-mkdir -p "$HOME/.local/bin"
-curl -fL https://static2.fnnas.com/fnpack/fnpack-1.3.3-linux-arm -o "$HOME/.local/bin/fnpack"
-echo "213c05a3df07ff881110d9f227926cd2d19601fc4f621815e673bd9ec0ff9373  $HOME/.local/bin/fnpack" | sha256sum -c -
-export FPK_FNPACK="$HOME/.local/bin/fnpack"
-chmod 0755 "$FPK_FNPACK"
-```
+ARM64 Linux 构建机需安装 `qemu-user`（Ubuntu/Debian 可执行 `sudo apt-get install qemu-user`）。两条构建线使用仓库内相同版本的飞牛打包工具。ARM64 构建机仅通过 `qemu-x86_64` 运行打包工具，Rust 编译、后台执行和 FPK 生命周期测试均原生运行。
 
 两种架构使用同一份 Flutter Web 输出。设置 `FPK_PLAYER_WEB_DIR` 可复用从同一提交构建的 Web 目录，后台在对应架构的 Linux 上原生编译和运行。CI 会先构建一次播放器，再把相同文件交给两个 FPK 作业。[飞牛 fnpack 文档](https://developer.fnnas.com/docs/cli/fnpack)
 
@@ -191,7 +183,7 @@ mDNS 注册**（AirPlay 在发送端完全搜不到，但 HTTP 面板正常）�
 **CI 注意事项**（已处理）：
 
 - Release 上传需要 `permissions: contents: write`，否则 tag 构建最后一步 403。
-- ARM64 使用固定版本及 SHA-256 校验的官方下载文件。
+- 两个架构复用仓库内固定的 fnpack；运行阶段不依赖 QEMU。
 - 下载 artifact 必须 `curl -L`（会 302 到对象存储，不跟随会拿到空文件）。
 - `cargo`/`target` 缓存命中后构建时间显著下降；缓存 key 必须包含 `Cargo.lock`。
 - 发包前务必 bump 版本（三处一致），否则 `build-fpk.sh` 会直接失败。
