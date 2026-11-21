@@ -9,6 +9,7 @@ pub mod audio;
 pub mod config;
 pub mod dlna_player;
 pub mod http;
+pub mod instances;
 pub mod logging;
 pub mod protocols;
 pub mod session;

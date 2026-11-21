@@ -261,7 +261,7 @@ impl ProtocolHosts {
             shutdown: Arc::new(AtomicBool::new(false)),
             applied: Mutex::new(None),
         });
-        hosts.apply(config)?;
+        hosts.apply(&config.primary_config())?;
         Ok(hosts)
     }
 
@@ -330,6 +330,8 @@ impl ProtocolHosts {
     /// Apply protocol-relevant config changes. Audio-only saves (curves/gain/
     /// delay/mute) are a no-op so playback is not interrupted.
     pub fn restart(&self, config: &Config) -> Result<()> {
+        let effective = config.primary_config();
+        let config = &effective;
         let fingerprint = Self::fingerprint(config);
         if self.applied.lock().unwrap().as_deref() == Some(fingerprint.as_str()) {
             let mut state = self.state.state.write().unwrap();
@@ -409,6 +411,9 @@ impl ProtocolHosts {
 
         let (interface, ip, mac) = pick_interface(&config.receiver.interface)?;
         let identity = load_identity(state_dir)?;
+        let mac = if std::env::var_os(crate::instances::PORT_OFFSET).is_some() {
+            identity.media_device_id.clone()
+        } else { mac };
         let retired_names = receiver_name_history(state_dir, &config.receiver.name);
         let state = Arc::clone(&self.state);
         let sink = Arc::clone(&self.sink);
@@ -615,12 +620,16 @@ fn load_identity(state_dir: &Path) -> Result<ReceiverIdentity> {
     let identity = StoredIdentity {
         idm_instance_id: idm,
         lyra_instance_id: lyra,
-        media_device_id: "fusionplay-nas".to_string(),
+        media_device_id: if std::env::var_os(crate::instances::PORT_OFFSET).is_some() {
+            let b = base.to_be_bytes();
+            format!("02:{:02X}:{:02X}:{:02X}:{:02X}:{:02X}", b[3], b[4], b[5], b[6], b[7])
+        } else { "fusionplay-nas".to_string() },
     };
     if let Some(parent) = path.parent() {
         let _ = std::fs::create_dir_all(parent);
     }
-    let _ = std::fs::write(&path, serde_json::to_string_pretty(&identity)?);
+    std::fs::write(&path, serde_json::to_string_pretty(&identity)?)
+        .context("无法保存妙播接收器身份")?;
     Ok(ReceiverIdentity::new(
         identity.idm_instance_id,
         identity.lyra_instance_id,
