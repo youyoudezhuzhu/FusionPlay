@@ -974,8 +974,8 @@ class _PlayerViewState extends State<PlayerView> {
           .min(cappedWidth * .82, 980.0)
           .clamp(math.min(cappedWidth, 360), cappedWidth)
           .toDouble();
-      // Portrait / very narrow: cover above info instead of a cramped row.
-      final portrait = cappedWidth < 560;
+      final stackVertically =
+          cappedWidth < 560 || content.maxHeight > cappedWidth;
       // Make the cover the visual anchor without consuming control space.
       final cover = math
           .min(groupWidth * .39, content.maxHeight * (compact ? .72 : .76))
@@ -987,20 +987,33 @@ class _PlayerViewState extends State<PlayerView> {
         child: Center(
           child: SizedBox(
             width: groupWidth,
-            child: portrait
+            child: stackVertically
                 ? Column(
                     mainAxisAlignment: MainAxisAlignment.center,
                     children: [
-                      _breathingArtwork(
-                        size: cover,
-                        child: _artworkCard(cover, radius: 20),
-                      ),
-                      const SizedBox(height: 14),
-                      Expanded(
-                        child: _liquid21InfoPanel(
-                          compact: true,
-                          dense: content.maxHeight < 330,
+                      Flexible(
+                        child: LayoutBuilder(
+                          builder: (context, available) {
+                            // Measure the controls first. The cover can use the
+                            // remaining height without pushing them off screen.
+                            final side = math.min(
+                              420.0,
+                              math.min(
+                                available.maxHeight,
+                                available.maxWidth * .9,
+                              ),
+                            );
+                            return _breathingArtwork(
+                              size: side,
+                              child: _artworkCard(side, radius: side * .10),
+                            );
+                          },
                         ),
+                      ),
+                      const SizedBox(height: 20),
+                      _liquid21InfoPanel(
+                        compact: true,
+                        dense: content.maxHeight < 330,
                       ),
                     ],
                   )

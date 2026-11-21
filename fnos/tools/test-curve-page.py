@@ -62,6 +62,8 @@ def main():
         page.route("**/api/**", api)
         page.route("**/player/fnos-mark.png",
                    lambda route: route.fulfill(path=repo / "flutter/web/fnos-mark.png"))
+        page.route("**/player/assets/assets/fonts/MiSansUI.ttf",
+                   lambda route: route.fulfill(path=repo / "flutter/assets/fonts/MiSansUI.ttf"))
         base = f"http://127.0.0.1:{server.server_port}/speakers.html?instance="
         root = f"http://127.0.0.1:{server.server_port}/"
         page.route("**/player/index.html*", lambda route: route.fulfill(body="<html></html>", content_type="text/html"))
@@ -108,6 +110,19 @@ def main():
         expect(page.locator("#editor")).to_be_visible()
         page.goto(base + "room&device=HDMI#curve")
         expect(page.locator("#editor")).to_be_hidden()
+        page.goto(base + "default#curve")
+        picker = page.locator("#curve-device")
+        picker.select_option("HDMI")
+        page.get_by_role("button", name="柔和", exact=True).click()
+        picker.select_option("Living room")
+        dialog = page.get_by_role("dialog")
+        expect(dialog.get_by_text("放弃更改")).to_be_visible()
+        page.keyboard.press("Escape")
+        expect(picker).to_have_value("HDMI")
+        picker.select_option("Living room")
+        dialog.get_by_text("放弃更改").click()
+        expect(picker).to_have_value("Living room")
+        expect(page.locator("#save")).to_be_disabled()
         page.goto(base + "deleted#curve")
         expect(page.locator("#notice")).to_contain_text("此实例已移除")
         expect(page.locator("#editor")).to_be_hidden()
@@ -149,6 +164,12 @@ def main():
             expect(cards.last).to_be_in_viewport(ratio=1)
             assert page.evaluate("scrollY > 0 && document.documentElement.scrollWidth <= innerWidth")
         cards.last.get_by_text("编辑实例").click()
+        expect(page.locator("#room-name")).to_have_value("Room 16")
+        remove = page.locator("#remove-instance")
+        remove.click()
+        expect(dialog.get_by_text("取消")).to_be_focused()
+        dialog.get_by_text("取消").click()
+        expect(remove).to_be_focused()
         expect(page.locator("#room-name")).to_have_value("Room 16")
         browser.close()
 

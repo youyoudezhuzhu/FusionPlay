@@ -1062,13 +1062,15 @@ class _SectionTitle extends StatelessWidget {
         ),
       ),
       const SizedBox(width: 14),
-      Text(
-        text,
-        style: const TextStyle(
-          fontSize: 16,
-          color: _GlassStyle.textPrimary,
-          fontWeight: FusionTypography.semiBoldFontWeight,
-          fontVariations: FusionTypography.semiBold,
+      Flexible(
+        child: Text(
+          text,
+          style: const TextStyle(
+            fontSize: 16,
+            color: _GlassStyle.textPrimary,
+            fontWeight: FusionTypography.semiBoldFontWeight,
+            fontVariations: FusionTypography.semiBold,
+          ),
         ),
       ),
     ],

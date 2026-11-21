@@ -297,7 +297,7 @@ class FusionMorphOverlay extends StatefulWidget {
     required this.onClosed,
     this.onTransitionCompleted,
     this.settingsMaxWidth = 560,
-    this.settingsMinWidth = 0,
+    this.settingsMinWidth = SettingsStyle.panelWidth,
     this.forceFallback = false,
   });
 
@@ -327,7 +327,7 @@ class _FusionMorphOverlayState extends State<FusionMorphOverlay>
     with SingleTickerProviderStateMixin {
   static const settingsRadius = 28.0;
   static const menuTint = Color(0x55181A26);
-  static const settingsTint = Color(0x72181A26);
+  static const settingsTint = FusionGlassColors.settingsTint;
 
   late final AnimationController _controller = AnimationController(vsync: this);
 
@@ -426,7 +426,7 @@ class _FusionMorphOverlayState extends State<FusionMorphOverlay>
         .min(
           math.max(0.0, size.width - 2 * side),
           (size.width * .5).clamp(
-            widget.settingsMinWidth,
+            math.min(widget.settingsMinWidth, widget.settingsMaxWidth),
             widget.settingsMaxWidth,
           ),
         )
@@ -533,7 +533,8 @@ class _FusionMorphOverlayState extends State<FusionMorphOverlay>
               level: GlassLevel.panel,
               interactive: false,
               borderRadius: radius,
-              blurSigma: 20 + 4 * settingsAmount,
+              blurSigma:
+                  20 + (FusionGlassColors.panelBlur - 20) * settingsAmount,
               tint: tint,
               forceFallback: widget.forceFallback,
               animate: false,

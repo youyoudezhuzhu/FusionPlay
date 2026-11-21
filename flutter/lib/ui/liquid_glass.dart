@@ -6,6 +6,7 @@ import 'dart:async';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
+import '../theme/fusion_theme.dart';
 import 'glass_backdrop.dart';
 import 'remote_focus.dart';
 
@@ -87,9 +88,9 @@ class GlassSpec {
   static const panel = GlassSpec(
     // Overlay chrome: tinted depth without a thick white 3D rim. The player
     // controls no longer use this spec, so it is tuned for menus/settings.
-    tint: Color(0x84191B28),
-    solidColor: Color(0xFF252530),
-    blur: 24,
+    tint: FusionGlassColors.popupTint,
+    solidColor: FusionGlassColors.solidPanel,
+    blur: FusionGlassColors.panelBlur,
     radius: 22,
     borderAlpha: .08,
     rimAlpha: .10,
@@ -632,6 +633,22 @@ class GlassDialog extends StatelessWidget {
   Widget build(BuildContext context) {
     final reduceMotion =
         MediaQuery.maybeOf(context)?.disableAnimations ?? false;
+    final theme = Theme.of(context);
+    final surfaceTheme = theme.copyWith(
+      canvasColor: Colors.transparent,
+      colorScheme: const ColorScheme.dark(
+        primary: Color(0xFFF2F2F5),
+        onPrimary: Color(0xFF17191D),
+        surface: FusionGlassColors.solidPanel,
+        onSurface: Colors.white,
+        secondaryContainer: Color(0xFFE4E4EB),
+        onSecondaryContainer: Color(0xFF17191D),
+      ),
+      textTheme: theme.textTheme.apply(
+        bodyColor: Colors.white,
+        displayColor: Colors.white,
+      ),
+    );
     final screen = MediaQuery.maybeSizeOf(context) ?? const Size(400, 800);
     return Center(
       child: ConstrainedBox(
@@ -658,11 +675,14 @@ class GlassDialog extends StatelessWidget {
               refraction: .85,
               specular: .18,
               thickness: 8,
-              child: Material(
-                color: Colors.transparent,
-                child: DefaultTextStyle.merge(
-                  style: const TextStyle(color: Color(0xEBFFFFFF)),
-                  child: child,
+              child: Theme(
+                data: surfaceTheme,
+                child: Material(
+                  color: Colors.transparent,
+                  child: DefaultTextStyle.merge(
+                    style: const TextStyle(color: Color(0xEBFFFFFF)),
+                    child: child,
+                  ),
                 ),
               ),
             ),

@@ -160,7 +160,7 @@
         const remove = $('remove-instance');
         remove.hidden = false;
         remove.onclick = async () => {
-          if (!confirm('移除「' + original.name + '」的接收实例？')) return;
+          if (!await FP.confirmAction('移除「' + original.name + '」的接收实例？','移除实例')) return;
           remove.disabled = true;
           try {
             const next = {...config.audio, instances: instances.filter(item => item.id !== roomId)};
@@ -230,8 +230,8 @@
     const chart = FP.createCurveChart($('graph'), { probe: () => Number($('probe').value), onCurveChange(points) {
       curve.points = points; render();
     }});
-    function load() {
-      if (dirty && !window.confirm('放弃这只音箱尚未保存的曲线？')) {
+    async function load() {
+      if (dirty && !await FP.confirmAction('放弃这只音箱尚未保存的曲线？','放弃更改')) {
         select.value = device.id; return;
       }
       dirty = false;

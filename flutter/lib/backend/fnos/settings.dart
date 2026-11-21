@@ -455,6 +455,7 @@ class _DiagnosticsState extends State<_Diagnostics> {
                 setState(() => logQuery = value.trim().toLowerCase()),
           ),
           Wrap(
+            spacing: 6,
             children: [
               for (final item in ['error', 'warn', 'info', 'debug', 'trace'])
                 ChoiceChip(

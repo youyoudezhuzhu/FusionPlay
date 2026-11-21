@@ -1,6 +1,6 @@
 import { TrimApp } from './trim-web-app.js';
 
-window.FP.initGlass();
+const scene = window.FP.initGlass();
 const sdk = new TrimApp();
 const byId = id => document.getElementById(id);
 const pending = 'fusionplay.update.folder';
@@ -143,5 +143,20 @@ byId('save').onclick = async () => {
 };
 
 byId('check').onclick = check;
-try { callback(); await check(); }
+let refreshingArtwork = false;
+async function refreshArtwork() {
+  if (refreshingArtwork || document.hidden) return;
+  refreshingArtwork = true;
+  try { scene(await FP.api.status(room), room); }
+  catch (_) { scene(null, room); }
+  finally { refreshingArtwork = false; }
+}
+
+try {
+  callback();
+  refreshArtwork();
+  document.addEventListener('visibilitychange', refreshArtwork);
+  setInterval(refreshArtwork, 4000);
+  await check();
+}
 catch (err) { showError(err); render(); }

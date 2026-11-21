@@ -195,8 +195,8 @@ window.FP = window.FP || {};
       ctx.lineTo(pad.left, pad.top + plotHeight);
       ctx.closePath();
       const fill = ctx.createLinearGradient(0, pad.top, 0, pad.top + plotHeight);
-      fill.addColorStop(0, 'rgba(255,215,183,.24)');
-      fill.addColorStop(1, 'rgba(255,215,183,0)');
+      fill.addColorStop(0, 'rgba(242,242,245,.24)');
+      fill.addColorStop(1, 'rgba(242,242,245,0)');
       ctx.fillStyle = fill;
       ctx.fill();
       if (opts.probe) {

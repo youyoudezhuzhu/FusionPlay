@@ -13,7 +13,7 @@ window.FP = window.FP || {};
   // Gateway prefix: `/app/fusionplay-fnos` behind fnOS, '' when served at root.
   const GATEWAY_BASE = (function () {
     let path = location.pathname || '/';
-    path = path.replace(/\/(?:index|speakers)\.html$/i, '');
+    path = path.replace(/\/(?:index|speakers|update)\.html$/i, '');
     if (path.length > 1) {
       path = path.replace(/\/+$/, '');
     }
@@ -97,6 +97,17 @@ window.FP = window.FP || {};
     devices: function () { return request('GET', '/api/devices', undefined, 10000); },
     refreshDevices: function () { return request('POST', '/api/devices/refresh', {}, 25000); },
     testTone: function (id) { return request('POST', '/api/devices/test', { id: id }, 12000); },
+  };
+  FP.confirmAction = (message, action) => {
+    const dialog = document.getElementById('confirm-action');
+    if (dialog.open) return Promise.resolve(false);
+    document.getElementById('confirm-title').textContent = message;
+    document.getElementById('confirm-accept').textContent = action;
+    dialog.returnValue = 'cancel';
+    const result = new Promise(resolve => dialog.addEventListener('close',
+      () => resolve(dialog.returnValue === 'confirm'), {once:true}));
+    dialog.showModal();
+    return result;
   };
   FP.apiUrl = apiUrl;
   FP.api = api;

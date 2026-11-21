@@ -112,9 +112,9 @@ FP.editOutputs = async function (original, fail, changed) {
     try { await FP.api.testTone(select.value); $('notice').textContent = '已发送测试音'; }
     catch (error) { fail(error); }
   };
-  $('output-forget').onclick = () => {
+  $('output-forget').onclick = async () => {
     const id = select.value;
-    if (owner(id) || !confirm('保存后移除此音箱的校准及输出配置？')) return;
+    if (owner(id) || !await FP.confirmAction('保存后移除此音箱的校准及输出配置？','移除配置')) return;
     draft.devices = draft.devices.filter(d => d.id !== id);
     if (draft.output_groups) draft.output_groups = draft.output_groups
       .map(g => ({...g, devices:g.devices.filter(device => device !== id)})).filter(g => g.devices.length);
