@@ -1,6 +1,6 @@
 # FusionPlay
 
-FusionPlay 基于 [juneix/FusionPlayX](https://github.com/juneix/FusionPlayX) 开发。该项目源自 [rosienosiesie/FusionPlay-Android](https://github.com/rosienosiesie/FusionPlay-Android)。
+FusionPlay 源自 [rosienosiesie/FusionPlay-Android](https://github.com/rosienosiesie/FusionPlay-Android)。
 
 FusionPlay 是一个面向全平台的局域网音乐投放接收器，支持 **AirPlay 2 / DLNA / 小米妙播（MiPlay）**。
 
