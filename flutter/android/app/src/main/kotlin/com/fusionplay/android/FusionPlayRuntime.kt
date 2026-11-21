@@ -226,6 +226,21 @@ class FusionPlayRuntime(
             result.success(null)
             return
         }
+        if (call.method == "reportDlnaArtwork") {
+            val stage = call.argument<String>("stage")
+            val outcome = call.argument<String>("outcome")
+            if (stage in setOf("primary", "embedded", "display") &&
+                outcome != null && outcome.matches(Regex("[a-zA-Z0-9_]{1,64}"))
+            ) {
+                diagnosticLogger.write("dlna", "artwork_ui", outcome, mapOf(
+                    "stage" to stage,
+                    "epoch" to (call.argument<Number>("epoch")?.toLong()),
+                    "fallback_available" to call.argument<Boolean>("fallbackAvailable"),
+                ))
+            }
+            result.success(null)
+            return
+        }
         if (call.method == "state") {
             result.success(stateMap(viewModel.state.value))
             return
@@ -1162,7 +1177,14 @@ class FusionPlayRuntime(
                             artwork.startsWith("http://", ignoreCase = true) ||
                                 artwork.startsWith("https://", ignoreCase = true) ||
                                 artwork.startsWith("file:", ignoreCase = true) ->
-                                bridge.setArtwork(URI.create(artwork))
+                                if (dlna && artwork.startsWith("http", ignoreCase = true)) {
+                                    FusionPlayMediaChannel.setArtwork(URI.create(artwork)) { outcome, details ->
+                                        diagnosticLogger.write("dlna", "artwork_http", outcome,
+                                            details + ("epoch" to playback.sourceEpoch))
+                                    }
+                                } else {
+                                    bridge.setArtwork(URI.create(artwork))
+                                }
                             else -> bridge.setArtwork(Paths.get(artwork))
                         }
                     }.onFailure {

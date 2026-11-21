@@ -304,13 +304,25 @@ class _FusionPlayHomeState extends State<FusionPlayHome> {
     }
     final dlna = _artworkOwner(widget.state).$1 == 'dlna';
     final epoch = widget.state.playback.sourceEpoch;
-    void report(String outcome) {
-      if (dlna) {
-        debugPrint('FusionPlay DLNA cover epoch=$epoch result=$outcome');
-      }
+    final fallback = dlna ? widget.state.playback.embeddedArtwork : null;
+    void report(String stage, String outcome) {
+      if (!dlna || !Platform.isAndroid) return;
+      unawaited(
+        const MethodChannel('com.fusionplay.android/runtime')
+            .invokeMethod<void>('reportDlnaArtwork', {
+              'stage': stage,
+              'outcome': outcome,
+              'epoch': epoch,
+              'fallbackAvailable': fallback != null,
+            })
+            .catchError((Object _) {}),
+      );
     }
 
-    final fallback = dlna ? widget.state.playback.embeddedArtwork : null;
+    String failureCode(Object error) => error is NetworkImageLoadException
+        ? 'http_${error.statusCode}'
+        : '${error.runtimeType}';
+
     Future<void> load(String candidate) async {
       final provider = artworkProvider(candidate);
       if (provider == null) {
@@ -337,14 +349,24 @@ class _FusionPlayHomeState extends State<FusionPlayHome> {
       try {
         await load(source);
       } catch (error) {
+        if (mounted && request == _artworkRequest) {
+          report(source == fallback ? 'embedded' : 'primary', failureCode(error));
+        }
         if (!mounted ||
             request != _artworkRequest ||
             fallback == null ||
             fallback == source) {
           rethrow;
         }
-        await load(fallback);
-        displayed = fallback;
+        try {
+          await load(fallback);
+          displayed = fallback;
+        } catch (error) {
+          if (mounted && request == _artworkRequest) {
+            report('embedded', failureCode(error));
+          }
+          rethrow;
+        }
       }
       if (!mounted || request != _artworkRequest) return;
       setState(() {
@@ -353,17 +375,13 @@ class _FusionPlayHomeState extends State<FusionPlayHome> {
             : identity;
         _displayedArtworkSource = displayed;
       });
-      report(displayed == fallback ? 'decoded_embedded' : 'decoded');
+      report('display', displayed == fallback ? 'decoded_embedded' : 'decoded');
     } catch (error) {
       if (!mounted || request != _artworkRequest) return;
       if (error is! NetworkImageLoadException || error.statusCode != 403) {
         _artworkRetryAfter = DateTime.now().add(const Duration(seconds: 5));
       }
-      report(
-        error is NetworkImageLoadException
-            ? 'http_${error.statusCode}'
-            : '${error.runtimeType}',
-      );
+      report('display', 'unavailable');
     }
   }
 

@@ -317,6 +317,24 @@ class FusionPlayDiagnosticLogger(
                 details["artwork_present"] =
                     !event.artworkUrl.isNullOrBlank()
                 details["resolved_artwork_present"] = event.resolvedArtwork != null
+                val artwork = event.artworkUrl?.trim()
+                if (!artwork.isNullOrEmpty()) {
+                    val uri = runCatching { java.net.URI(artwork.replace(" ", "%20")) }.getOrNull()
+                    val resolved = event.resolvedArtwork?.let {
+                        runCatching { java.net.URI(it) }.getOrNull()
+                    }
+                    details["artwork_address_kind"] = when {
+                        uri == null -> "invalid"
+                        uri.scheme == null -> "relative"
+                        uri.scheme.equals("data", ignoreCase = true) -> "inline"
+                        else -> "absolute"
+                    }
+                    details["artwork_address_length"] = artwork.length
+                    details["artwork_resolved_scheme"] = resolved?.scheme
+                    details["artwork_resolved_host"] = resolved?.host
+                    details["artwork_query_fields"] = uri?.rawQuery?.let { it.count { ch -> ch == '&' } + 1 }
+                    details["artwork_resolved_query_fields"] = resolved?.rawQuery?.let { it.count { ch -> ch == '&' } + 1 }
+                }
                 event.didlFields?.let { details["didl_fields"] = it }
                 details["lyrics_text_present"] = !event.lyricsText.isNullOrBlank()
                 details["lyrics_uri_present"] = !event.lyricsUri.isNullOrBlank()

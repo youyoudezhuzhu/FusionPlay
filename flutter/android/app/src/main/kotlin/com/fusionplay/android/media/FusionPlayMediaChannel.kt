@@ -18,6 +18,7 @@ import androidx.core.graphics.scale
 import androidx.core.net.toUri
 import java.io.ByteArrayOutputStream
 import java.io.InputStream
+import java.net.HttpURLConnection
 import java.net.URI
 import java.net.URL
 import java.nio.file.Path
@@ -194,24 +195,55 @@ object FusionPlayMediaChannel {
         commitArtwork(request, decoded)
     }
 
-    suspend fun setArtwork(uri: URI) {
+    suspend fun setArtwork(
+        uri: URI,
+        report: ((String, Map<String, Any?>) -> Unit)? = null,
+    ) {
         val request = artworkRequests.begin()
         val decoded = decodeArtwork {
             when (uri.scheme?.lowercase()) {
                 "http", "https" -> {
-                    val connection = URL(uri.toString()).openConnection().apply {
+                    val started = SystemClock.elapsedRealtime()
+                    val connection = (URL(uri.toString()).openConnection() as HttpURLConnection).apply {
                         connectTimeout = ARTWORK_TIMEOUT_MS
                         readTimeout = ARTWORK_TIMEOUT_MS
                         useCaches = false
                     }
-                    // getContentLengthLong was added after Android 5; the
-                    // Int-sized value is sufficient for this 8 MiB guard.
-                    val declaredLength = connection.contentLength
-                    require(declaredLength <= MAX_ARTWORK_BYTES || declaredLength < 0) {
-                        "Artwork exceeds the ${MAX_ARTWORK_BYTES / (1024 * 1024)} MiB limit."
-                    }
-                    connection.getInputStream().use { input ->
-                        decodeSampledBytes(input.readBytesLimited(MAX_ARTWORK_BYTES))
+                    val details = mutableMapOf<String, Any?>(
+                        "request_host" to uri.host,
+                        "request_scheme" to uri.scheme,
+                        "method" to connection.requestMethod,
+                    )
+                    var outcome = "request_failed"
+                    try {
+                        val status = connection.responseCode
+                        details["http_status"] = status
+                        details["response_host"] = connection.url.host
+                        details["response_scheme"] = connection.url.protocol
+                        details["url_changed"] = connection.url.toExternalForm() != uri.toString()
+                        details["content_type"] = connection.contentType?.substringBefore(';')
+                            ?.takeIf { it.matches(Regex("[a-zA-Z0-9.+-]+/[a-zA-Z0-9.+-]+")) }
+                        val declaredLength = connection.contentLength
+                        details["content_length"] = declaredLength.takeIf { it >= 0 }
+                        if (status !in 200..299) {
+                            outcome = "http_rejected"
+                            throw java.io.IOException("Artwork HTTP status $status")
+                        } else if (declaredLength > MAX_ARTWORK_BYTES) {
+                            outcome = "size_limit"
+                            throw IllegalArgumentException("Artwork exceeds the size limit.")
+                        } else {
+                            val bytes = connection.inputStream.use { it.readBytesLimited(MAX_ARTWORK_BYTES) }
+                            details["downloaded_bytes"] = bytes.size
+                            decodeSampledBytes(bytes).also { bitmap ->
+                                outcome = if (bitmap == null) "decode_failed" else "decoded"
+                            }
+                        }
+                    } catch (error: Exception) {
+                        details["error_type"] = error.javaClass.simpleName
+                        throw error
+                    } finally {
+                        connection.disconnect()
+                        report?.invoke(outcome, details + ("elapsed_ms" to SystemClock.elapsedRealtime() - started))
                     }
                 }
 

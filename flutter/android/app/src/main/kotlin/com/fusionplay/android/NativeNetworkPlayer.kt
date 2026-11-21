@@ -33,6 +33,8 @@ internal class NativeNetworkPlayer(
     private var player: ExoPlayer? = null
     private val publishDlnaState = Runnable(onDlnaStateChanged)
     private var embeddedCover: File? = null
+    private var embeddedCoverOutcome = "no_artwork_data"
+    private var reportedEmbeddedCoverOutcome: String? = null
     val embeddedArtworkPath: String? get() = embeddedCover?.absolutePath
 
     private fun createPlayer(): ExoPlayer = ExoPlayer.Builder(applicationContext).build().apply {
@@ -77,6 +79,7 @@ internal class NativeNetworkPlayer(
 
             override fun onPlaybackStateChanged(playbackState: Int) {
                 ready = playbackState == Player.STATE_READY
+                if (ready) reportEmbeddedCover()
                 recordPlayback("decoder_state", mapOf("state" to when (playbackState) {
                     Player.STATE_BUFFERING -> "buffering"
                     Player.STATE_READY -> "ready"
@@ -88,7 +91,11 @@ internal class NativeNetworkPlayer(
             override fun onMediaMetadataChanged(mediaMetadata: MediaMetadata) {
                 if (source != MediaSource.DLNA || embeddedCover != null) return
                 val bytes = mediaMetadata.artworkData ?: return
-                if (bytes.isEmpty() || bytes.size > 1024 * 1024) return
+                if (bytes.isEmpty() || bytes.size > 1024 * 1024) {
+                    embeddedCoverOutcome = if (bytes.isEmpty()) "empty" else "size_limit"
+                    if (ready) reportEmbeddedCover()
+                    return
+                }
                 runCatching {
                     val file = File.createTempFile("dlna-cover-", ".img", applicationContext.cacheDir)
                     try {
@@ -97,7 +104,9 @@ internal class NativeNetworkPlayer(
                     } finally {
                         if (embeddedCover != file) file.delete()
                     }
-                }.onFailure { recordPlayback("decoder_embedded_cover", mapOf("available" to false)) }
+                }.onSuccess { embeddedCoverOutcome = "cached" }
+                    .onFailure { embeddedCoverOutcome = "cache_write_failed" }
+                if (ready) reportEmbeddedCover()
             }
 
             override fun onEvents(player: Player, events: Player.Events) {
@@ -152,6 +161,7 @@ internal class NativeNetworkPlayer(
     fun open(source: MediaSource, url: String, epoch: Long?, positionMs: Long, autoPlay: Boolean) = onMain {
         val activePlayer = player ?: createPlayer().also { player = it }
         clearEmbeddedCover()
+        ready = false
         if (this.source != source || sourceEpoch != epoch) {
             dlnaMuted = false
             dlnaGain = 1f
@@ -185,7 +195,16 @@ internal class NativeNetworkPlayer(
         player?.volume = if (dlnaMuted) 0f else dlnaGain
     }
 
+    private fun reportEmbeddedCover() {
+        if (source != MediaSource.DLNA || reportedEmbeddedCoverOutcome == embeddedCoverOutcome) return
+        reportedEmbeddedCoverOutcome = embeddedCoverOutcome
+        diagnostics.write("dlna", "decoder_embedded_cover", embeddedCoverOutcome,
+            mapOf("epoch" to sourceEpoch, "cached_bytes" to embeddedCover?.length()))
+    }
+
     private fun clearEmbeddedCover() {
+        embeddedCoverOutcome = "no_artwork_data"
+        reportedEmbeddedCoverOutcome = null
         embeddedCover?.delete()
         embeddedCover = null
     }
