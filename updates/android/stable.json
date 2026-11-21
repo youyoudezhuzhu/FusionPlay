@@ -2,14 +2,14 @@
   "schema_version": 1,
   "channel": "stable",
   "published": true,
-  "version_name": "1.7.12",
-  "version_code": 10712,
-  "sha256": "b589ebd0cf3b9e530b649952fca6abf556a9572449b0d346839f80011403dd75",
+  "version_name": "1.7.13",
+  "version_code": 10713,
+  "sha256": "4c4cf9c85d1675740785969cb31dfc29d6ce530df8c46e20bc25834963f9e0d5",
   "signer_sha256": "4836fb96c2ef76fd81ac385455f1b0154af77fadae1b45bbb752b192499dc12f",
-  "apk_url": "https://youyoudezhuzhu.github.io/FusionPlay/update/android/dl/latest.apk?v=10712",
-  "apk_url_alt": "https://github.com/youyoudezhuzhu/FusionPlay/releases/download/v1.7.12/FusionPlay-Android-1.7.12.apk",
-  "apk_size": 12729196,
-  "source_commit": "e99fabe3061c3dfd64eb68d2915bad5ec0de7d6b",
-  "notes": "## FusionPlay 1.7.12\n\n- 安卓 DLNA 跟随发送端调节系统媒体音量，并保留静音控制。\n- 安卓诊断包记录 DLNA 封面地址解析、请求结果、图片解码及内嵌封面回退情况，省略完整链接和令牌。\n- 飞牛 x64 和 ARM64 将 DLNA 发送端音量和静音应用到对应实例的音频输出。\n- Android、Windows x64、飞牛 x64 和飞牛 ARM64 安装包使用同一发布版本号。",
-  "published_at": "2026-11-21T14:16:07Z"
+  "apk_url": "https://youyoudezhuzhu.github.io/FusionPlay/update/android/dl/latest.apk?v=10713",
+  "apk_url_alt": "https://github.com/youyoudezhuzhu/FusionPlay/releases/download/v1.7.13/FusionPlay-Android-1.7.13.apk",
+  "apk_size": 12729802,
+  "source_commit": "e1ab7baa0895ed72d50b24fb44faa286adbaef29",
+  "notes": "## FusionPlay 1.7.13\n\n- 安卓 DLNA 播放器复用原生已下载并解码的封面，避免界面重复请求时出现 HTTP 403。\n- 安卓 DLNA 服务启动时以平板当前媒体音量初始化，避免发送端首次调节时从默认满音量起算。\n- 三点菜单、设置和更新弹窗加强对实际下层内容的透底效果。飞牛确认弹窗、音箱悬浮提示及连接失败提示采用统一玻璃样式。\n- 安卓、Windows x64、飞牛 x64 和飞牛 ARM64 安装包使用同一版本号。",
+  "published_at": "2026-11-21T14:58:38Z"
 }
