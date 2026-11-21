@@ -11,6 +11,7 @@ pub mod legacy_lan;
 pub mod lyra;
 pub mod media;
 pub mod protocol;
+pub mod track;
 
 use anyhow::{Context, Result};
 use discovery::{MiPlayAdvertisement, idm_short_id};

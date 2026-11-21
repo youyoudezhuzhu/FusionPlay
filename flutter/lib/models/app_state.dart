@@ -225,7 +225,7 @@ class PlaybackSnapshot {
         trackChangeDirection: TrackChangeDirection.parse(
           map['trackChangeDirection'],
         ),
-        lyrics: parseLyrics(map['lyrics']),
+        lyrics: parseLyrics(map['lyrics'], protocol: _string(map['protocol'])),
         lyricsLoading: map['lyricsLoading'] as bool? ?? false,
       );
 

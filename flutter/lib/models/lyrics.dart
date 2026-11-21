@@ -1,6 +1,7 @@
 import 'package:flutter/foundation.dart';
 
 import 'playback_channel.dart';
+import 'receiver_lyrics.dart';
 
 export 'playback_channel.dart';
 
@@ -314,7 +315,21 @@ int? _integer(Object? value) =>
     value is num ? value.round() : int.tryParse(value?.toString() ?? '');
 
 /// Parses a `playback.lyrics` payload, tolerating missing/null entries.
-LyricsDocument? parseLyrics(Object? value) {
+LyricsDocument? parseLyrics(Object? value, {String? protocol}) {
+  if (value is String) {
+    // The Rust hosts forward the core's AirPlay lyric_line verbatim. Its
+    // current-line semantics let PlayerView scope history to the song.
+    if (playbackChannelForProtocol(protocol) == PlaybackChannel.airPlay) {
+      final line = value.trim();
+      return line.isEmpty
+          ? null
+          : LyricsDocument(
+              origin: 'airplay_title',
+              lines: [LyricLine(text: line)],
+            );
+    }
+    value = receiverLyrics(value);
+  }
   if (value is! Map) return null;
   final map = _map(value);
   final lines = map['lines'];

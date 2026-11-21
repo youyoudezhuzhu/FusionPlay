@@ -12,7 +12,6 @@ import '../../ui/glass_backdrop.dart';
 import '../../ui/liquid_glass.dart';
 import '../../ui/player_view.dart';
 import '../../ui/vector_icon.dart';
-import 'lyrics.dart';
 import 'player_location.dart';
 
 @JS('fpRead')
@@ -127,7 +126,7 @@ class _ReceiverState extends State<_Receiver> {
           'album': media['album'],
           'durationMs': media['duration_ms'],
           'positionMs': media['position_ms'],
-          'lyrics': receiverLyrics(media['lyrics_text'] as String?),
+          'lyrics': media['lyrics_text'],
           'qualityText': media['detail_codec'],
           'streamActive': source != null,
           'protocol': source,

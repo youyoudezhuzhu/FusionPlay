@@ -1,5 +1,6 @@
 //! Shared runtime state exposed by the HTTP API and updated by protocol hosts.
 
+use fusionplay_miplay_sdk::track::TrackCredit;
 use serde::Serialize;
 use std::sync::{Arc, RwLock};
 use std::time::Instant;
@@ -35,18 +36,18 @@ impl MediaInfo {
     // fields arrive in separate messages.
     pub(crate) fn update_miplay(&mut self, value: &serde_json::Value) {
         let text = |key: &str| value[key].as_str().filter(|s| !s.trim().is_empty());
-        let id = text("track_id").filter(|id| !id.starts_with("metadata:"));
         let title = text("title");
         let artist = text("artist");
-        let changes = |old: Option<&str>, new: Option<&str>| old.zip(new).is_some_and(|(a, b)| a != b);
-        let changed = match self.miplay_track_id.as_deref().zip(id) {
-            Some((a, b)) => a != b,
-            None => changes(self.title.as_deref(), title) || changes(self.artist.as_deref(), artist),
-        };
+        let incoming = TrackCredit { id: text("track_id"), title, artist };
+        let changed = incoming.changed_from(&TrackCredit {
+            id: self.miplay_track_id.as_deref(),
+            title: self.title.as_deref(),
+            artist: self.artist.as_deref(),
+        });
         if changed {
             *self = Self { detail_codec: self.detail_codec.take(), ..Default::default() };
         }
-        if let Some(id) = id { self.miplay_track_id = Some(id.to_owned()); }
+        if let Some(id) = incoming.sender_id() { self.miplay_track_id = Some(id.to_owned()); }
         if let Some(title) = title { self.title = Some(title.to_owned()); }
         if let Some(artist) = artist { self.artist = Some(artist.to_owned()); }
         if let Some(album) = text("album") { self.album = Some(album.to_owned()); }

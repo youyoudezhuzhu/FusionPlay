@@ -125,6 +125,7 @@ FusionPlayCore.exe [--data-dir <dir>] [--null-audio] [--output-device <name-or-i
   "playback": {
     "title": null, "artist": null, "album": null,
     "coverArt": null,                       // 文件绝对路径或 http(s) URL
+    "lyrics": "[00:03.25]第一行",            // 可选，接收端传入的歌词文本
     "mediaUrl": null, "mediaKind": "audio",
     "protocol": "airplay",                  // 音源协议名
     "qualityText": null,                    // 自由文本，如 "AAC 44.1 kHz"
@@ -155,7 +156,8 @@ FusionPlayCore.exe [--data-dir <dir>] [--null-audio] [--output-device <name-or-i
 | `selectedCoreMediaSource` | 核心侧最近一次发声的音源（用于设置页/播放页一致性） |
 | `playback.*` | `now_playing`/`cover_art`/`progress`/`playback_state`/`volume`/`stream_started`/`stream_stopped`（AirPlay），`dlna_media`/`dlna_seek`/`dlna_stop`/`dlna_volume`（DLNA），MiPlay `media_info`/`playback_state`/`volume`/`stream_started`/`stream_stopped`（MiPlay，映射为相同字段） |
 | `qualityText` | AirPlay：`stream_started` 的 codec/采样率/位深；DLNA：`content_type`/`sample_rate`；MiPlay：`audio_format` |
-| `trackIdentity` | 新曲目标识（AirPlay 用 metadata 组合、DLNA 用 URL、MiPlay 用 media_info 标题+来源）；用于封面切换动画 |
+| `playback.lyrics` | AirPlay 的当前歌词行、DLNA 的内嵌歌词或妙播歌词，由共享 Flutter 模型解析。缺省表示当前曲目未收到歌词。 |
+| `trackIdentity` | 新曲目标识（AirPlay 用 metadata 组合、DLNA 用 URL、MiPlay 优先使用发送方的曲目 ID，缺省时使用标题和来源）；用于封面切换动画 |
 | `trackChangeDirection` | 上一曲/下一曲命令后置 `previous`/`next`，新曲目稳定后清空 |
 | `remoteControl` | 核心 `remote_control_available` / `remote_control_unavailable`（Windows 仅 AirPlay 会提供） |
 | `lastError` | 核心 `error`、协议启动失败、用户可见提示（如日志导出成功，5 秒后自动清除） |
