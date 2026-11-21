@@ -444,3 +444,33 @@ bash fnos/tools/build-fpk.sh
 bash fnos/tools/check-fpk.sh fnos/dist/fusionplay-fnos.fpk
 python3 fnos/tools/test-speaker-instances.py fnos/backend/target/release/fusionplay-fnos
 ```
+
+## 十个实例及并发投送
+
+测试代码为 `bd691aa`。在 Linux x86_64 上运行一个主接收器与九个独立接收器，每个接收器对应不同的逻辑输出。使用真实协议监听器、网络连接、解码器和 null 音频输出。发送内容是有已知曲名和歌词的测试音频。
+
+| 场景 | 结果 |
+|---|---|
+| 音箱选择 | Chromium 加载 10 个运行中的实例，1280 × 670 下前 8 张卡片完整可见。在 390 × 760 下滚动到第 10 个并进入编辑。自动化还覆盖了 19 张卡片和横向溢出检查。 |
+| 绑定与已占用设备 | 将「露台」改成「露台音乐」，换绑备用 USB，再保存柔和曲线。刷新后实例 ID 和播放地址保持稳定，旧 USB 的曲线仍为均衡。其他实例占用的设备在列表中禁用并标出所有者。旧页面对已变更绑定的写入返回 409。 |
+| 三协议局域网发现 | 通过 IPv4 组播收到十组可区分的 AirPlay 设备 ID 与 RTSP 端口、DLNA UDN 与描述端口、妙播设备标识、MAC、控制端口与 Lyra 端口。检查覆盖了改名后的「露台音乐」。 |
+| 10 路 DLNA | 同时通过 SOAP 投送十首 WAV，逐实例核对正在播放、曲名、歌手、DIDL 内嵌同步歌词和封面地址。暂停一个房间，其余九个继续播放。 |
+| 2 路 AirPlay 2 与 DLNA 同时播放 | 两个 pyatv 发送会话经标准临时配对建立加密连接，发送首包曲目资料、模拟网易云字段的歌词更新及音频。两个房间均报告递增的 PCM 帧数，曲名、艺人和歌词分别匹配各自发送端。同期的 DLNA 房间保持原曲与原歌词。 |
+| 同协议与混合妙播元数据 | 妙播 SDK 的媒体消息解析覆盖曲名、歌手、YRC、LRC 与纯文本。飞牛回归测试同时给两个房间输入不同的妙播元数据与 PCM，再让一个房间切换 AirPlay，验证另一房间的媒体信息、歌词和封面未被覆盖。Flutter 验证小米逐字歌词交给共用歌词组件后保留字级时间。此项使用协议事件和 PCM 回调。双小米手机及 iPhone 与小米手机的同时投送、实体 NAS 多声卡听感仍待真机验证。 |
+
+此前双路 AirPlay 2 测试中，两个房间均已解码音频，但曲名为空。发送端在 SETUP 之后、首个 RTP 音频包之前就发了元数据。此时解码器尚未初始化，旧回调直接返回。修复后，接收器按逻辑客户端保留开场元数据、封面路径及进度，在首个音频包建立播放会话时发布。客户端断开会清空待发布资料。
+
+DLNA 验证使用明确包含歌词文本的 DIDL。只发送歌词链接的控制端、未发送歌词的推送，均不在这次歌词显示的通过范围内。
+
+![十个实际运行的接收器](../docs/platform-previews/fnos-ten-speakers.png)
+
+从仓库根目录复现时，测试主机需要可用的局域网接口、空闲的接收服务端口以及 Rust 构建依赖。以下依赖仅供测试发送端使用。
+
+```sh
+cargo build --release --manifest-path fnos/backend/Cargo.toml
+python3 -m venv /tmp/fusionplay-sender
+/tmp/fusionplay-sender/bin/pip install 'pyatv==0.18.0' 'srptools==1.0.1' dnslib
+/tmp/fusionplay-sender/bin/python fnos/tools/test-speaker-instances.py fnos/backend/target/release/fusionplay-fnos --rooms 10 --airplay2
+# 对已经运行的 NAS 验证发现身份，传入测试机的局域网 IPv4 地址与投送名
+/tmp/fusionplay-sender/bin/python fnos/tools/test-speaker-discovery.py <local-ip> <name-1> <name-2> ...
+```
