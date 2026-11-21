@@ -30,7 +30,7 @@ use fusionplay_miplay_sdk::{
 use crate::audio::AudioEngine;
 use crate::config::Config;
 use crate::dlna_player::DlnaPlayer;
-use crate::session::{Arbiter, Lease, Source, SuspendHook};
+use crate::session::{Arbiter, Lease, Source};
 use crate::state::{ProtocolRuntime, SharedState};
 
 /// Canonical protocol states shared by all three protocols and the Web UI.
@@ -40,7 +40,6 @@ mod proto_state {
     pub const DISABLED: &str = "disabled";
     pub const STARTING: &str = "starting";
     pub const WAITING: &str = "waiting";
-    pub const LOADING: &str = "loading";
     pub const STREAMING: &str = "streaming";
     pub const PAUSED: &str = "paused";
     pub const ERROR: &str = "error";
@@ -81,7 +80,6 @@ pub struct EngineSink {
     arbiter: Arc<Arbiter>,
     state: SharedState,
     lease: Mutex<Option<Lease>>,
-    hooks: Mutex<std::collections::HashMap<Source, SuspendHook>>,
 }
 
 impl EngineSink {
@@ -91,16 +89,7 @@ impl EngineSink {
             arbiter,
             state,
             lease: Mutex::new(None),
-            hooks: Mutex::new(std::collections::HashMap::new()),
         })
-    }
-
-    pub fn set_hook(&self, source: Source, hook: SuspendHook) {
-        self.hooks.lock().unwrap().insert(source, hook);
-    }
-
-    fn hook(&self, source: Source) -> Option<SuspendHook> {
-        self.hooks.lock().unwrap().get(&source).cloned()
     }
 
     fn claim(&self, source: Source) -> Option<Lease> {
@@ -119,17 +108,14 @@ impl EngineSink {
         *lease = Some(claim.lease);
         runtime.select_source(Some(source));
         let suspended = claim.suspended;
-        drop(runtime);
-        drop(lease);
+
         if let Some(previous) = suspended {
             tracing::info!(
                 "音源接管：{} -> {}",
                 previous.source.as_str(),
                 source.as_str()
             );
-            if let Some(hook) = self.hook(previous.source) {
-                hook(previous);
-            }
+            self.engine.flush(previous.source);
         }
         Some(claim.lease)
     }
@@ -138,9 +124,10 @@ impl EngineSink {
         let mut lease = self.lease.lock().unwrap();
         if let Some(current) = *lease {
             if current.source == source {
-                self.engine.flush(source);
-                if self.arbiter.release(current) {
-                    self.state.clear_source_if_current(source);
+                let mut runtime = self.state.state.write().unwrap();
+                if self.arbiter.release(current) && runtime.current_source.as_deref() == Some(source.as_str()) {
+                    self.engine.flush(source);
+                    runtime.select_source(None);
                 }
                 *lease = None;
             }
@@ -164,9 +151,8 @@ impl PcmOutput for EngineSink {
             PcmSource::MiPlay => Source::MiPlay,
         };
         let Some(lease) = self.claim(source) else { return };
-        if !self.arbiter.accepts(lease) {
-            return;
-        }
+        let runtime = self.state.state.read().unwrap();
+        if runtime.current_source.as_deref() != Some(source.as_str()) || !self.arbiter.accepts(lease) { return; }
         self.engine.push_pcm(
             source,
             lease.epoch,
@@ -175,6 +161,7 @@ impl PcmOutput for EngineSink {
             channels,
             samples,
         );
+        drop(runtime);
         // AirPlay reports its slider value in a separate dB-based volume
         // event. Linear PCM gain is the input to the speaker's audio curve.
         if source != Source::AirPlay {
@@ -247,13 +234,6 @@ impl ProtocolHosts {
         let arbiter = Arc::new(Arbiter::new());
         let sink = EngineSink::new(Arc::clone(&engine), Arc::clone(&arbiter), Arc::clone(&state));
         let dlna = DlnaPlayer::new(Arc::clone(&engine), Arc::clone(&arbiter), Arc::clone(&state));
-        sink.set_hook(
-            Source::Dlna,
-            Arc::new({
-                let dlna = Arc::clone(&dlna);
-                move |_lease| dlna.stop()
-            }),
-        );
         let hosts = Arc::new(Self {
             engine,
             state,
@@ -669,11 +649,7 @@ fn handle_core_event(json: String, state: SharedState, dlna: Arc<DlnaPlayer>) {
         }
         "dlna_rate" => {
             let paused = value["rate"].as_f64() == Some(0.0);
-            dlna.set_paused(paused);
-            let mut runtime = state.state.write().unwrap();
-            if runtime.current_source.as_deref() == Some("dlna") {
-                runtime.dlna.state = if paused { "paused" } else { "playing" }.into();
-            }
+            dlna.rate_event(value["epoch"].as_u64(), paused);
         }
         "receiver_ready" => {
             let mut runtime = state.state.write().unwrap();
@@ -696,6 +672,10 @@ fn handle_core_event(json: String, state: SharedState, dlna: Arc<DlnaPlayer>) {
         "now_playing" => {
             let mut runtime = state.state.write().unwrap();
             if runtime.current_source.as_deref() != value["source"].as_str() { return; }
+            if value["source"] == "dlna" && value["title"].is_null() {
+                // DlnaMedia already selected the filename when DIDL had no title.
+                return;
+            }
             runtime.media.title = text("title");
             runtime.media.artist = text("artist");
             runtime.media.album = text("album");
@@ -764,39 +744,26 @@ fn handle_core_event(json: String, state: SharedState, dlna: Arc<DlnaPlayer>) {
             }
         }
         "dlna_media" => {
-            if value.get("url").and_then(Value::as_str).is_none() { return; }
-            {
-                let mut runtime = state.state.write().unwrap();
-                if runtime.dlna.enabled {
-                    set_proto(&mut runtime.dlna, proto_state::LOADING, "正在加载 DLNA 媒体");
-                }
-                runtime.media.title = text("title");
-                runtime.media.artist = text("artist");
-                runtime.media.album = text("album");
-                runtime.media.cover_url = text("artwork_url");
-                runtime.media.lyrics_text = text("lyrics_text");
-                runtime.media.duration_ms = value.get("duration_ms").and_then(Value::as_u64);
-                runtime.media.position_ms = value.get("start_position_ms").and_then(Value::as_u64);
+            let track: crate::dlna_player::DlnaTrack = match serde::Deserialize::deserialize(&value) {
+                Ok(track) => track,
+                Err(error) => { state.record_error(format!("DLNA 媒体事件无效：{error}")); return; }
+            };
+            if value["metadata_only"] == true {
+                dlna.refresh_metadata(&track);
+                return;
             }
-            let state = Arc::clone(&state);
-            std::thread::Builder::new()
-                .name("dlna-media".into())
-                .spawn(move || {
-                    match serde::Deserialize::deserialize(&value) {
-                        Ok(track) => {
-                            // DlnaPlayer records and sanitizes its own playback failures.
-                            let _ = dlna.play_track(&track);
-                        }
-                        Err(error) => {
-                            state.record_error(format!("DLNA 媒体事件无效：{error}"));
-                            let mut runtime = state.state.write().unwrap();
-                            if runtime.dlna.enabled {
-                                set_proto(&mut runtime.dlna, proto_state::ERROR, "DLNA 媒体信息无效");
-                            }
-                        }
-                    }
-                })
-                .ok();
+            let Ok(active) = dlna.begin_track(&track) else { return };
+            let worker = dlna.clone();
+            let active_worker = active.clone();
+            let event = value.clone();
+            let result = std::thread::Builder::new().name("dlna-media".into()).spawn(move || {
+                // The same immutable event was validated before registering the decoder.
+                let track = serde::Deserialize::deserialize(&event).expect("validated DLNA event");
+                let _ = worker.run_track(&track, &active_worker);
+            });
+            if let Err(error) = result {
+                dlna.worker_failed(&active, &track, &error);
+            }
         }
         "dlna_volume" => {
             let mut runtime = state.state.write().unwrap();

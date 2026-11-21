@@ -253,6 +253,7 @@ struct DmrState {
     rate: f32,
     ready: bool,
     renderer_active: bool,
+    decoder_id: u64,
     lease: Option<MediaLease>,
     last_update: Instant,
     volume: u8,
@@ -275,6 +276,7 @@ impl Default for DmrState {
             rate: 0.0,
             ready: false,
             renderer_active: false,
+            decoder_id: 0,
             lease: None,
             last_update: Instant::now(),
             volume: 100,
@@ -382,10 +384,11 @@ impl DmrController {
 
     /// The fnOS decoder has produced PCM. Keep a pause that arrived while
     /// buffering, and ignore an acknowledgement from a replaced decoder.
-    pub(crate) fn audio_decoder_ready(&self, epoch: u64, uri: &str) {
+    pub(crate) fn audio_decoder_ready(&self, epoch: u64, uri: &str, decoder_id: Option<u64>) {
         {
             let Ok(mut state) = self.state.lock() else { return };
-            if !state.renderer_active || state.current_uri.as_deref() != Some(uri)
+            if decoder_id.is_some_and(|id| id != state.decoder_id)
+                || !state.renderer_active || state.current_uri.as_deref() != Some(uri)
                 || !state.lease.is_some_and(|l| l.epoch() == epoch && self.arbiter.is_current(l))
             {
                 return;
@@ -399,6 +402,27 @@ impl DmrController {
             } else {
                 TransportState::PausedPlayback
             };
+            state.last_update = Instant::now();
+        }
+        self.notify_transport();
+    }
+
+    /// Local EOF or a decoder failure ends this render. Keep the selected URI
+    /// available for a fresh Play, including replay of the exact same URL.
+    pub(crate) fn audio_decoder_finished(&self, epoch: u64, uri: &str, decoder_id: u64) {
+        {
+            let Ok(mut state) = self.state.lock() else { return };
+            if !state.renderer_active || state.decoder_id != decoder_id
+                || state.current_uri.as_deref() != Some(uri)
+                || !state.lease.is_some_and(|l| l.epoch() == epoch && self.arbiter.is_current(l))
+            {
+                return;
+            }
+            state.renderer_active = false;
+            state.ready = false;
+            state.rate = 0.0;
+            state.position_ms = 0;
+            state.transport_state = TransportState::Stopped;
             state.last_update = Instant::now();
         }
         self.notify_transport();
@@ -502,14 +526,14 @@ impl DmrController {
                     .renderer_active
                     .then_some(state.lease.filter(|lease| self.arbiter.is_current(*lease)))
                     .flatten();
-                Some((state.metadata.clone(), state.position_ms, active_lease))
+                Some((state.metadata.clone(), state.position_ms, active_lease, state.decoder_id))
             } else {
                 None
             }
         };
-        if let Some((metadata, position_ms, active_lease)) = refreshed_metadata {
+        if let Some((metadata, position_ms, active_lease, decoder_id)) = refreshed_metadata {
             if let Some(lease) = active_lease {
-                self.emit_selected_media(lease, uri, &metadata, position_ms);
+                self.emit_selected_media(lease, uri, &metadata, position_ms, decoder_id, true);
             }
             self.notify_transport();
             self.notify_connection();
@@ -852,7 +876,7 @@ impl DmrController {
                 .ok_or_else(|| anyhow!("DLNA media selection changed before Play"))?;
             (lease, Some(transition))
         };
-        let (emit_media, uri, metadata, position_ms) = {
+        let (emit_media, uri, metadata, position_ms, decoder_id) = {
             let mut state = self
                 .state
                 .lock()
@@ -863,6 +887,7 @@ impl DmrController {
                 .ok_or_else(|| anyhow!("尚未设置 DLNA 媒体地址"))?;
             state.settle_clock();
             let emit_media = !state.renderer_active;
+            if emit_media { state.decoder_id = state.decoder_id.wrapping_add(1); }
             state.renderer_active = true;
             state.lease = Some(lease);
             state.transport_state = if state.ready {
@@ -872,11 +897,11 @@ impl DmrController {
             };
             state.rate = 1.0;
             state.last_update = Instant::now();
-            (emit_media, uri, state.metadata.clone(), state.position_ms)
+            (emit_media, uri, state.metadata.clone(), state.position_ms, state.decoder_id)
         };
 
         if emit_media {
-            self.emit_selected_media(lease, &uri, &metadata, position_ms);
+            self.emit_selected_media(lease, &uri, &metadata, position_ms, decoder_id, false);
         }
         self.emit_remote_control_available();
         self.events.emit(CoreEvent::DlnaRate {
@@ -899,6 +924,8 @@ impl DmrController {
         uri: &str,
         metadata: &MediaMetadata,
         position_ms: u64,
+        decoder_id: u64,
+        metadata_only: bool,
     ) {
         let media_kind = media_kind(
             uri,
@@ -906,6 +933,8 @@ impl DmrController {
             metadata.upnp_class.as_deref(),
         );
         self.events.emit(CoreEvent::DlnaMedia {
+            decoder_id,
+            metadata_only,
             didl_fields: didl_field_names(&metadata.raw),
             source: "dlna",
             epoch: lease.epoch(),
@@ -4431,6 +4460,10 @@ mod tests {
             .iter()
             .find(|event| event["type"] == "dlna_media")
             .expect("an active metadata refresh must reach the UI quality projection");
+        assert_eq!(refreshed_media["metadata_only"], true);
+        let start = refreshed_events[..before_refresh].iter().find(|event| event["type"] == "dlna_media").unwrap();
+        assert_eq!(start["metadata_only"], false);
+        assert_eq!(refreshed_media["decoder_id"], start["decoder_id"]);
         assert_eq!(refreshed_media["url"], uri);
         assert_eq!(refreshed_media["title"], "Late metadata");
         assert_eq!(refreshed_media["content_type"], "audio/flac");
@@ -4440,6 +4473,27 @@ mod tests {
         assert_eq!(refreshed_media["channels"], 2);
         assert!(refreshed_media["start_position_ms"].as_u64().unwrap() >= 51_250);
         assert!(controller.snapshot().unwrap().position_ms >= 51_250);
+    }
+
+    #[test]
+    fn late_decoder_callbacks_cannot_stop_or_start_a_replay_of_the_same_uri() {
+        let (controller, _) = controller_with_events();
+        let uri = "https://example.test/replay.mp3";
+        controller.set_transport_uri(uri, "").unwrap();
+        controller.play().unwrap();
+        let (epoch, first) = {
+            let state = controller.state.lock().unwrap();
+            (state.lease.unwrap().epoch(), state.decoder_id)
+        };
+        controller.audio_decoder_finished(epoch, uri, first);
+        assert_eq!(controller.snapshot().unwrap().transport_state, TransportState::Stopped);
+        controller.play().unwrap();
+        controller.audio_decoder_ready(epoch, uri, Some(first));
+        controller.audio_decoder_finished(epoch, uri, first);
+        assert_eq!(controller.snapshot().unwrap().transport_state, TransportState::Transitioning);
+        let current = controller.state.lock().unwrap().decoder_id;
+        controller.audio_decoder_ready(epoch, uri, Some(current));
+        assert_eq!(controller.snapshot().unwrap().transport_state, TransportState::Playing);
     }
 
     #[test]

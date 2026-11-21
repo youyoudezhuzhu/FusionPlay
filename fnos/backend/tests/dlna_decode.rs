@@ -700,7 +700,7 @@ fn content_length_wav_plays_as_48k_stereo_and_releases_arbiter() {
     expect_frames(frames, 1.5 * 48_000.0);
     harness.backend.assert_48k_stereo();
     assert!(harness.backend.peak() > 0.05, "decoded audio must not be silent");
-    assert!(harness.backend.flushes() >= 1, "engine flush must run at end of track");
+    assert_eq!(harness.backend.flushes(), 0, "natural EOF must let the device play the tail");
 
     let state = harness.state.snapshot();
     assert_eq!(state.dlna.state, "idle", "detail: {}", state.dlna.detail);

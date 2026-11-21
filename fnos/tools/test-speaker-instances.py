@@ -58,28 +58,55 @@ def soap(port, action, **arguments):
         return ET.fromstring(response.read())
 
 
-def wav_data():
+def wav_data(seconds=30):
     buffer = io.BytesIO()
     with wave.open(buffer, "wb") as audio:
         audio.setparams((1, 2, 24000, 0, "NONE", ""))
-        audio.writeframes(bytes(48000 * 30))
+        audio.writeframes(bytes(int(48000 * seconds)))
     return buffer.getvalue()
 
 
 class Track(BaseHTTPRequestHandler):
     content = wav_data()
+    short = wav_data(0.7)
+    requests = []
+    mp3 = None
+    ranges = []
 
     def log_message(self, *args):
         pass
 
     def do_GET(self):
+        self.requests.append(self.path)
+        if self.path in ("/baseline.mp3", "/resume.mp3") and self.mp3:
+            data = self.mp3
+            cut = len(data) // 2 + 1
+            start = 0
+            truncated = self.path == "/resume.mp3"
+            offset = self.headers.get("Range")
+            if offset:
+                self.ranges.append((self.path, offset))
+                start = int(offset.removeprefix("bytes=").removesuffix("-"))
+            self.send_response(206 if offset else 200)
+            self.send_header("Content-Type", "audio/mpeg")
+            self.send_header("ETag", '"fixture"')
+            self.send_header("Content-Length", str(len(data) - start))
+            if offset:
+                self.send_header("Content-Range", f"bytes {start}-{len(data)-1}/{len(data)}")
+            self.end_headers()
+            self.wfile.write(data[start:cut if truncated and not offset else len(data)])
+            return
+        if self.path == "/missing":
+            self.send_error(404)
+            return
+        content = self.short if self.path == "/short.wav" else self.content
         self.send_response(200)
         self.send_header("Content-Type", "audio/wav")
-        self.send_header("Content-Length", str(len(self.content)))
+        self.send_header("Content-Length", str(len(content)))
         self.end_headers()
         try:
-            for i in range(0, len(self.content), 4800):
-                self.wfile.write(self.content[i:i + 4800])
+            for i in range(0, len(content), 4800):
+                self.wfile.write(content[i:i + 4800])
                 time.sleep(0.05)
         except (ConnectionError, OSError):
             pass
@@ -155,6 +182,55 @@ def verify(base, media_port, root, rooms, airplay2):
 
     await_value("study pause", lambda: transport("study") == "PAUSED_PLAYBACK")
     assert all(transport(room) == "PLAYING" for room in rooms if room != "study")
+    # A sender may refresh the same URI while paused. The decoder, its PCM
+    # position, and all other rooms must survive this SOAP call.
+    frames = lambda: status("study")["audio"]["master_frames"]
+    paused_frames = frames()
+    uri = f"http://127.0.0.1:{media_port}/study.wav"
+    soap(ports["study"], "SetAVTransportURI", CurrentURI=uri, CurrentURIMetaData="")
+    time.sleep(0.4)
+    assert frames() == paused_frames and transport("study") == "PAUSED_PLAYBACK"
+    assert Track.requests.count("/study.wav") == 1, Track.requests
+    soap(ports["study"], "Play", Speed=1)
+    await_value("resumed PCM", lambda: frames() > paused_frames + 4800)
+    assert Track.requests.count("/study.wav") == 1
+    soap(ports["study"], "Pause")
+
+    # Natural EOF must reach the control point. Replay opens a new decoder.
+    short_uri = f"http://127.0.0.1:{media_port}/short.wav"
+    soap(ports["default"], "SetAVTransportURI", CurrentURI=short_uri, CurrentURIMetaData="")
+    for attempt in (1, 2):
+        soap(ports["default"], "Play", Speed=1)
+        await_value("short track started", lambda: transport("default") == "PLAYING")
+        await_value("natural EOF reported", lambda: transport("default") == "STOPPED")
+        assert Track.requests.count("/short.wav") == attempt
+    if Track.mp3:
+        frames = []
+        for path in ("/baseline.mp3", "/resume.mp3"):
+            before = status("default")["audio"]["master_frames"]
+            uri = f"http://127.0.0.1:{media_port}{path}"
+            soap(ports["default"], "SetAVTransportURI", CurrentURI=uri, CurrentURIMetaData="")
+            soap(ports["default"], "Play", Speed=1)
+            await_value("MP3 started", lambda: transport("default") == "PLAYING")
+            await_value("MP3 drained", lambda: transport("default") == "STOPPED")
+            after = status("default")
+            assert not after["errors"], after["errors"]
+            frames.append(after["audio"]["master_frames"] - before)
+        assert frames[0] == frames[1] and frames[0] > 0, frames
+        cut = len(Track.mp3) // 2 + 1
+        assert Track.ranges == [("/resume.mp3", f"bytes={cut}-")], Track.ranges
+        print(f"PASS: complete and interrupted MP3 each delivered {frames[0]} stereo PCM frames; resumed at byte {cut}.")
+    # A failed download must also leave TRANSITIONING.
+    soap(ports["default"], "SetAVTransportURI", CurrentURI=f"http://127.0.0.1:{media_port}/missing",
+         CurrentURIMetaData="")
+    soap(ports["default"], "Play", Speed=1)
+    await_value("download failure reported", lambda: transport("default") == "STOPPED")
+    assert "404" in status("default")["last_error"]
+    # Restore the long stream for subsequent mixed-protocol checks.
+    soap(ports["default"], "SetAVTransportURI", CurrentURI=f"http://127.0.0.1:{media_port}/default.wav",
+         CurrentURIMetaData="")
+    soap(ports["default"], "Play", Speed=1)
+    await_value("default resumes", lambda: transport("default") == "PLAYING")
     if airplay2:
         import asyncio
         from airplay_room_probe import verify_airplay_rooms
@@ -202,7 +278,10 @@ def main():
     parser.add_argument("binary", type=Path)
     parser.add_argument("--rooms", type=int, default=2, help="number of concurrent receivers (at least two)")
     parser.add_argument("--airplay2", action="store_true", help="also stream two AirPlay 2 sessions with pyatv")
+    parser.add_argument("--mp3", type=Path, help="optional short MP3 (>1s) for exact-range EOF/replay comparison")
     args = parser.parse_args()
+    if args.mp3:
+        Track.mp3 = args.mp3.read_bytes()
     if args.airplay2 and args.rooms < 4:
         parser.error("--airplay2 needs --rooms 4 or more")
     if args.rooms < 2:

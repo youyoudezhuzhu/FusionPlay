@@ -464,7 +464,7 @@ impl ProtocolHosts {
                     self.claim(source, "core_takeover");
                 }
             }
-            "dlna_media" => {
+            "dlna_media" if value["metadata_only"] != true => {
                 let track = DlnaTrack {
                     epoch,
                     url: value

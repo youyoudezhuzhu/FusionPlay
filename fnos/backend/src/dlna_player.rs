@@ -163,6 +163,8 @@ pub struct DlnaTrack<'a> {
     #[serde(rename = "url")]
     pub uri: &'a str,
     pub epoch: Option<u64>,
+    pub decoder_id: Option<u64>,
+    pub lyrics_text: Option<&'a str>,
     pub title: Option<&'a str>,
     pub artist: Option<&'a str>,
     pub album: Option<&'a str>,
@@ -200,8 +202,10 @@ pub struct DlnaStats {
 
 /// Currently playing track: stop token plus the pending seek request that the
 /// decode loop applies (format seek, or a reopened range/discard stream).
-struct CurrentPlayback {
-    token: Arc<AtomicBool>,
+pub(crate) struct CurrentPlayback {
+    abort: AbortHandle,
+    core_epoch: Option<u64>,
+    decoder_id: Option<u64>,
     seek: Arc<Mutex<Option<u64>>>,
 }
 
@@ -211,10 +215,10 @@ pub struct DlnaPlayer {
     engine: Arc<AudioEngine>,
     arbiter: Arc<Arbiter>,
     state: SharedState,
-    /// Stop token + seek request of the currently playing track. A new track
-    /// replaces it; `stop()` and the arbiter suspend hook raise the token.
-    current: Mutex<Option<CurrentPlayback>>,
+    /// Reserved before opening the URI so control events can interrupt startup.
+    current: Mutex<Option<Arc<CurrentPlayback>>>,
     paused: AtomicBool,
+    decoded: AtomicBool,
     core_commands: Mutex<Option<tokio::sync::mpsc::UnboundedSender<String>>>,
     timeout_ms: AtomicU64,
     stats: Mutex<Option<DlnaStats>>,
@@ -230,38 +234,28 @@ impl DlnaPlayer {
         arbiter: Arc<Arbiter>,
         state: SharedState,
     ) -> Arc<Self> {
-        let player = Arc::new(Self {
+        Arc::new(Self {
             engine,
-            arbiter: Arc::clone(&arbiter),
+            arbiter,
             state,
             current: Mutex::new(None),
             paused: AtomicBool::new(false),
+            decoded: AtomicBool::new(false),
             core_commands: Mutex::new(None),
             timeout_ms: AtomicU64::new(DEFAULT_TIMEOUT.as_millis() as u64),
             stats: Mutex::new(None),
             auto_advance: AtomicBool::new(false),
-        });
-        // When AirPlay/MiPlay takes over, the arbiter calls this hook outside
-        // its lock. It raises our stop token so even a source blocked in a
-        // socket read returns quickly (the read timeout remains the backstop).
-        let weak = Arc::downgrade(&player);
-        arbiter.set_suspend_hook(
-            Source::Dlna,
-            Arc::new(move |_lease| {
-                if let Some(player) = weak.upgrade() {
-                    player.stop();
-                }
-            }),
-        );
-        player
+        })
     }
 
     pub(crate) fn bind_core(&self, tx: tokio::sync::mpsc::UnboundedSender<String>) {
         *self.core_commands.lock().unwrap() = Some(tx);
     }
 
-    fn announce_decoded(&self, track: &DlnaTrack<'_>) {
+    fn announce_decoded(&self, track: &DlnaTrack<'_>, abort: &AbortHandle) {
         let mut state = self.state.state.write().unwrap();
+        if abort.aborted() { return; }
+        self.decoded.store(true, Ordering::Release);
         if self.paused.load(Ordering::Acquire) {
             state.dlna.state = "paused".into();
         } else {
@@ -270,7 +264,7 @@ impl DlnaPlayer {
         drop(state);
         if let (Some(epoch), Some(tx)) = (track.epoch, self.core_commands.lock().unwrap().as_ref()) {
             let _ = tx.send(serde_json::json!({
-                "command": "dlna_audio_ready", "epoch": epoch, "uri": track.uri
+                "command": "dlna_audio_ready", "epoch": epoch, "uri": track.uri, "decoder_id": track.decoder_id
             }).to_string());
         }
     }
@@ -285,16 +279,25 @@ impl DlnaPlayer {
         Duration::from_millis(self.timeout_ms.load(Ordering::Acquire).max(1))
     }
 
-    /// Stop the currently playing DLNA track, if any. Safe to call from any
-    /// thread (including arbiter suspend hooks).
     pub fn set_paused(&self, paused: bool) {
+        self.rate_event(None, paused);
+    }
+
+    pub(crate) fn rate_event(&self, epoch: Option<u64>, paused: bool) {
+        let playback = self.current.lock().unwrap();
+        let Some(active) = playback.as_ref() else { return };
+        let mut runtime = self.state.state.write().unwrap();
+        if active.abort.aborted() || epoch.is_some() && epoch != active.core_epoch { return; }
         self.paused.store(paused, Ordering::Release);
         if paused { self.engine.flush(Source::Dlna); }
+        runtime.dlna.state = if paused { "paused" }
+            else if self.decoded.load(Ordering::Acquire) { "playing" }
+            else { "buffering" }.into();
     }
 
     pub fn stop(&self) {
         if let Some(current) = self.current.lock().unwrap().as_ref() {
-            current.token.store(true, Ordering::Release);
+            current.abort.stop.store(true, Ordering::Release);
         }
     }
 
@@ -336,65 +339,100 @@ impl DlnaPlayer {
     /// Start playback for a DLNA media URI with AVTransport metadata. Blocking;
     /// call from a worker thread.
     pub fn play_track(&self, track: &DlnaTrack<'_>) -> Result<()> {
-        // A new track supersedes the previous one played by this player.
-        self.stop();
-        let token = Arc::new(AtomicBool::new(false));
-        let seek = Arc::new(Mutex::new(None));
-        *self.current.lock().unwrap() = Some(CurrentPlayback {
-            token: Arc::clone(&token),
-            seek: Arc::clone(&seek),
-        });
-
-        let result = self.run_track(track, &token, &seek);
-
-        let mut current = self.current.lock().unwrap();
-        if current
-            .as_ref()
-            .is_some_and(|running| Arc::ptr_eq(&running.token, &token))
-        {
-            *current = None;
-        }
-        drop(current);
-        result
+        let playback = self.begin_track(track)?;
+        self.run_track(track, &playback)
     }
 
-    fn run_track(
-        &self,
-        track: &DlnaTrack<'_>,
-        token: &Arc<AtomicBool>,
-        seek_slot: &Arc<Mutex<Option<u64>>>,
-    ) -> Result<()> {
-        // Reject bad/unsupported input before touching the arbiter or network.
+    // Reserve the lease on the event thread. A following Stop/Pause/Seek or
+    // another Play now takes effect even if the decoder thread has not run.
+    pub(crate) fn begin_track(&self, track: &DlnaTrack<'_>) -> Result<Arc<CurrentPlayback>> {
+        let mut slot = self.current.lock().unwrap();
         if let Err(error) = validate_track(track) {
+            if let Some(previous) = slot.take() {
+                self.cancel(&previous);
+            }
             self.record_failure(&format!("DLNA 媒体被拒绝：{error:#}"));
+            self.notify_finished(track);
             return Err(error);
         }
+        let mut state = self.state.state.write().unwrap();
+        if let Some(previous) = slot.as_ref() {
+            previous.abort.stop.store(true, Ordering::Release);
+        }
+        let claim = self.arbiter.claim(Source::Dlna, "media");
+        if slot.is_some() || claim.suspended.is_some() { self.engine.flush(Source::Dlna); }
+        let playback = Arc::new(CurrentPlayback {
+            abort: AbortHandle { stop: Arc::new(AtomicBool::new(false)), arbiter: self.arbiter.clone(), lease: claim.lease },
+            core_epoch: track.epoch,
+            decoder_id: track.decoder_id,
+            seek: Arc::new(Mutex::new(None)),
+        });
+        self.paused.store(false, Ordering::Release);
+        self.decoded.store(false, Ordering::Release);
+        *slot = Some(playback.clone());
+        state.select_source(Some(Source::Dlna));
+        state.dlna.state = "buffering".into();
+        state.dlna.detail = format!("正在连接 DLNA 媒体：{}", display_title(track));
+        state.media = Default::default();
+        state.media.title = Some(display_title(track));
+        state.media.artist = track.artist.map(str::to_owned);
+        state.media.album = track.album.map(str::to_owned);
+        state.media.cover_url = track.artwork_url.map(str::to_owned);
+        state.media.lyrics_text = track.lyrics_text.map(str::to_owned);
+        state.media.duration_ms = track.duration_ms;
+        state.media.position_ms = Some(track.start_position_ms);
+        Ok(playback)
+    }
 
+    fn cancel(&self, active: &CurrentPlayback) {
+        active.abort.stop.store(true, Ordering::Release);
+        let mut runtime = self.state.state.write().unwrap();
+        if self.arbiter.release(active.abort.lease) && runtime.current_source.as_deref() == Some("dlna") {
+            self.engine.flush(Source::Dlna);
+            runtime.select_source(None);
+        }
+    }
+
+    pub(crate) fn refresh_metadata(&self, track: &DlnaTrack<'_>) {
+        let slot = self.current.lock().unwrap();
+        let Some(active) = slot.as_ref() else { return };
+        let mut runtime = self.state.state.write().unwrap();
+        if active.abort.aborted() || active.core_epoch != track.epoch || active.decoder_id != track.decoder_id {
+            return;
+        }
+        runtime.media.title = Some(display_title(track));
+        runtime.media.artist = track.artist.map(str::to_owned);
+        runtime.media.album = track.album.map(str::to_owned);
+        runtime.media.cover_url = track.artwork_url.map(str::to_owned);
+        runtime.media.lyrics_text = track.lyrics_text.map(str::to_owned);
+        runtime.media.duration_ms = track.duration_ms.or(runtime.media.duration_ms);
+    }
+
+    pub(crate) fn worker_failed(&self, active: &Arc<CurrentPlayback>, track: &DlnaTrack<'_>, error: &std::io::Error) {
+        let mut slot = self.current.lock().unwrap();
+        if slot.as_ref().is_some_and(|current| Arc::ptr_eq(current, active)) {
+            *slot = None;
+            self.cancel(active);
+            self.record_failure(&format!("无法启动 DLNA 解码线程：{error}"));
+            self.notify_finished(track);
+        }
+    }
+
+    fn notify_finished(&self, track: &DlnaTrack<'_>) {
+        if let (Some(id), Some(tx)) = (track.decoder_id, self.core_commands.lock().unwrap().as_ref()) {
+            let _ = tx.send(serde_json::json!({"command":"dlna_audio_finished", "epoch":track.epoch,
+                "decoder_id":id, "uri":track.uri}).to_string());
+        }
+    }
+
+    pub(crate) fn run_track(&self, track: &DlnaTrack<'_>, playback_slot: &Arc<CurrentPlayback>) -> Result<()> {
+        let abort = &playback_slot.abort;
+        let seek_slot = &playback_slot.seek;
+        let lease = abort.lease;
+        let epoch = lease.epoch;
         let timeout = self.timeout();
         let started = Instant::now();
         let title = display_title(track);
-
-        let claim = self.arbiter.claim(Source::Dlna, track.uri);
-        let lease = claim.lease;
-        let epoch = lease.epoch;
-        let abort = AbortHandle {
-            stop: Arc::clone(token),
-            arbiter: Arc::clone(&self.arbiter),
-            lease,
-        };
-
-        self.state.set_current_source(Some(Source::Dlna));
-        {
-            let mut state = self.state.state.write().unwrap();
-            state.dlna.state = "buffering".into();
-            state.dlna.detail = format!("正在连接 DLNA 媒体：{title}");
-            state.media.title = Some(title.clone());
-            state.media.artist = track.artist.map(str::to_string);
-            state.media.album = track.album.map(str::to_string);
-            state.media.cover_url = track.artwork_url.map(str::to_string);
-            state.media.duration_ms = track.duration_ms;
-            state.media.position_ms = Some(track.start_position_ms);
-        }
 
         // Fetch + decode. A seek the current format/source cannot apply in place
         // returns `SeekFallback`; this outer loop then reopens the stream at a
@@ -416,7 +454,7 @@ impl DlnaPlayer {
             };
             let outcome = match opened {
                 Ok(opened) => {
-                    self.decode_and_play(opened, track, &abort, epoch, started, request, seek_slot)
+                    self.decode_and_play(opened, track, abort, epoch, started, request, seek_slot)
                 }
                 Err(error) => Err(error),
             };
@@ -488,7 +526,13 @@ impl DlnaPlayer {
         // itself looks like a takeover. If another source stole the lease,
         // `release` is a no-op and `current_source` belongs to that source —
         // leave it alone.
+        let mut slot = self.current.lock().unwrap();
+        if !slot.as_ref().is_some_and(|active| Arc::ptr_eq(active, playback_slot)) {
+            return Ok(());
+        }
+        *slot = None;
         let reason = abort.end_reason();
+        if reason == EndReason::Completed { self.notify_finished(track); }
         if let Ok((summary, _)) = &playback {
             let output = self.engine.status();
             tracing::info!(
@@ -503,18 +547,16 @@ impl DlnaPlayer {
             );
         }
         let still_owner = self.arbiter.accepts(lease);
-        let new_source = self.arbiter.current().map(|current| current.source);
-        // Flushing drops the device rings. Always flush when we still own the
-        // engine, and also when AirPlay/MiPlay took over so stale DLNA audio
-        // does not leak into the new source. Never flush a new DLNA track's
-        // freshly queued PCM.
-        if still_owner || new_source != Some(Source::Dlna) {
-            self.engine.flush(Source::Dlna);
-        }
-        if still_owner && self.arbiter.release(lease) {
-            // Only clear the shared source if *this* lease was still current;
-            // a takeover racing with the release must not clobber its source.
-            self.state.clear_source_if_current(Source::Dlna);
+        {
+            let mut state = self.state.state.write().unwrap();
+            if still_owner && self.arbiter.release(lease) {
+                if state.current_source.as_deref() == Some("dlna") {
+                    if reason != EndReason::Completed || playback.is_err() {
+                        self.engine.flush(Source::Dlna);
+                    }
+                    state.select_source(None);
+                }
+            }
         }
         let elapsed = started.elapsed();
 
@@ -763,7 +805,7 @@ impl DlnaPlayer {
                             actual_ms,
                             "DLNA seek 使用格式时间 seek"
                         );
-                        self.publish_progress(track, &summary, &bytes, started, position_base_ms);
+                        self.publish_progress(abort, track, &summary, &bytes, started, position_base_ms);
                         continue;
                     }
                     Err(error) => {
@@ -852,6 +894,7 @@ impl DlnaPlayer {
                     // Surface the real source format for the UI/diagnostics. The
                     // engine always receives 48 kHz stereo, so show both sides.
                     let mut state = self.state.state.write().unwrap();
+                    if abort.aborted() { break; }
                     state.media.detail_codec = Some(format!(
                         "{codec_name} · {} · {} 声道 → 48 kHz stereo",
                         format_rate(rate),
@@ -898,11 +941,11 @@ impl DlnaPlayer {
 
             if !announced_playing {
                 announced_playing = true;
-                self.announce_decoded(track);
+                self.announce_decoded(track, abort);
             }
             if last_state_update.elapsed() >= STATE_UPDATE_INTERVAL {
                 last_state_update = Instant::now();
-                self.publish_progress(track, &summary, &bytes, started, position_base_ms);
+                self.publish_progress(abort, track, &summary, &bytes, started, position_base_ms);
             }
         }
 
@@ -925,7 +968,7 @@ impl DlnaPlayer {
             });
         }
         summary.bytes_read = bytes.load(Ordering::Relaxed);
-        self.publish_progress(track, &summary, &bytes, started, position_base_ms);
+        self.publish_progress(abort, track, &summary, &bytes, started, position_base_ms);
         Ok(DecodeOutcome::Finished {
             summary,
             position_base_ms,
@@ -1085,6 +1128,7 @@ impl DlnaPlayer {
                 summary.source_channels = planes;
                 {
                     let mut state = self.state.state.write().unwrap();
+                    if abort.aborted() { break; }
                     state.media.detail_codec = Some(format!(
                         "{}(flv) · {} · {} 声道 → 48 kHz stereo",
                         info.codec.as_str().to_ascii_lowercase(),
@@ -1125,11 +1169,11 @@ impl DlnaPlayer {
 
             if !announced_playing {
                 announced_playing = true;
-                self.announce_decoded(track);
+                self.announce_decoded(track, abort);
             }
             if last_state_update.elapsed() >= STATE_UPDATE_INTERVAL {
                 last_state_update = Instant::now();
-                self.publish_progress(track, &summary, &bytes, started, position_base_ms);
+                self.publish_progress(abort, track, &summary, &bytes, started, position_base_ms);
             }
         }
 
@@ -1151,7 +1195,7 @@ impl DlnaPlayer {
             });
         }
         summary.bytes_read = bytes.load(Ordering::Relaxed);
-        self.publish_progress(track, &summary, &bytes, started, position_base_ms);
+        self.publish_progress(abort, track, &summary, &bytes, started, position_base_ms);
         Ok(DecodeOutcome::Finished {
             summary,
             position_base_ms,
@@ -1160,6 +1204,7 @@ impl DlnaPlayer {
 
     fn publish_progress(
         &self,
+        abort: &AbortHandle,
         track: &DlnaTrack<'_>,
         summary: &PlaySummary,
         bytes: &Arc<AtomicU64>,
@@ -1176,6 +1221,7 @@ impl DlnaPlayer {
         );
         {
             let mut state = self.state.state.write().unwrap();
+            if abort.aborted() || self.paused.load(Ordering::Acquire) { return; }
             state.dlna.state = "playing".into();
             state.dlna.detail = detail;
             if state.current_source.as_deref() == Some("dlna") {
@@ -1298,6 +1344,16 @@ impl<'a> PcmClock<'a> {
             if !self.wait(PCM_LEAD) {
                 return;
             }
+            // Serialize a PCM write with pause/takeover even if the clock woke
+            // just before the control event acquired the state lock.
+            let _state = loop {
+                let guard = self.player.state.state.read().unwrap();
+                if guard.current_source.as_deref() != Some("dlna") || self.abort.aborted()
+                    || self.seek.lock().unwrap().is_some() { return; }
+                if !self.player.paused.load(Ordering::Acquire) { break guard; }
+                drop(guard);
+                if !self.wait(PCM_LEAD) { return; }
+            };
             let now = Instant::now();
             // Rebase after a stalled read instead of dumping overdue audio
             // into the device queue to catch up.
@@ -2612,7 +2668,11 @@ impl Read for HttpBody {
                         return Ok(0);
                     }
                     let want = buffer.len().min(remaining as usize);
-                    let read = self.read_some(&mut buffer[..want])?;
+                    let read = match self.read_some(&mut buffer[..want]) {
+                        Err(error) if matches!(error.kind(), io::ErrorKind::UnexpectedEof
+                            | io::ErrorKind::ConnectionReset | io::ErrorKind::BrokenPipe) => 0,
+                        result => result?,
+                    };
                     if read == 0 {
                         return Err(io::Error::new(
                             io::ErrorKind::InvalidData,

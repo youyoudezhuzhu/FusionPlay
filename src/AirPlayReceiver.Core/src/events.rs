@@ -118,6 +118,8 @@ pub enum CoreEvent<'a> {
         device_uuid: &'a str,
     },
     DlnaMedia {
+        decoder_id: u64,
+        metadata_only: bool,
         didl_fields: String,
         source: &'a str,
         epoch: u64,
@@ -307,6 +309,8 @@ mod tests {
     #[test]
     fn dlna_media_event_keeps_renderer_metadata_in_one_contract() {
         let event = CoreEvent::DlnaMedia {
+            decoder_id: 1,
+            metadata_only: false,
             didl_fields: "item,res".into(),
             source: "dlna",
             epoch: 19,
@@ -332,6 +336,8 @@ mod tests {
             serde_json::to_value(event).unwrap(),
             json!({
                 "type": "dlna_media",
+                "decoder_id": 1,
+                "metadata_only": false,
                 "didl_fields": "item,res",
                 "source": "dlna",
                 "epoch": 19,

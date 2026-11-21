@@ -64,6 +64,7 @@ struct UiCommand {
     command: String,
     epoch: Option<u64>,
     uri: Option<String>,
+    decoder_id: Option<u64>,
     #[serde(default)]
     request_id: Option<String>,
     #[serde(default)]
@@ -452,11 +453,15 @@ async fn wait_for_ui_commands(
             );
             continue;
         }
-        if command_name == "dlna_audio_ready" {
+        if matches!(command_name.as_str(), "dlna_audio_ready" | "dlna_audio_finished") {
             if let (Some(controller), Some(epoch), Some(uri)) =
                 (&dlna_controller, command.epoch, command.uri.as_deref())
             {
-                controller.audio_decoder_ready(epoch, uri);
+                if command_name == "dlna_audio_ready" {
+                    controller.audio_decoder_ready(epoch, uri, command.decoder_id);
+                } else if let Some(id) = command.decoder_id {
+                    controller.audio_decoder_finished(epoch, uri, id);
+                }
             }
             continue;
         }
