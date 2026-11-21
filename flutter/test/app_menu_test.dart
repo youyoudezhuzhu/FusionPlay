@@ -376,7 +376,7 @@ void main() {
   });
 
   testWidgets('设置标题使用官方 PinnedHeaderSliver，内容从标题下滚过', (tester) async {
-    await _pumpHome(tester, controller: controller);
+    await _pumpHome(tester, controller: controller, advancedEffects: true);
     await _openMenu(tester);
 
     await tester.tap(find.text('设置'));
@@ -455,7 +455,21 @@ void main() {
 
     expect(find.byKey(const ValueKey('app-menu')), findsNothing);
     expect(find.byType(GlassDialog), findsOneWidget);
-    expect(find.byKey(const ValueKey('about-dialog')), findsOneWidget);
+    final about = find.byKey(const ValueKey('about-dialog'));
+    expect(about, findsOneWidget);
+    expect(
+      find.descendant(of: about, matching: find.byType(BackdropFilter)),
+      findsNothing,
+    );
+    expect(
+      find.descendant(
+        of: about,
+        matching: find.byWidgetPredicate(
+          (w) => w is ColoredBox && w.color == GlassSpec.panel.solidColor,
+        ),
+      ),
+      findsOneWidget,
+    );
     expect(find.byType(AlertDialog), findsNothing);
     expect(find.text('FusionPlay'), findsWidgets);
     expect(find.text('版本'), findsOneWidget);

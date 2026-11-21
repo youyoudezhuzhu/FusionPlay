@@ -23,6 +23,7 @@ enum GlassLevel { card, control, panel, popup }
 class GlassSpec {
   const GlassSpec({
     required this.tint,
+    required this.solidColor,
     required this.blur,
     required this.radius,
     required this.borderAlpha,
@@ -41,6 +42,7 @@ class GlassSpec {
   final double specular;
   final double thickness;
   final Color tint;
+  final Color solidColor;
   final double blur;
   final double radius;
   final double borderAlpha;
@@ -56,19 +58,21 @@ class GlassSpec {
   final Gradient? gradient;
 
   static const card = GlassSpec(
-    tint: Color(0x1FFFFFFF),
+    tint: Color(0x17FFFFFF),
+    solidColor: Color(0xFF33333E),
     blur: 18,
     radius: 22,
     borderAlpha: .14,
     rimAlpha: .34,
     sheenAlpha: .30,
-    shadowAlpha: .16,
+    shadowAlpha: .035,
     shadowBlur: 20,
     shadowOffsetY: 6,
   );
 
   static const control = GlassSpec(
-    tint: Color(0x24FFFFFF),
+    tint: Color(0x1BFFFFFF),
+    solidColor: Color(0xFF444450),
     blur: 16,
     radius: 22,
     borderAlpha: .22,
@@ -83,7 +87,8 @@ class GlassSpec {
   static const panel = GlassSpec(
     // Overlay chrome: tinted depth without a thick white 3D rim. The player
     // controls no longer use this spec, so it is tuned for menus/settings.
-    tint: Color(0xA814191F),
+    tint: Color(0x84191B28),
+    solidColor: Color(0xFF252530),
     blur: 24,
     radius: 22,
     borderAlpha: .08,
@@ -225,47 +230,52 @@ class _LiquidGlassState extends State<LiquidGlass> {
         ? widget.child
         : Padding(padding: widget.padding!, child: widget.child);
 
-    final backdrop = GlassBackdropScope.of(context);
-    final useRefraction = backdrop != null && !widget.forceFallback;
-    Widget surface = DecoratedBox(
+    final enabled = GlassAppearance.enabledOf(context);
+    final backdrop = enabled ? GlassBackdropScope.of(context) : null;
+    final Widget body;
+    if (!enabled) {
+      body = ColoredBox(color: spec.solidColor);
+    } else if (backdrop != null && !widget.forceFallback) {
+      body = _RefractiveSurface(
+        backdrop: backdrop,
+        borderRadius: widget.borderRadius,
+        refraction: widget.refraction ?? spec.refraction,
+        specular: widget.specular ?? spec.specular,
+        thickness: widget.thickness ?? spec.thickness,
+        absorption: widget.absorption,
+        blur: blur,
+        frostLiveFace: spec == GlassSpec.panel,
+      );
+    } else {
+      body = BackdropFilter(
+        filter: ui.ImageFilter.blur(sigmaX: blur, sigmaY: blur),
+        child: const SizedBox.expand(),
+      );
+    }
+
+    final surface = DecoratedBox(
       decoration: BoxDecoration(
         borderRadius: radius,
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withValues(alpha: spec.shadowAlpha),
-            blurRadius: spec.shadowBlur,
-            offset: Offset(0, spec.shadowOffsetY),
-          ),
-        ],
+        boxShadow: enabled
+            ? [
+                BoxShadow(
+                  color: Colors.black.withValues(alpha: spec.shadowAlpha),
+                  blurRadius: spec.shadowBlur,
+                  offset: Offset(0, spec.shadowOffsetY),
+                ),
+              ]
+            : null,
       ),
       child: ClipRRect(
         borderRadius: radius,
         clipBehavior: widget.clipBehavior,
-        child: useRefraction
-            ? _RefractiveSurface(
-                backdrop: backdrop,
-                borderRadius: widget.borderRadius,
-                refraction: widget.refraction ?? spec.refraction,
-                specular: widget.specular ?? spec.specular,
-                thickness: widget.thickness ?? spec.thickness,
-                absorption: widget.absorption,
-                tint: tint,
-                sheen: _sheen,
-                spec: spec,
-                focused: focused,
-                child: child,
-              )
-            : Stack(
-                fit: StackFit.passthrough,
-                children: [
-                  Positioned.fill(
-                    child: BackdropFilter(
-                      filter: ui.ImageFilter.blur(sigmaX: blur, sigmaY: blur),
-                      child: const SizedBox(),
-                    ),
-                  ),
-                  Positioned.fill(
-                    child: IgnorePointer(
+        child: Stack(
+          fit: StackFit.passthrough,
+          children: [
+            Positioned.fill(child: body),
+            Positioned.fill(
+              child: enabled
+                  ? IgnorePointer(
                       child: RepaintBoundary(
                         child: CustomPaint(
                           painter: _GlassPaint(
@@ -279,11 +289,14 @@ class _LiquidGlassState extends State<LiquidGlass> {
                           ),
                         ),
                       ),
-                    ),
-                  ),
-                  child,
-                ],
-              ),
+                    )
+                  : const SizedBox.shrink(),
+            ),
+            // Keep the content mounted when the texture arrives or the mode
+            // changes. Settings focus, text editing and scrolling live here.
+            child,
+          ],
+        ),
       ),
     );
 
@@ -317,11 +330,8 @@ class _RefractiveSurface extends StatefulWidget {
     required this.specular,
     required this.thickness,
     required this.absorption,
-    required this.tint,
-    required this.sheen,
-    required this.spec,
-    required this.focused,
-    required this.child,
+    required this.blur,
+    required this.frostLiveFace,
   });
 
   final GlassBackdropTexture backdrop;
@@ -330,11 +340,8 @@ class _RefractiveSurface extends StatefulWidget {
   final double specular;
   final double thickness;
   final double absorption;
-  final Color tint;
-  final ValueListenable<_Sheen> sheen;
-  final GlassSpec spec;
-  final bool focused;
-  final Widget child;
+  final double blur;
+  final bool frostLiveFace;
 
   @override
   State<_RefractiveSurface> createState() => _RefractiveSurfaceState();
@@ -373,53 +380,32 @@ class _RefractiveSurfaceState extends State<_RefractiveSurface> {
   @override
   Widget build(BuildContext context) {
     final shader = _shader;
+    final needsBlur = shader == null || (kIsWeb && widget.frostLiveFace);
     return Stack(
-      fit: StackFit.passthrough,
+      key: _key,
+      fit: StackFit.expand,
       children: [
-        Positioned.fill(
-          child: SizedBox.expand(
-            key: _key,
-            child: shader == null
-                ? BackdropFilter(
-                    filter: ui.ImageFilter.blur(
-                      sigmaX: widget.spec.blur,
-                      sigmaY: widget.spec.blur,
-                    ),
-                    child: const SizedBox.expand(),
-                  )
-                : CustomPaint(
-                    painter: _RefractionPainter(
-                      shader: shader,
-                      backdrop: widget.backdrop,
-                      surfaceKey: _key,
-                      borderRadius: widget.borderRadius,
-                      refraction: widget.refraction,
-                      specular: widget.specular,
-                      thickness: widget.thickness,
-                      absorption: widget.absorption,
-                      tint: widget.tint,
-                    ),
-                  ),
+        if (needsBlur)
+          BackdropFilter(
+            filter: ui.ImageFilter.blur(
+              sigmaX: widget.blur,
+              sigmaY: widget.blur,
+            ),
+            child: const SizedBox.expand(),
           ),
-        ),
-        Positioned.fill(
-          child: IgnorePointer(
-            child: RepaintBoundary(
-              child: CustomPaint(
-                painter: _GlassPaint(
-                  sheen: widget.sheen,
-                  spec: widget.spec,
-                  tint: kIsWeb ? widget.tint : Colors.transparent,
-                  gradient: kIsWeb ? widget.spec.gradient : null,
-                  borderRadius: widget.borderRadius,
-                  specular: widget.specular,
-                  focused: widget.focused,
-                ),
-              ),
+        if (shader != null)
+          CustomPaint(
+            painter: _RefractionPainter(
+              shader: shader,
+              backdrop: widget.backdrop,
+              surfaceKey: _key,
+              borderRadius: widget.borderRadius,
+              refraction: widget.refraction,
+              specular: widget.specular,
+              thickness: widget.thickness,
+              absorption: widget.absorption,
             ),
           ),
-        ),
-        widget.child,
       ],
     );
   }
@@ -435,7 +421,6 @@ class _RefractionPainter extends CustomPainter {
     required this.specular,
     required this.thickness,
     required this.absorption,
-    required this.tint,
   });
 
   final ui.FragmentShader shader;
@@ -446,7 +431,6 @@ class _RefractionPainter extends CustomPainter {
   final double specular;
   final double thickness;
   final double absorption;
-  final Color tint;
 
   @override
   void paint(Canvas canvas, Size size) {
@@ -470,15 +454,11 @@ class _RefractionPainter extends CustomPainter {
       ..setFloat(9, thickness)
       ..setFloat(10, specular)
       ..setFloat(11, absorption)
-      ..setFloat(12, tint.r)
-      ..setFloat(13, tint.g)
-      ..setFloat(14, tint.b)
-      ..setFloat(15, tint.a)
-      ..setFloat(16, axisX.dx)
-      ..setFloat(17, axisX.dy)
-      ..setFloat(18, axisY.dx)
-      ..setFloat(19, axisY.dy)
-      ..setFloat(20, kIsWeb ? 1 : 0);
+      ..setFloat(12, axisX.dx)
+      ..setFloat(13, axisX.dy)
+      ..setFloat(14, axisY.dx)
+      ..setFloat(15, axisY.dy)
+      ..setFloat(16, kIsWeb ? 1 : 0);
     shader.setImageSampler(0, texture.image);
     canvas.drawRect(Offset.zero & size, Paint()..shader = shader);
   }
@@ -492,8 +472,7 @@ class _RefractionPainter extends CustomPainter {
       oldDelegate.refraction != refraction ||
       oldDelegate.specular != specular ||
       oldDelegate.thickness != thickness ||
-      oldDelegate.absorption != absorption ||
-      oldDelegate.tint != tint;
+      oldDelegate.absorption != absorption;
 }
 
 class _GlassPaint extends CustomPainter {
@@ -556,9 +535,13 @@ class _GlassPaint extends CustomPainter {
         begin: Alignment.topLeft,
         end: Alignment.bottomRight,
         colors: [
-          Colors.white.withValues(alpha: .10 + .18 * strength),
-          Colors.white.withValues(alpha: .10 * strength),
-          Colors.white.withValues(alpha: .08 + .12 * strength),
+          Colors.white.withValues(
+            alpha: spec.borderAlpha * .45 + spec.rimAlpha * strength * .45,
+          ),
+          Colors.white.withValues(alpha: spec.borderAlpha * .28),
+          Colors.white.withValues(
+            alpha: spec.borderAlpha * .36 + strength * .10,
+          ),
         ],
         stops: const [0.0, .55, 1.0],
       ).createShader(rect);
@@ -603,16 +586,19 @@ class GlassSurface extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final spec = GlassSpec.of(level);
+    final enabled = GlassAppearance.enabledOf(context);
     final radius = BorderRadius.circular(borderRadius);
     return DecoratedBox(
       decoration: BoxDecoration(
-        color: tint ?? spec.tint.withValues(alpha: .10),
+        color: enabled
+            ? tint ?? spec.tint.withValues(alpha: .10)
+            : spec.solidColor,
         borderRadius: radius,
         border: Border.all(
           color: Colors.white.withValues(alpha: borderAlpha ?? .10),
           width: 1,
         ),
-        boxShadow: raise
+        boxShadow: enabled && raise
             ? <BoxShadow>[
                 BoxShadow(
                   color: Colors.black.withValues(alpha: .18),
@@ -693,12 +679,22 @@ Future<T?> showGlassDialog<T>({
   required WidgetBuilder builder,
   Key? dialogKey,
   bool barrierDismissible = true,
-}) => showDialog<T>(
-  context: context,
-  barrierDismissible: barrierDismissible,
-  barrierColor: Colors.black.withValues(alpha: .42),
-  builder: (dialogContext) => GlassDialog(
-    key: dialogKey,
-    child: Builder(builder: builder),
-  ),
-);
+}) {
+  final source = context
+      .getInheritedWidgetOfExactType<GlassBackdropProvider>()
+      ?.notifier;
+  return showDialog<T>(
+    context: context,
+    barrierDismissible: barrierDismissible,
+    barrierColor: Colors.black.withValues(alpha: .42),
+    builder: (dialogContext) {
+      final dialog = GlassDialog(
+        key: dialogKey,
+        child: Builder(builder: builder),
+      );
+      return source == null
+          ? dialog
+          : GlassBackdropProvider(notifier: source, child: dialog);
+    },
+  );
+}

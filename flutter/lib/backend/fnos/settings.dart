@@ -42,12 +42,16 @@ class FnosSettings extends StatefulWidget {
     super.key,
     required this.location,
     required this.initialFocus,
+    required this.advancedEffects,
+    required this.onAdvancedEffects,
     required this.onClose,
     required this.onOpenUpdate,
   });
 
   final SpeakerPlayerLocation location;
   final FocusNode initialFocus;
+  final bool advancedEffects;
+  final ValueChanged<bool> onAdvancedEffects;
   final VoidCallback onClose;
   final VoidCallback onOpenUpdate;
 
@@ -263,6 +267,7 @@ class _FnosSettingsState extends State<FnosSettings> {
         receiverName: name,
         settings: AppSettings(
           receiverName: name,
+          advancedEffectsEnabled: widget.advancedEffects,
           miPlayEnabled: protocols['miplay']['enabled'] as bool,
           airPlayEnabled: protocols['airplay']['enabled'] as bool,
           dlnaEnabled: protocols['dlna']['enabled'] as bool,
@@ -285,7 +290,7 @@ class _FnosSettingsState extends State<FnosSettings> {
           change({'device_type': identity.persistedValue}),
       onStartup: (_) {},
       onAutoWake: (_) {},
-      onAdvancedEffects: (_) {},
+      onAdvancedEffects: widget.onAdvancedEffects,
       onOpenUpdate: widget.onOpenUpdate,
       extraActions: [
         (icon: Icons.network_check_rounded, label: '网络接口', onTap: network),

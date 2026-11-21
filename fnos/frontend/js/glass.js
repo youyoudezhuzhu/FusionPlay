@@ -3,6 +3,22 @@
 /* The displacement map describes the lens, never the content below it.
  * The browser samples its live backdrop on scroll and artwork changes. */
 window.FP = window.FP || {};
+const effectsKey = 'fusionplay.advancedEffects';
+window.fpGetEffects = () => {
+  try { return localStorage.getItem(effectsKey) !== 'off'; }
+  catch (_) { return true; }
+};
+window.fpSetEffects = enabled => {
+  try { localStorage.setItem(effectsKey, enabled ? 'on' : 'off'); }
+  catch (_) { /* The player still applies this choice for the session. */ }
+};
+function applySurfacePreference() {
+  document.documentElement.classList.toggle('solid-surfaces', !window.fpGetEffects());
+}
+applySurfacePreference();
+window.addEventListener('storage', event => {
+  if (event.key === effectsKey || event.key === null) applySurfacePreference();
+});
 FP.initGlass = function () {
   const art = document.getElementById('scene-art');
   let lastArt = '';
@@ -86,7 +102,15 @@ FP.initGlass = function () {
       if (e.isIntersecting) resize.observe(e.target);
       else resize.unobserve(e.target);
     }));
-    document.querySelectorAll('.card').forEach(p => visibility.observe(p));
+    function observeGlass() {
+      visibility.disconnect();
+      resize.disconnect();
+      if (window.fpGetEffects()) document.querySelectorAll('.card').forEach(p => visibility.observe(p));
+    }
+    observeGlass();
+    window.addEventListener('storage', event => {
+      if (event.key === effectsKey || event.key === null) observeGlass();
+    });
   }
   return function updateArtwork(status, instance) {
     let url = status && status.current_source && status.media && status.media.cover_url || '';

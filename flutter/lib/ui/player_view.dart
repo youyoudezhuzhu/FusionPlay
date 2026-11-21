@@ -704,14 +704,11 @@ class _PlayerViewState extends State<PlayerView> {
     setState(() => _lyricsVisible = !_lyricsVisible);
   }
 
-  Widget _chip(String text) => Container(
+  Widget _chip(String text) => LiquidGlass(
+    level: GlassLevel.card,
+    borderRadius: 999,
+    forceFallback: widget.forceGlassFallback,
     padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-    decoration: ShapeDecoration(
-      color: const Color(0x26FFFFFF),
-      shape: StadiumBorder(
-        side: BorderSide(color: Colors.white.withValues(alpha: .16)),
-      ),
-    ),
     child: Text(
       text,
       maxLines: 1,

@@ -478,7 +478,7 @@ class _FusionPlayHomeState extends State<FusionPlayHome> {
     _beginClose(
       then: () => unawaited(
         runUpdateFlow(
-          context: context,
+          context: _playerStackKey.currentContext!,
           onCheckUpdate: widget.controller.checkForUpdate,
           onDownloadUpdate: widget.controller.downloadUpdate,
           onInstallUpdate: widget.controller.installDownloadedUpdate,
@@ -494,7 +494,7 @@ class _FusionPlayHomeState extends State<FusionPlayHome> {
 
   Future<void> _showAboutDialog() async {
     await showGlassDialog<void>(
-      context: context,
+      context: _playerStackKey.currentContext!,
       dialogKey: const ValueKey('about-dialog'),
       builder: (dialogContext) => Column(
         mainAxisSize: MainAxisSize.min,
@@ -820,25 +820,28 @@ class _FusionPlayHomeState extends State<FusionPlayHome> {
         ),
       ),
     );
-    return GlassBackdropScope(
-      onTextureChanged: widget.backdrop == null
-          ? null
-          : (value) => widget.backdrop!.value = value,
-      enabled:
-          state.settings.advancedEffectsEnabled && !widget.forceGlassFallback,
-      revision:
-          '${artwork ?? ''}|${hasPlayback ? 1 : 0}|${state.playback.trackIdentity ?? ''}',
-      background: playerBackdrop,
-      child: MediaQuery(
-        data: mediaQuery.copyWith(
-          disableAnimations:
-              mediaQuery.disableAnimations ||
-              !state.settings.advancedEffectsEnabled,
-        ),
-        child: FusionFocusStyle(
-          borderWidth: isTelevision ? 4 : 3,
-          focusScale: isTelevision ? 1.02 : 1,
-          child: content,
+    return GlassAppearance(
+      enabled: state.settings.advancedEffectsEnabled,
+      child: GlassBackdropScope(
+        onTextureChanged: widget.backdrop == null
+            ? null
+            : (value) => widget.backdrop!.value = value,
+        enabled:
+            state.settings.advancedEffectsEnabled && !widget.forceGlassFallback,
+        revision:
+            '${artwork ?? ''}|${hasPlayback ? 1 : 0}|${state.playback.trackIdentity ?? ''}',
+        background: playerBackdrop,
+        child: MediaQuery(
+          data: mediaQuery.copyWith(
+            disableAnimations:
+                mediaQuery.disableAnimations ||
+                !state.settings.advancedEffectsEnabled,
+          ),
+          child: FusionFocusStyle(
+            borderWidth: isTelevision ? 4 : 3,
+            focusScale: isTelevision ? 1.02 : 1,
+            child: content,
+          ),
         ),
       ),
     );

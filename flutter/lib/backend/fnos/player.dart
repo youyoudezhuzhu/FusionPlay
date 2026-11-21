@@ -18,6 +18,11 @@ import '../ui_diagnostics.dart';
 @JS('fpRecordBrowserError')
 external void _recordError(JSString message);
 
+@JS('fpGetEffects')
+external bool _getEffects();
+@JS('fpSetEffects')
+external void _setEffects(bool enabled);
+
 @JS('fpControl')
 external JSPromise<JSAny?> _control(
   JSString url,
@@ -56,11 +61,11 @@ class _ReceiverState extends State<_Receiver> {
   bool loadingSpeakers = false;
   bool get missing => speakers.isNotEmpty && !speakers.containsKey(location.id);
 
-  final backdrop = ValueNotifier<GlassBackdropTexture?>(null);
   AppState state = const AppState(controls: PlaybackControls.none);
   Timer? timer;
   bool offline = false;
   bool volume = false;
+  bool advancedEffects = _getEffects();
 
   @override
   void initState() {
@@ -253,66 +258,72 @@ class _ReceiverState extends State<_Receiver> {
   Widget build(BuildContext context) {
     final art = state.playback.coverArt;
     return Scaffold(
-      body: GlassBackdropProvider(
-        notifier: backdrop,
+      body: GlassAppearance(
+        enabled: advancedEffects,
         child: GlassBackdropScope(
+          enabled: advancedEffects,
           background: PlayerBackdrop(
             source: art,
             hasPlayback: state.playback.streamActive,
           ),
           revision: art,
-          onTextureChanged: (image) => backdrop.value = image,
-          child: Stack(
-            fit: StackFit.expand,
-            children: [
-              ExcludeFocus(
-                excluding: stage != null,
-                child: PlayerView(
-                  state: state,
-                  artworkSource: art,
-                  artworkIdentity: art,
-                  onOpenMenu: menu,
-                  menuButtonKey: menuKey,
-                  menuFocusNode: menuFocus,
-                  menuOpen: !speakerMenu && stage == MorphStage.menu,
-                  overlayOpen: stage != null,
-                  volumeEnabled: volume && !offline,
-                  onPlayback: (action) => send(
-                    const {
-                      PlaybackCommand.previous: 'previous_track',
-                      PlaybackCommand.playPause: 'play_pause',
-                      PlaybackCommand.next: 'next_track',
-                    }[action]!,
+          child: MediaQuery(
+            data: MediaQuery.of(context).copyWith(
+              disableAnimations:
+                  !advancedEffects || MediaQuery.disableAnimationsOf(context),
+            ),
+            child: Stack(
+              fit: StackFit.expand,
+              children: [
+                ExcludeFocus(
+                  excluding: stage != null,
+                  child: PlayerView(
+                    state: state,
+                    artworkSource: art,
+                    artworkIdentity: art,
+                    onOpenMenu: menu,
+                    menuButtonKey: menuKey,
+                    menuFocusNode: menuFocus,
+                    menuOpen: !speakerMenu && stage == MorphStage.menu,
+                    overlayOpen: stage != null,
+                    volumeEnabled: volume && !offline,
+                    onPlayback: (action) => send(
+                      const {
+                        PlaybackCommand.previous: 'previous_track',
+                        PlaybackCommand.playPause: 'play_pause',
+                        PlaybackCommand.next: 'next_track',
+                      }[action]!,
+                    ),
+                    onSeek: (ms) => send('seek', ms),
+                    onVolume: (percent) => send('set_volume', percent),
                   ),
-                  onSeek: (ms) => send('seek', ms),
-                  onVolume: (percent) => send('set_volume', percent),
                 ),
-              ),
-              Positioned(
-                right: 8,
-                bottom: 8,
-                child: SafeArea(
-                  child: ExcludeFocus(
-                    excluding: stage != null,
-                    child: IgnorePointer(
-                      ignoring: stage != null,
-                      child: Opacity(
-                        opacity: speakerMenu && stage != null ? 0 : 1,
-                        child: SizedBox.square(
-                          key: speakerKey,
-                          dimension: 44,
-                          child: LiquidGlass(
-                            borderRadius: 22,
-                            interactive: true,
-                            child: IconButton(
-                              tooltip: '飞牛音箱',
-                              focusNode: speakerFocus,
-                              onPressed: () => menu(forSpeakers: true),
-                              icon: Image.network(
-                                Uri.base.resolve('fnos-mark.png').toString(),
-                                width: 23,
-                                height: 23,
-                                excludeFromSemantics: true,
+                Positioned(
+                  right: 8,
+                  bottom: 8,
+                  child: SafeArea(
+                    child: ExcludeFocus(
+                      excluding: stage != null,
+                      child: IgnorePointer(
+                        ignoring: stage != null,
+                        child: Opacity(
+                          opacity: speakerMenu && stage != null ? 0 : 1,
+                          child: SizedBox.square(
+                            key: speakerKey,
+                            dimension: 44,
+                            child: LiquidGlass(
+                              borderRadius: 22,
+                              interactive: true,
+                              child: IconButton(
+                                tooltip: '飞牛音箱',
+                                focusNode: speakerFocus,
+                                onPressed: () => menu(forSpeakers: true),
+                                icon: Image.network(
+                                  Uri.base.resolve('fnos-mark.png').toString(),
+                                  width: 23,
+                                  height: 23,
+                                  excludeFromSemantics: true,
+                                ),
                               ),
                             ),
                           ),
@@ -321,81 +332,89 @@ class _ReceiverState extends State<_Receiver> {
                     ),
                   ),
                 ),
-              ),
-              if (stage != null)
-                CallbackShortcuts(
-                  bindings: {
-                    const SingleActivator(LogicalKeyboardKey.escape): () {
-                      if (stage == MorphStage.settings) {
-                        closeSettings();
-                      } else {
-                        closeMenu();
-                      }
+                if (stage != null)
+                  CallbackShortcuts(
+                    bindings: {
+                      const SingleActivator(LogicalKeyboardKey.escape): () {
+                        if (stage == MorphStage.settings) {
+                          closeSettings();
+                        } else {
+                          closeMenu();
+                        }
+                      },
                     },
-                  },
-                  child: FusionMorphOverlay(
-                    stage: stage!,
-                    anchorRect: anchor!,
-                    menuFocusNodes: menuNodes,
-                    menuItems: [
-                      if (speakerMenu) ...[
-                        FusionMenuItem(
-                          icon: const Icon(Icons.speaker_group_rounded),
-                          label: '切换音箱',
-                          onSelected: () => closeMenu(location.speakerPicker),
-                        ),
-                        FusionMenuItem(
-                          icon: const Icon(Icons.add_rounded),
-                          label: '新建实例',
-                          onSelected: () => closeMenu(location.createInstance),
-                        ),
-                      ] else ...[
-                        FusionMenuItem(
-                          icon: const FusionVectorIcon(
-                            FusionIcons.settings,
-                            size: 19,
-                            color: Colors.white,
+                    child: FusionMorphOverlay(
+                      stage: stage!,
+                      anchorRect: anchor!,
+                      menuFocusNodes: menuNodes,
+                      menuItems: [
+                        if (speakerMenu) ...[
+                          FusionMenuItem(
+                            icon: const Icon(Icons.speaker_group_rounded),
+                            label: '切换音箱',
+                            onSelected: () => closeMenu(location.speakerPicker),
                           ),
-                          label: '设置',
-                          onSelected: openSettings,
-                        ),
-                        FusionMenuItem(
-                          icon: const Icon(Icons.system_update_rounded),
-                          label: '检查更新',
-                          onSelected: () => closeMenu(updatePage),
-                        ),
+                          FusionMenuItem(
+                            icon: const Icon(Icons.add_rounded),
+                            label: '新建实例',
+                            onSelected: () =>
+                                closeMenu(location.createInstance),
+                          ),
+                        ] else ...[
+                          FusionMenuItem(
+                            icon: const FusionVectorIcon(
+                              FusionIcons.settings,
+                              size: 19,
+                              color: Colors.white,
+                            ),
+                            label: '设置',
+                            onSelected: openSettings,
+                          ),
+                          FusionMenuItem(
+                            icon: const Icon(Icons.system_update_rounded),
+                            label: '检查更新',
+                            onSelected: () => closeMenu(updatePage),
+                          ),
+                        ],
                       ],
-                    ],
-                    settingsTitle: '设置',
-                    settingsChild: focusesSettings
-                        ? FnosSettings(
-                            location: location,
-                            initialFocus: settingsFocus,
-                            onClose: closeSettings,
-                            onOpenUpdate: () => closeMenu(updatePage),
-                          )
-                        : const SizedBox.shrink(),
-                    onDismiss: closeMenu,
-                    onSettingsClose: closeSettings,
-                    onTransitionCompleted: (s) {
-                      if (s == MorphStage.menu) menuNodes.first.requestFocus();
-                      if (s == MorphStage.settings &&
-                          settingsFocus.context != null) {
-                        settingsFocus.requestFocus();
-                      }
-                    },
-                    onClosed: menuClosed,
+                      settingsTitle: '设置',
+                      settingsChild: focusesSettings
+                          ? FnosSettings(
+                              location: location,
+                              initialFocus: settingsFocus,
+                              advancedEffects: advancedEffects,
+                              onAdvancedEffects: (enabled) {
+                                _setEffects(enabled);
+                                setState(() => advancedEffects = enabled);
+                              },
+                              onClose: closeSettings,
+                              onOpenUpdate: () => closeMenu(updatePage),
+                            )
+                          : const SizedBox.shrink(),
+                      onDismiss: closeMenu,
+                      onSettingsClose: closeSettings,
+                      onTransitionCompleted: (s) {
+                        if (s == MorphStage.menu) {
+                          menuNodes.first.requestFocus();
+                        }
+                        if (s == MorphStage.settings &&
+                            settingsFocus.context != null) {
+                          settingsFocus.requestFocus();
+                        }
+                      },
+                      onClosed: menuClosed,
+                    ),
                   ),
-                ),
-              if (offline)
-                Align(
-                  alignment: Alignment.bottomCenter,
-                  child: Text(
-                    missing ? '此音箱已移除，请在右下角切换音箱' : '接收器连接中断，正在重连',
-                    style: const TextStyle(color: Colors.white),
+                if (offline)
+                  Align(
+                    alignment: Alignment.bottomCenter,
+                    child: Text(
+                      missing ? '此音箱已移除，请在右下角切换音箱' : '接收器连接中断，正在重连',
+                      style: const TextStyle(color: Colors.white),
+                    ),
                   ),
-                ),
-            ],
+              ],
+            ),
           ),
         ),
       ),
@@ -411,7 +430,6 @@ class _ReceiverState extends State<_Receiver> {
     for (final node in menuNodes) {
       node.dispose();
     }
-    backdrop.dispose();
     super.dispose();
   }
 }

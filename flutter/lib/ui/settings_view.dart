@@ -267,8 +267,8 @@ class _SettingsViewState extends State<SettingsView> {
                           ),
                         ]),
                         SizedBox(height: cardSpacing),
-                        if (widget.showHostControls)
-                          _card([
+                        _card([
+                          if (widget.showHostControls) ...[
                             _switchRow(
                               asset: 'assets/icon-power-settings-new.svg',
                               title: '开机自启',
@@ -281,13 +281,14 @@ class _SettingsViewState extends State<SettingsView> {
                               value: settings.autoWakeEnabled,
                               onChanged: widget.onAutoWake,
                             ),
-                            _switchRow(
-                              icon: Icons.auto_awesome_rounded,
-                              title: '高级效果',
-                              value: settings.advancedEffectsEnabled,
-                              onChanged: widget.onAdvancedEffects,
-                            ),
-                          ]),
+                          ],
+                          _switchRow(
+                            icon: Icons.auto_awesome_rounded,
+                            title: '高级效果',
+                            value: settings.advancedEffectsEnabled,
+                            onChanged: widget.onAdvancedEffects,
+                          ),
+                        ]),
                         SizedBox(height: cardSpacing),
                         _card([
                           _aboutRow(),

@@ -5,6 +5,30 @@ import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 
+/// User-selected material. A temporarily missing texture only changes the
+/// advanced renderer's fallback, never the user's choice of opacity.
+class GlassAppearance extends InheritedTheme {
+  const GlassAppearance({
+    super.key,
+    required this.enabled,
+    required super.child,
+  });
+
+  final bool enabled;
+
+  static bool enabledOf(BuildContext context) =>
+      context.dependOnInheritedWidgetOfExactType<GlassAppearance>()?.enabled ??
+      true;
+
+  @override
+  bool updateShouldNotify(GlassAppearance oldWidget) =>
+      enabled != oldWidget.enabled;
+
+  @override
+  Widget wrap(BuildContext context, Widget child) =>
+      GlassAppearance(enabled: enabled, child: child);
+}
+
 /// A captured, glass-free backdrop texture.
 ///
 /// The texture comes from a dedicated [RepaintBoundary] that contains only the

@@ -56,7 +56,7 @@ class _GridPainter extends CustomPainter {
   bool shouldRepaint(covariant CustomPainter oldDelegate) => false;
 }
 
-Widget _host({required double refraction, required GlobalKey boundaryKey}) {
+Widget _host({double? refraction, required GlobalKey boundaryKey}) {
   return MaterialApp(
     debugShowCheckedModeBanner: false,
     home: RepaintBoundary(
@@ -66,17 +66,12 @@ Widget _host({required double refraction, required GlobalKey boundaryKey}) {
         background: const _GridBackdrop(),
         child: Center(
           child: SizedBox(
-            width: 330,
+            width: 314,
             height: 230,
             child: LiquidGlass(
               level: GlassLevel.control,
               borderRadius: 72,
-              blurSigma: 0,
               refraction: refraction,
-              thickness: 34,
-              specular: 1.2,
-              absorption: .35,
-              interactive: false,
               child: const SizedBox.expand(),
             ),
           ),
@@ -98,6 +93,7 @@ Future<Uint8List> _capturePng(WidgetTester tester, GlobalKey key) async {
   final data = await tester.runAsync(
     () => image!.toByteData(format: ui.ImageByteFormat.png),
   );
+  image!.dispose();
   return data!.buffer.asUint8List();
 }
 
@@ -113,6 +109,7 @@ Future<Uint8List> _captureRgba(WidgetTester tester, GlobalKey key) async {
   final data = await tester.runAsync(
     () => image!.toByteData(format: ui.ImageByteFormat.rawRgba),
   );
+  image!.dispose();
   return data!.buffer.asUint8List();
 }
 
@@ -120,9 +117,9 @@ double _meanRegionDiff(Uint8List a, Uint8List b, int width) {
   var total = 0.0;
   var count = 0;
   // The glass is centered at 640x420 logical and captured at 2x: sample the
-  // left bevel band where refraction is strongest.
+  // 14 logical pixels inside the straight left edge of the 314-wide surface.
   for (var y = 300; y < 560; y += 3) {
-    for (var x = 320; x < 460; x += 3) {
+    for (var x = 326; x < 354; x++) {
       final index = (y * width + x) * 4;
       if (index + 2 >= a.length || index + 2 >= b.length) continue;
       total +=
@@ -148,7 +145,7 @@ void main() {
     addTearDown(tester.view.resetDevicePixelRatio);
 
     final refractedKey = GlobalKey();
-    await tester.pumpWidget(_host(refraction: 2.2, boundaryKey: refractedKey));
+    await tester.pumpWidget(_host(boundaryKey: refractedKey));
     final refractedPng = await _capturePng(tester, refractedKey);
     final refractedPixels = await _captureRgba(tester, refractedKey);
     File(

@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 
 import '../theme/fusion_theme.dart';
 import 'g2_shape.dart';
+import 'glass_backdrop.dart';
 import 'liquid_glass.dart';
 import 'remote_focus.dart';
 import 'vector_icon.dart';
@@ -205,14 +206,16 @@ class _GlassSettingsHeader extends StatelessWidget {
   @override
   Widget build(BuildContext context) => DecoratedBox(
     key: const ValueKey('settings-glass-header'),
-    decoration: const BoxDecoration(
-      gradient: LinearGradient(
-        begin: Alignment.topCenter,
-        end: Alignment.bottomCenter,
-        colors: [Color(0x1FFFFFFF), Color(0x0AFFFFFF), Color(0x00FFFFFF)],
-        stops: [0.0, .55, 1.0],
-      ),
-    ),
+    decoration: GlassAppearance.enabledOf(context)
+        ? const BoxDecoration(
+            gradient: LinearGradient(
+              begin: Alignment.topCenter,
+              end: Alignment.bottomCenter,
+              colors: [Color(0x1FFFFFFF), Color(0x0AFFFFFF), Color(0x00FFFFFF)],
+              stops: [0.0, .55, 1.0],
+            ),
+          )
+        : BoxDecoration(color: GlassSpec.panel.solidColor),
     child: Padding(
       padding: const EdgeInsets.fromLTRB(20, 10, 10, 8),
       child: Row(
@@ -323,8 +326,8 @@ class FusionMorphOverlay extends StatefulWidget {
 class _FusionMorphOverlayState extends State<FusionMorphOverlay>
     with SingleTickerProviderStateMixin {
   static const settingsRadius = 28.0;
-  static const menuTint = Color(0x32141722);
-  static const settingsTint = Color(0x42141925);
+  static const menuTint = Color(0x55181A26);
+  static const settingsTint = Color(0x72181A26);
 
   late final AnimationController _controller = AnimationController(vsync: this);
 
@@ -419,10 +422,15 @@ class _FusionMorphOverlayState extends State<FusionMorphOverlay>
 
   Rect _settingsRect(Size size) {
     const side = 16.0;
-    final width = math.min(
-      math.max(0.0, size.width - 2 * side),
-      (size.width * .5).clamp(widget.settingsMinWidth, widget.settingsMaxWidth),
-    ).toDouble();
+    final width = math
+        .min(
+          math.max(0.0, size.width - 2 * side),
+          (size.width * .5).clamp(
+            widget.settingsMinWidth,
+            widget.settingsMaxWidth,
+          ),
+        )
+        .toDouble();
     final height = math.max(120.0, size.height - side * 2);
     return Rect.fromLTWH(size.width - side - width, side, width, height);
   }
@@ -528,13 +536,6 @@ class _FusionMorphOverlayState extends State<FusionMorphOverlay>
               blurSigma: 20 + 4 * settingsAmount,
               tint: tint,
               forceFallback: widget.forceFallback,
-              tintGradient: settingsAmount > .35
-                  ? const LinearGradient(
-                      begin: Alignment.topLeft,
-                      end: Alignment.bottomRight,
-                      colors: [Color(0x1A000000), Color(0x04000000)],
-                    )
-                  : null,
               animate: false,
               child: ClipRect(
                 child: Stack(

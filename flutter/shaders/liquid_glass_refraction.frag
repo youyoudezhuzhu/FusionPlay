@@ -17,7 +17,6 @@ uniform float uRefraction;
 uniform float uThickness;
 uniform float uSpecular;
 uniform float uAbsorption;
-uniform vec4 uTint;
 uniform vec2 uAxisX;
 uniform vec2 uAxisY;
 uniform float uLiveFace;
@@ -80,7 +79,7 @@ void main() {
   // Chromatic dispersion: red/blue sample slightly farther from the normal.
   vec3 color = texture(uBackdrop, uv).rgb;
   if (bevel > 0.0 && uRefraction > 0.0) {
-    vec2 caOffset = normal * (bevel * 1.2 * uRefraction * dpr) /
+    vec2 caOffset = normal * (bevel * 0.55 * uRefraction * dpr) /
         max(imagePx, vec2(1.0));
     color.r = texture(uBackdrop, clamp(uv + caOffset, vec2(0.001), vec2(0.999))).r;
     color.b = texture(uBackdrop, clamp(uv - caOffset, vec2(0.001), vec2(0.999))).b;
@@ -88,7 +87,6 @@ void main() {
 
   // Light traverses a thicker section in the body of the lens.
   color *= 1.0 - uAbsorption * 0.06 * (1.0 - bevel);
-  color = mix(color, uTint.rgb, clamp(uTint.a, 0.0, 1.0) * 0.55);
 
   // Directional specular and grazing-angle Fresnel along the real normal.
   vec2 light = normalize(vec2(-0.55, -0.8));
