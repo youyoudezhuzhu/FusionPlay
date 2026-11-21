@@ -32,16 +32,25 @@ window.FP.createSpeakerSettings = function (ctx, renderAudio) {
   }
 
   function renderOptions(outputs) {
-    const available = Array.from(outputs).filter(([id]) =>
-      !instances().some(s => s.id !== editing && s.device_id === id));
-    const key = JSON.stringify([editing, available]);
+    const options = Array.from(outputs, ([id, label]) => {
+      const owner = instances().find(s => s.id !== editing && s.device_id === id);
+      return {id, label, owner: owner?.name};
+    });
+    const key = JSON.stringify([editing, options]);
     if (key !== optionsKey) {
       const previous = device.value;
       const current = instances().find(s => s.id === editing);
-      device.replaceChildren(...available.map(([id, label]) => new Option(label, id)));
-      const chosen = available.find(([id]) => id === previous) ||
-        (current && available.find(([id]) => id === current.device_id));
-      if (chosen) device.value = chosen[0];
+      device.replaceChildren(...options.map(({id, label, owner}) => {
+        const option = new Option(owner ? label + ' · 已绑定「' + owner + '」' : label, id);
+        option.disabled = Boolean(owner);
+        return option;
+      }));
+      const available = options.filter(option => !option.owner);
+      const chosen = available.find(o => o.id === previous) ||
+        available.find(o => o.id === current?.device_id) ||
+        (editing === 'default' && available.find(o => store.getDevice(o.id)?.enabled)) ||
+        available[0];
+      device.value = chosen ? chosen.id : '';
       optionsKey = key;
     }
     updateHint();

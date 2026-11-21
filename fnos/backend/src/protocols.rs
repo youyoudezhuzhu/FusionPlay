@@ -103,16 +103,23 @@ impl EngineSink {
         self.hooks.lock().unwrap().get(&source).cloned()
     }
 
-    fn claim(&self, source: Source) -> Lease {
+    fn claim(&self, source: Source) -> Option<Lease> {
         let mut lease = self.lease.lock().unwrap();
+        let mut runtime = self.state.state.write().unwrap();
+        // A queued PCM block must not take the room away from a newer stream.
+        if runtime.current_source.as_deref().is_some_and(|active| active != source.as_str()) {
+            return None;
+        }
         if let Some(current) = *lease {
-            if current.source == source {
-                return current;
+            if current.source == source && self.arbiter.accepts(current) {
+                return Some(current);
             }
         }
         let claim = self.arbiter.claim(source, "pcm");
         *lease = Some(claim.lease);
+        runtime.select_source(Some(source));
         let suspended = claim.suspended;
+        drop(runtime);
         drop(lease);
         if let Some(previous) = suspended {
             tracing::info!(
@@ -124,8 +131,7 @@ impl EngineSink {
                 hook(previous);
             }
         }
-        self.state.set_current_source(Some(source));
-        claim.lease
+        Some(claim.lease)
     }
 
     fn release(&self, source: Source) {
@@ -133,9 +139,10 @@ impl EngineSink {
         if let Some(current) = *lease {
             if current.source == source {
                 self.engine.flush(source);
-                self.arbiter.release(current);
+                if self.arbiter.release(current) {
+                    self.state.clear_source_if_current(source);
+                }
                 *lease = None;
-                self.state.set_current_source(None);
             }
         }
     }
@@ -156,7 +163,7 @@ impl PcmOutput for EngineSink {
             PcmSource::Dlna => Source::Dlna,
             PcmSource::MiPlay => Source::MiPlay,
         };
-        let lease = self.claim(source);
+        let Some(lease) = self.claim(source) else { return };
         if !self.arbiter.accepts(lease) {
             return;
         }
@@ -691,6 +698,7 @@ fn handle_core_event(json: String, state: SharedState, dlna: Arc<DlnaPlayer>) {
         }
         "now_playing" => {
             let mut runtime = state.state.write().unwrap();
+            if runtime.current_source.as_deref() != value["source"].as_str() { return; }
             runtime.media.title = text("title");
             runtime.media.artist = text("artist");
             runtime.media.album = text("album");
@@ -705,7 +713,10 @@ fn handle_core_event(json: String, state: SharedState, dlna: Arc<DlnaPlayer>) {
             if let Some(name) = value["path"].as_str().and_then(|p| Path::new(p).file_name())
                 .and_then(|name| name.to_str()).filter(|name| crate::http::artwork_filename(name))
             {
-                state.state.write().unwrap().media.cover_url = Some(format!("artwork/{name}"));
+                let mut runtime = state.state.write().unwrap();
+                if runtime.current_source.as_deref() == Some("airplay") && value["source"] == "airplay" {
+                    runtime.media.cover_url = Some(format!("artwork/{name}"));
+                }
             }
         }
         "volume" => {
@@ -808,7 +819,9 @@ fn handle_core_event(json: String, state: SharedState, dlna: Arc<DlnaPlayer>) {
         "dlna_seek" => {
             let mut runtime = state.state.write().unwrap();
             let position = value.get("position_ms").and_then(Value::as_u64);
-            runtime.media.position_ms = position;
+            if runtime.current_source.as_deref() == Some("dlna") {
+                runtime.media.position_ms = position;
+            }
             drop(runtime);
             if let Some(ms) = position { let _ = dlna.seek(ms); }
         }
@@ -817,8 +830,11 @@ fn handle_core_event(json: String, state: SharedState, dlna: Arc<DlnaPlayer>) {
             state.record_error(message);
         }
         "source_takeover" => {
-            let mut runtime = state.state.write().unwrap();
-            runtime.current_source = text("source");
+            match value["source"].as_str() {
+                Some("airplay") => state.set_current_source(Some(Source::AirPlay)),
+                Some("dlna") => state.set_current_source(Some(Source::Dlna)),
+                _ => {}
+            }
         }
         "log" => {
             if let Some(message) = text("message") {
@@ -845,21 +861,21 @@ fn handle_miplay_event(value: Value, state: SharedState, sink: Arc<EngineSink>) 
         }
         "receiver_ready" | "discovery_backend_ready" => {
             let mut runtime = state.state.write().unwrap();
+            if kind == "receiver_ready" {
+                if let Some(port) = value["port"].as_u64().and_then(|p| u16::try_from(p).ok()) {
+                    runtime.miplay.port = port;
+                }
+            }
             if runtime.miplay.enabled {
                 set_proto(&mut runtime.miplay, proto_state::WAITING, "等待小米妙播投放");
             }
         }
         "stream_started" => {
+            state.set_current_source(Some(Source::MiPlay));
             let mut runtime = state.state.write().unwrap();
             runtime.miplay.state = proto_state::STREAMING.to_string();
             runtime.miplay.detail = "正在播放小米妙播音频".to_string();
-            if let Some(media) = runtime.pending_miplay.take() {
-                runtime.media = media;
-            } else if runtime.current_source.as_deref() != Some("miplay") {
-                runtime.media = Default::default();
-            }
-            runtime.current_source = Some("miplay".into());
-            runtime.media.detail_codec = text("source_codec");
+            if let Some(codec) = text("source_codec") { runtime.media.detail_codec = Some(codec); }
         }
         "stream_stopped" | "media_channel_closed" | "media_session_replaced" => {
             let mut runtime = state.state.write().unwrap();
@@ -885,6 +901,8 @@ fn handle_miplay_event(value: Value, state: SharedState, sink: Arc<EngineSink>) 
                 runtime.media = media;
                 runtime.media.detail_codec = codec;
             } else {
+                let mut media = media;
+                media.detail_codec = runtime.pending_miplay.take().and_then(|previous| previous.detail_codec);
                 runtime.pending_miplay = Some(media);
             }
         }
@@ -918,7 +936,11 @@ fn handle_miplay_event(value: Value, state: SharedState, sink: Arc<EngineSink>) 
         "audio_format" => {
             let mut runtime = state.state.write().unwrap();
             if let Some(codec) = text("source_codec") {
-                runtime.media.detail_codec = Some(codec);
+                if runtime.current_source.as_deref() == Some("miplay") {
+                    runtime.media.detail_codec = Some(codec);
+                } else {
+                    runtime.pending_miplay.get_or_insert_with(Default::default).detail_codec = Some(codec);
+                }
             }
         }
         "error" => {
@@ -1036,9 +1058,10 @@ mod tests {
             Arc::clone(&dlna),
         );
         assert_eq!(state.snapshot().airplay.state, "streaming");
+        state.set_current_source(Some(Source::AirPlay));
         for event in [
-            json!({"type":"cover_art","path":"/tmp/artwork/cover-art-0123456789abcdef.jpg"}),
-            json!({"type":"now_playing","title":"Track","artist":"Artist"}),
+            json!({"type":"cover_art","source":"airplay","path":"/tmp/artwork/cover-art-0123456789abcdef.jpg"}),
+            json!({"type":"now_playing","source":"airplay","title":"Track","artist":"Artist"}),
         ] {
             handle_core_event(event.to_string(), state.clone(), dlna.clone());
         }
@@ -1070,6 +1093,40 @@ mod tests {
     }
 
     #[test]
+    fn independent_rooms_keep_miplay_and_airplay_metadata_with_their_audio() {
+        let room = || {
+            let engine = AudioEngine::new(Default::default(), crate::audio::NullBackend::new()).unwrap();
+            let state = crate::state::AppState::new();
+            let arbiter = Arc::new(Arbiter::new());
+            let dlna = DlnaPlayer::new(engine.clone(), arbiter.clone(), state.clone());
+            let sink = EngineSink::new(engine, arbiter, state.clone());
+            (state, sink, dlna)
+        };
+        let (study, first_sink, first_dlna) = room();
+        let (kitchen, second_sink, second_dlna) = room();
+        for (state, sink, name) in [(&study, &first_sink, "Study"), (&kitchen, &second_sink, "Kitchen")] {
+            handle_miplay_event(serde_json::json!({"event":"media_info","title":name,"lyrics":name}),
+                state.clone(), sink.clone());
+            handle_miplay_event(serde_json::json!({"event":"stream_started"}), state.clone(), sink.clone());
+            MiPlayPcmOutput::write(sink.as_ref(), 1.0, 48000, 2, &[0.; 128]);
+            assert_eq!(state.snapshot().media.lyrics_text.as_deref(), Some(name));
+        }
+        handle_core_event(serde_json::json!({"type":"source_takeover","source":"airplay"}).to_string(),
+            study.clone(), first_dlna.clone());
+        handle_core_event(serde_json::json!({"type":"now_playing","source":"airplay","title":"New song",
+            "artist":"Artist","lyric_line":"New line"}).to_string(), study.clone(), first_dlna);
+        // Frames and artwork that were already in flight cannot reclaim a room.
+        MiPlayPcmOutput::write(first_sink.as_ref(), 1.0, 48000, 2, &[0.; 128]);
+        handle_core_event(serde_json::json!({"type":"cover_art","source":"airplay",
+            "path":"artwork/cover-art-0123456789abcdef.jpg"}).to_string(), kitchen.clone(), second_dlna);
+        assert_eq!(study.snapshot().current_source.as_deref(), Some("airplay"));
+        assert_eq!(study.snapshot().media.lyrics_text.as_deref(), Some("New line"));
+        assert_eq!(kitchen.snapshot().current_source.as_deref(), Some("miplay"));
+        assert_eq!(kitchen.snapshot().media.title.as_deref(), Some("Kitchen"));
+        assert!(kitchen.snapshot().media.cover_url.is_none());
+    }
+
+    #[test]
     fn miplay_ready_event_uses_the_same_waiting_vocabulary() {
         use crate::audio::NullBackend;
         use crate::config::AudioSettings;
@@ -1088,6 +1145,7 @@ mod tests {
         let runtime = state.snapshot();
         assert_eq!(runtime.miplay.state, "waiting");
         assert_eq!(runtime.miplay.detail, "等待小米妙播投放");
+        assert_eq!(runtime.miplay.port, 8899);
     }
 
     #[test]

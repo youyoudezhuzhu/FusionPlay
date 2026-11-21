@@ -16,4 +16,14 @@ void main() {
       expect(receiverLyrics(''), isNull);
     },
   );
+  test(
+    'fnOS passes Xiaomi timed lyric words without displaying the timing tags',
+    () {
+      final doc = parseLyrics(
+        receiverLyrics('[00:01.00]{Hello }[00:01.50]{world}'),
+      );
+      expect(doc!.lines.single.text, 'Hello world');
+      expect(doc.lines.single.words.map((w) => w.startMs), [1000, 1500]);
+    },
+  );
 }

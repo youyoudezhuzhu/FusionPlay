@@ -52,6 +52,29 @@ pub struct RuntimeState {
 }
 
 impl RuntimeState {
+    pub(crate) fn select_source(&mut self, source: Option<Source>) {
+        if let Some(next) = source {
+            if self.current_source.as_deref() != Some(next.as_str()) {
+                self.media = if next == Source::MiPlay {
+                    self.pending_miplay.take().unwrap_or_default()
+                } else {
+                    MediaInfo::default()
+                };
+            }
+        }
+        self.current_source = source.map(|source| source.as_str().to_string());
+        if source != Some(Source::AirPlay) {
+            self.sender_volume.airplay_db = None;
+            self.sender_volume.airplay_percent = None;
+        }
+        if source != Some(Source::Dlna) {
+            self.sender_volume.dlna_percent = None;
+        }
+        if source != Some(Source::MiPlay) {
+            self.sender_volume.miplay_percent = None;
+        }
+    }
+
     pub fn player_commands(&self) -> Vec<String> {
         match self.current_source.as_deref() {
             Some("miplay") => ["play_pause", "previous_track", "next_track", "seek", "set_volume"]
@@ -83,20 +106,14 @@ impl AppState {
     }
 
     pub fn set_current_source(&self, source: Option<Source>) {
+        self.state.write().unwrap().select_source(source);
+    }
+
+    pub fn clear_source_if_current(&self, source: Source) {
         let mut state = self.state.write().unwrap();
-        if source == Some(Source::MiPlay) && state.current_source.as_deref() != Some("miplay") {
-            state.media = state.pending_miplay.take().unwrap_or_default();
-        }
-        state.current_source = source.map(|source| source.as_str().to_string());
-        if source != Some(Source::AirPlay) {
-            state.sender_volume.airplay_db = None;
-            state.sender_volume.airplay_percent = None;
-        }
-        if source != Some(Source::Dlna) {
-            state.sender_volume.dlna_percent = None;
-        }
-        if source != Some(Source::MiPlay) {
-            state.sender_volume.miplay_percent = None;
+        if state.current_source.as_deref() == Some(source.as_str()) {
+            state.current_source = None;
+            state.sender_volume = SenderVolume::default();
         }
     }
 

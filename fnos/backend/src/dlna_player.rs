@@ -497,7 +497,7 @@ impl DlnaPlayer {
         if still_owner && self.arbiter.release(lease) {
             // Only clear the shared source if *this* lease was still current;
             // a takeover racing with the release must not clobber its source.
-            self.state.set_current_source(None);
+            self.state.clear_source_if_current(Source::Dlna);
         }
         let elapsed = started.elapsed();
 
@@ -516,7 +516,7 @@ impl DlnaPlayer {
                     let mut state = self.state.state.write().unwrap();
                     state.dlna.state = "idle".into();
                     state.dlna.detail = detail;
-                    if reason == EndReason::Completed {
+                    if reason == EndReason::Completed && state.current_source.is_none() {
                         state.media.position_ms =
                             Some(summary.position_ms(final_position_base_ms));
                     }
@@ -1137,7 +1137,9 @@ impl DlnaPlayer {
             let mut state = self.state.state.write().unwrap();
             state.dlna.state = "playing".into();
             state.dlna.detail = detail;
-            state.media.position_ms = Some(summary.position_ms(position_base_ms));
+            if state.current_source.as_deref() == Some("dlna") {
+                state.media.position_ms = Some(summary.position_ms(position_base_ms));
+            }
         }
         let stats = DlnaStats {
             uri: track.uri.to_string(),
