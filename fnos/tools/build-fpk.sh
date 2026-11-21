@@ -23,7 +23,12 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"        # fnos/
 REPO="$(cd "$ROOT/.." && pwd)"
 PKG="$ROOT/package"
 STAGE_ROOT="${APP_BUILD_ROOT:-/tmp/fusionplay-fnos-build}"
-FNPACK="$ROOT/tools/fnpack-linux-amd64"
+source "$ROOT/tools/fpk-platform.sh"
+if [ "$FPK_PLATFORM" = arm ]; then
+    FNPACK="$(command -v "${FPK_FNPACK:-fnpack}" || true)"
+else
+    FNPACK="${FPK_FNPACK:-$ROOT/tools/fnpack-linux-amd64}"
+fi
 DIST="$ROOT/dist"
 
 die() { echo "❌ $*" >&2; exit 1; }
@@ -36,7 +41,7 @@ manifest_get() {
 
 export PATH="$HOME/.cargo/bin:/usr/local/cargo/bin:$PATH"
 if [ -z "${FPK_BACKEND_BIN:-}" ]; then command -v cargo >/dev/null || die "缺少 cargo"; fi
-[ -x "$FNPACK" ] || die "缺少 fnpack 可执行文件：$FNPACK（该二进制应提交进仓库）"
+[ -x "$FNPACK" ] || die "缺少本机 fnpack。请按 fnos/fnos-build.md 安装，或设置 FPK_FNPACK。"
 [ -f "$REPO/LICENSE" ] || die "仓库根缺少 LICENSE（AGPL 分发必需）"
 grep -q "GNU AFFERO GENERAL PUBLIC LICENSE" "$REPO/LICENSE" \
     || die "LICENSE 不是 AGPL 文本（本项目为 AGPL-3.0-only）"
@@ -45,7 +50,6 @@ grep -q "GNU AFFERO GENERAL PUBLIC LICENSE" "$REPO/LICENSE" \
 
 APPNAME="$(manifest_get appname)"
 VERSION="$(manifest_get version)"
-PLATFORM="$(manifest_get platform)"
 SERVICE_PORT="$(manifest_get service_port)"
 DESKTOP_LAUNCH="$(manifest_get desktop_applaunchname)"
 DESKTOP_UIDIR="$(manifest_get desktop_uidir)"
@@ -64,17 +68,6 @@ BACKEND_VERSION="$(grep -m1 -E '^version[[:space:]]*=' "$ROOT/backend/Cargo.toml
     || die "版本不一致：manifest.version=$VERSION，但 fnos/backend/Cargo.toml version=$BACKEND_VERSION。
    /healthz 报的是二进制版本；请同步：改 backend Cargo.toml + Cargo.lock，或改 manifest。"
 
-# ---------------- 守卫 2：platform 与架构一致 ----------------
-HOST_ARCH="$(uname -m)"
-case "$HOST_ARCH" in
-    x86_64|amd64)  EXPECT_PLATFORM="x86" ;;
-    aarch64|arm64) EXPECT_PLATFORM="arm" ;;
-    *)             EXPECT_PLATFORM="all" ;;
-esac
-[ "$PLATFORM" = "$EXPECT_PLATFORM" ] \
-    || die "manifest.platform=$PLATFORM 与构建机架构 $HOST_ARCH 不一致（应写 $EXPECT_PLATFORM）。
-   含架构特定二进制时 platform 不能用 all（ARM 机器装 x86 包会直接崩）。"
-
 # ---------------- 守卫 3：service_port 与 cmd/main 默认一致 ----------------
 MAIN_PORT="$(grep -oE 'TRIM_SERVICE_PORT:-[0-9]+' "$PKG/cmd/main" | head -1 | grep -oE '[0-9]+$')"
 [ -n "$MAIN_PORT" ] || die "cmd/main 里找不到 TRIM_SERVICE_PORT 默认值"
@@ -85,12 +78,12 @@ MAIN_PORT="$(grep -oE 'TRIM_SERVICE_PORT:-[0-9]+' "$PKG/cmd/main" | head -1 | gr
 [ "$DESKTOP_UIDIR" = "ui" ] || die "desktop_uidir 必须是 ui（当前 $DESKTOP_UIDIR）"
 grep -q "\"$DESKTOP_LAUNCH\"" "$PKG/app/ui/config" \
     || die "app/ui/config 缺少入口 \"$DESKTOP_LAUNCH\"（desktop_applaunchname=$DESKTOP_LAUNCH）"
-echo "▶ 守卫通过：version=$VERSION（manifest=backend），platform=$PLATFORM，service_port=$SERVICE_PORT，launch=$DESKTOP_LAUNCH"
+echo "▶ 守卫通过：version=$VERSION（manifest=backend），platform=$FPK_PLATFORM，service_port=$SERVICE_PORT，launch=$DESKTOP_LAUNCH"
 
 if [ -n "${FPK_BACKEND_BIN:-}" ]; then
     BIN="$FPK_BACKEND_BIN"
 else
-    echo "▶ cargo build --release ($HOST_ARCH)"
+    echo "▶ cargo build --release ($(uname -m))"
     cargo build --locked --release --manifest-path "$ROOT/backend/Cargo.toml"
     BIN="${CARGO_TARGET_DIR:-$ROOT/backend/target}/release/fusionplay-fnos"
 fi
@@ -100,10 +93,10 @@ BIN_VERSION="$("$BIN" --version 2>/dev/null | head -1 | tr -d '[:space:]')"
     || die "二进制 --version=$BIN_VERSION 与 manifest.version=$VERSION 不一致（/healthz 会报错版本）"
 
 # ---------------- 组装独立暂存目录 ----------------
-STAGE="$STAGE_ROOT/$APPNAME"
+STAGE="$STAGE_ROOT/$FPK_PLATFORM/$APPNAME"
 echo "▶ 组装暂存目录 $STAGE"
 mkdir -p "$STAGE_ROOT"
-chmod -R u+rwX "$STAGE_ROOT" 2>/dev/null || true
+chmod -R u+rwX "$STAGE" 2>/dev/null || true
 rm -rf "$STAGE"
 mkdir -p "$STAGE"
 [ -z "$(ls -A "$STAGE" 2>/dev/null)" ] || die "暂存目录未清空，残留旧文件会被打进包：$STAGE"
@@ -112,16 +105,22 @@ cp -r "$PKG/." "$STAGE/"
 # ★ cp 之后立刻修权限，再 mkdir（从带 TrimACL 的目录复制出来可能是 d---------）
 chmod -R u+rwX "$STAGE" 2>/dev/null || true
 
+sed -i -E "s/^platform([[:space:]]*)=.*/platform\1= $FPK_PLATFORM/" "$STAGE/manifest"
 mkdir -p "$STAGE/app/bin" "$STAGE/app/www" "$STAGE/app/licenses"
 cp -f "$BIN" "$STAGE/app/bin/fusionplay-fnos"
 cp -r "$ROOT/frontend/." "$STAGE/app/www/"
-(
-  cd "$REPO/flutter"
-  flutter pub get --enforce-lockfile
-  flutter build web --release --no-pub --no-web-resources-cdn --pwa-strategy=none -t lib/backend/fnos/player.dart
-)
+PLAYER_WEB="${FPK_PLAYER_WEB_DIR:-$REPO/flutter/build/web}"
+if [ -z "${FPK_PLAYER_WEB_DIR:-}" ]; then
+    (
+        cd "$REPO/flutter"
+        flutter pub get --enforce-lockfile
+        flutter build web --release --no-pub --no-web-resources-cdn --pwa-strategy=none -t lib/backend/fnos/player.dart
+    )
+fi
+[ -s "$PLAYER_WEB/main.dart.js" ] && [ -s "$PLAYER_WEB/index.html" ] ||
+    die "缺少 Flutter Web 播放器：$PLAYER_WEB"
 mkdir -p "$STAGE/app/www/player"
-cp -r "$REPO/flutter/build/web/." "$STAGE/app/www/player/"
+cp -r "$PLAYER_WEB/." "$STAGE/app/www/player/"
 cp -f "$REPO/LICENSE" "$STAGE/app/licenses/LICENSE"
 if [ -f "$REPO/THIRD_PARTY_NOTICES.md" ]; then
     cp -f "$REPO/THIRD_PARTY_NOTICES.md" "$STAGE/app/licenses/THIRD_PARTY_NOTICES.md"
@@ -156,7 +155,7 @@ chmod 0755 "$STAGE"/cmd/* "$STAGE/app/bin/fusionplay-fnos"
 [ -f "$STAGE/app/www/index.html" ] || die "app/www/index.html 缺失（前端未复制成功）"
 
 # ---------------- fnpack 打包 ----------------
-PACK_LOG="$STAGE_ROOT/fnpack-build.log"
+PACK_LOG="$STAGE_ROOT/$FPK_PLATFORM/fnpack-build.log"
 echo "▶ fnpack build（$APPNAME $VERSION）"
 set +e
 ( cd "$STAGE" && "$FNPACK" build ) 2>&1 | tee "$PACK_LOG"
@@ -174,8 +173,8 @@ FPK="$STAGE/$APPNAME.fpk"
 # 注意：不要用 `tar -tzf x | grep -q`——grep -q 提前退出会让 tar 收到 SIGPIPE，
 # 在 `set -o pipefail` 下管线被判失败（假阴性）。先把清单落到文件再 grep。
 echo "▶ 双层 tar 自检"
-LIST="$STAGE_ROOT/fpk-list.txt"
-APPLIST="$STAGE_ROOT/fpk-app-list.txt"
+LIST="$STAGE_ROOT/$FPK_PLATFORM/fpk-list.txt"
+APPLIST="$STAGE_ROOT/$FPK_PLATFORM/fpk-app-list.txt"
 tar -tzf "$FPK" > "$LIST"
 tar -xzOf "$FPK" app.tgz | tar -tzf - > "$APPLIST"
 grep -qx "manifest" "$LIST" || die "FPK 缺少 manifest"
@@ -188,10 +187,10 @@ echo "▶ 结构/规范检查（check-fpk.sh）"
 "$ROOT/tools/check-fpk.sh" "$FPK" || die "check-fpk.sh 未通过"
 
 mkdir -p "$DIST"
-OUT="$DIST/$APPNAME.fpk"
+OUT="$DIST/$FPK_FILENAME"
 PENDING=$(mktemp "$DIST/.candidate.XXXXXX")
 trap 'rm -f -- "$PENDING"' EXIT
 install -m 0644 "$FPK" "$PENDING"
 mv -f -- "$PENDING" "$OUT"
 ls -lh "$OUT"
-echo "✅ 构建完成：$OUT（version=$VERSION，platform=$PLATFORM）"
+echo "✅ 构建完成：$OUT（version=$VERSION，platform=$FPK_PLATFORM）"

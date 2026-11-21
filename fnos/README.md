@@ -6,8 +6,8 @@
 | 项目 | 值 |
 |---|---|
 | 应用标识（appname） | `fusionplay-fnos` |
-| 当前候选版本 | `0.2.6`（x86_64） |
-| 安装包 | `fusionplay-fnos.fpk`（GitHub Actions artifact / Release 附件） |
+| 当前候选版本 | `0.2.6`（x86_64、ARM64） |
+| 安装包 | x86_64 用 `fusionplay-fnos.fpk`，ARM64 用 `fusionplay-fnos-arm64.fpk` |
 | 服务端口 | `18080`（仅绑定 `127.0.0.1`，供本机诊断；对外走 fnOS 统一网关） |
 | 运行身份 | `run-as: package` + `join-groups: ["audio"]`（**非 root**） |
 | 许可证 | AGPL-3.0-only（包内 `app/licenses/LICENSE`；源码：<https://github.com/youyoudezhuzhu/FusionPlay>） |
@@ -37,7 +37,6 @@
 - AirPlay 2 **多房间采样级同步**（与 HomePod 等组成多房间不在本版范围）。
 - DLNA **HLS / 视频 / 转码**（首版只做音频；视频投屏会明确报错）。
 - 小米官方认证 / 厂商准入宣称（MiPlay 为兼容实现，失败会在日志与 UI 如实上报）。
-- **ARM 安装包**（当前发行包 `platform = x86`；ARM 版需交叉编译后另出包）。
 - 蓝牙 / PulseAudio / 网络音频输出（只走 ALSA `hw:` 设备）。
 - 加密 / DRM 媒体、跨 NAS 组播。
 
@@ -45,9 +44,9 @@
 
 > 详细步骤（含应用中心图形界面、CLI、安装后验收、真机验证清单）见 [INSTALL.md](INSTALL.md)。
 
-- **方式 A（推荐）应用中心**：下载 `fusionplay-fnos.fpk` → 应用中心 → 手动安装 →
+- **方式 A（推荐）应用中心**：按上表下载对应架构的 FPK → 应用中心 → 手动安装 →
   选择文件 → 安全提示点「同意」。存储空间默认已选中，**不要再点它**（展开下拉会遮挡上传区）。
-- **NAS 命令行本地测试**用 `appcenter-cli install-fpk fusionplay-fnos.fpk` 安装或覆盖升级。[官方 CLI 文档](https://developer.fnnas.com/docs/cli/appcentercli)
+- **NAS 命令行本地测试**用 `appcenter-cli install-fpk fusionplay-fnos.fpk` 安装或覆盖升级；ARM64 将文件名替换为 `fusionplay-fnos-arm64.fpk`。[官方 CLI 文档](https://developer.fnnas.com/docs/cli/appcentercli)
 - ⚠️ 同 `appname` + 同 `version` 重装会报 **errno 10236**（应用已存在）：覆盖升级请使用更高版本号。
 - **安装后必须在 Web UI 授权音频权限**（否则看不到声卡、播放无声）：
   设置 → 应用管理 → FusionPlay → 权限设置 → 勾选 **audio / 音频设备** → 保存。
@@ -159,7 +158,6 @@ fnOS 会用 `TRIM_*` 环境变量把不同用途的目录传给应用（升级�
 
 ## 9. 已知限制
 
-- **仅 x86_64**：当前包 `platform = x86`，ARM 飞牛设备不能安装。
 - **多房间同步**不做采样级对齐；多台设备之间使用统一主时钟 + 漂移补偿，但不等同于 AirPlay 多房间。
 - **DLNA 仅音频**且不支持 HLS/视频/转码；不支持的格式会在 UI/日志明确报错。网易云 `video/flv` 形式的音频投屏已按音频处理。
 - **MiPlay 为兼容实现**，不宣称官方认证；部分厂商发送端可能因准入限制无法连接（日志会写明）。

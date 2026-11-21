@@ -4,6 +4,7 @@
 set -euo pipefail
 SELF_DIR="$(cd "$(dirname "$0")" && pwd)"
 source "$SELF_DIR/fpk-sim-lib.sh"
+source "$SELF_DIR/fpk-platform.sh"
 sim_require_tools
 SANDBOX="$(sim_sandbox)"
 PORT_HOLDER=""
@@ -17,13 +18,34 @@ cleanup() {
 trap cleanup EXIT
 die() { echo "FAIL: $*" >&2; exit 1; }
 
+first_arm_rehearsal=false
 case $# in
     0|1)
-        OLD="$SANDBOX/fusionplay-fnos.fpk"
-        NEW="${1:-$SELF_DIR/../dist/fusionplay-fnos.fpk}"
-        gh release download fnos-v0.2.5 --repo youyoudezhuzhu/FusionPlay \
-            --pattern fusionplay-fnos.fpk --dir "$SANDBOX"
-        echo "544174910c5daf44cdc17c531938c59b731238c6d0ef3054c0cf25a3cdda6faa  $OLD" | sha256sum -c -
+        NEW="${1:-$SELF_DIR/../dist/$FPK_FILENAME}"
+        OLD="$SANDBOX/$FPK_FILENAME"
+        if [ "$FPK_PLATFORM" = x86 ]; then
+            baseline_tag=fnos-v0.2.5
+            expected_hash=544174910c5daf44cdc17c531938c59b731238c6d0ef3054c0cf25a3cdda6faa
+        else
+            tar -xzOf "$NEW" manifest > "$SANDBOX/candidate-manifest"
+            if [ "$(sim_manifest_get "$SANDBOX/candidate-manifest" version)" = 0.2.6 ]; then
+                # No previous ARM release exists. Exercise the hooks on the
+                # real candidate and explicitly distinguish this from an upgrade.
+                first_arm_rehearsal=true
+                OLD="$NEW"
+            else
+                baseline_tag=fnos-v0.2.6
+                expected_hash=$(gh release view "$baseline_tag" --repo youyoudezhuzhu/FusionPlay \
+                    --json assets --jq '.assets[] | select(.name == "fusionplay-fnos-arm64.fpk") | .digest')
+                [[ "$expected_hash" =~ ^sha256:[0-9a-f]{64}$ ]] || die "missing ARM64 release digest"
+                expected_hash=${expected_hash#sha256:}
+            fi
+        fi
+        if ! "$first_arm_rehearsal"; then
+            gh release download "$baseline_tag" --repo youyoudezhuzhu/FusionPlay \
+                --pattern "$FPK_FILENAME" --dir "$SANDBOX"
+            echo "$expected_hash  $OLD" | sha256sum -c -
+        fi
         ;;
     2) OLD="$1"; NEW="$2" ;;
     *) die "Usage: $0 [candidate.fpk] or $0 old.fpk new.fpk" ;;
@@ -33,12 +55,17 @@ tar -xzf "$OLD" -C "$SANDBOX/old"
 tar -xzf "$NEW" -C "$SANDBOX/new"
 for path in "$SANDBOX"/{old,new}/manifest; do
     [ "$(sim_manifest_get "$path" appname)" = fusionplay-fnos ] || die "unexpected appname"
+    [ "$(sim_manifest_get "$path" platform)" = "$FPK_PLATFORM" ] || die "FPK does not match host architecture"
 done
 OLD_VER=$(sim_manifest_get "$SANDBOX/old/manifest" version)
 NEW_VER=$(sim_manifest_get "$SANDBOX/new/manifest" version)
-[ "$OLD_VER" != "$NEW_VER" ] && [ "$(printf '%s\n' "$OLD_VER" "$NEW_VER" | sort -V | tail -1)" = "$NEW_VER" ] ||
-    die "覆盖升级需要递增的版本：$OLD_VER → $NEW_VER"
-echo "Testing packaged upgrade $OLD_VER → $NEW_VER"
+if "$first_arm_rehearsal"; then
+    echo "First ARM64 FPK $NEW_VER: exercising the replacement hooks with the same build"
+else
+    [ "$OLD_VER" != "$NEW_VER" ] && [ "$(printf '%s\n' "$OLD_VER" "$NEW_VER" | sort -V | tail -1)" = "$NEW_VER" ] ||
+        die "覆盖升级需要递增的版本：$OLD_VER → $NEW_VER"
+    echo "Testing packaged upgrade $OLD_VER → $NEW_VER"
+fi
 
 # Runtime state and package home stay on the original storage volume.
 export TRIM_APPNAME=fusionplay-fnos FUSIONPLAY_AUDIO_BACKEND=null
@@ -104,7 +131,7 @@ PYROOM
     tar -xzf "$SANDBOX/new/app.tgz" -C "$TRIM_APPDEST"
     export TRIM_APPVER="$NEW_VER"
     if [ "$scenario" = stopped ]; then
-        if TRIM_APPVER="$OLD_VER" bash "$new_cmd/upgrade_callback"; then die "mixed version accepted"; fi
+        if TRIM_APPVER="0.0.0" bash "$new_cmd/upgrade_callback"; then die "mixed version accepted"; fi
         grep -q "$NEW_VER" "$TRIM_TEMP_LOGFILE" || die "missing package version diagnostic"
     fi
     bash "$new_cmd/upgrade_callback"

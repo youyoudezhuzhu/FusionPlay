@@ -1,20 +1,25 @@
 # FusionPlay fnOS 安装与验收指南
 
-面向最终用户/测试同学。安装包：`fusionplay-fnos.fpk`（appname `fusionplay-fnos`，当前候选 `0.2.6`，x86_64）。
+当前候选版本为 0.2.6。按照 NAS 的 CPU 架构选择一个 FPK。两个包的应用标识均为 `fusionplay-fnos`。
+
+| NAS 上的 `uname -m` | 安装包 | GitHub Actions artifact |
+| --- | --- | --- |
+| `x86_64` | `fusionplay-fnos.fpk` | `fusionplay-fnos-fpk` |
+| `aarch64` | `fusionplay-fnos-arm64.fpk` | `fusionplay-fnos-fpk-arm64` |
+
 构建、CI 与本地沙箱测试见 [fnos-build.md](fnos-build.md)；功能与限制见 [README.md](README.md)。
 
 ## 0. 前置条件
 
 | 项 | 要求 |
 |---|---|
-| NAS | 飞牛 fnOS，**x86_64** 机型（当前包 `platform = x86`，ARM 设备装不了） |
+| NAS | 飞牛 fnOS，x86_64 或 ARM64 机型 |
 | 权限 | fnOS 管理员账号（安装、授权 audio 组需要） |
 | 存储 | 至少一个可用存储空间（安装时需要选） |
 | 端口 | `18080` 未被占用（本应用只绑 `127.0.0.1`） |
 | 声卡 | 至少一块可用的 ALSA 播放设备（板载/HDMI/USB DAC） |
 
-下载产物：GitHub Actions artifact `fusionplay-fnos-fpk`，或 Release 页面的
-`fusionplay-fnos.fpk` 附件。下载后建议先校验：
+下载对应架构的包。以下命令以 x86_64 为例，ARM64 请使用 `fusionplay-fnos-arm64.fpk`。
 
 ```bash
 sha256sum fusionplay-fnos.fpk
@@ -25,7 +30,7 @@ tar tzf fusionplay-fnos.fpk | head        # 应看到 manifest / cmd/ / config/ 
 
 1. 打开 fnOS 桌面 → **应用中心** → **手动安装**。
 2. 弹窗顶部会显示已选中的存储空间（**默认已选中，不要再点它**，展开下拉会遮挡上传区）。
-3. 点「从电脑上传」，选择 `fusionplay-fnos.fpk`。
+3. 点「从电脑上传」，选择与 NAS 架构匹配的 FPK。
 4. 解析完成后会弹出「未经验证应用的安全提示」，按钮是 **取消 / 同意**（不是「安装」）→ 点 **同意**。
 5. 等待安装完成；应用图标会出现在桌面。
 
@@ -177,7 +182,7 @@ sudo ls -l /vol1/@appdata/fusionplay-fnos/              # app.log、fusionplay.l
 
 ## 6. 原地升级
 
-在应用中心保留现有 FusionPlay，用相同应用标识、更高版本的 x86 FPK 做本地覆盖升级测试。当前候选版本为 0.2.6，上一正式版本为 0.2.5。安装包校验、应用中心启用和用户数据目录各自独立。
+在应用中心保留现有 FusionPlay，用相同应用标识、相同架构、更高版本的 FPK 做本地覆盖升级测试。当前候选版本为 0.2.6，x86_64 上一正式版本为 0.2.5，ARM64 从 0.2.6 开始。安装包校验、应用中心启用和用户数据目录各自独立。
 
 启用后打开播放器，或访问 `http://127.0.0.1:18080/healthz` 核对版本。检查接收器名称、音箱输出和校准值。升级前已停用的服务可在应用中心手动启用。配置沿用 `/var/apps/fusionplay-fnos/home/config.json`，运行数据沿用同目录树中的 `var/`。升级错误见应用中心提示和 `/var/apps/fusionplay-fnos/var/app.log`。[官方应用框架](https://developer.fnnas.com/docs/core-concepts/framework)
 

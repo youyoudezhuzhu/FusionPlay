@@ -21,7 +21,8 @@ ROOT="$(cd "$SELF_DIR/.." && pwd)"
 # shellcheck source=fpk-sim-lib.sh
 source "$SELF_DIR/fpk-sim-lib.sh"
 
-FPK="${1:-$ROOT/dist/fusionplay-fnos.fpk}"
+source "$SELF_DIR/fpk-platform.sh" || exit 1
+FPK="${1:-$ROOT/dist/$FPK_FILENAME}"
 sim_require_tools
 [ -f "$FPK" ] || { echo "❌ 找不到 $FPK（先跑 ./fnos/tools/build-fpk.sh）" >&2; exit 1; }
 FPK="$(cd "$(dirname "$FPK")" && pwd)/$(basename "$FPK")"

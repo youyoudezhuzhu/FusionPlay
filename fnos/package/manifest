@@ -3,7 +3,7 @@
 #   - platform 不是 arch（值：x86 / arm / all；含架构特定二进制时必须写具体架构）
 #   - desc 不是 description；maintainer 不是 developer；service_port 不是 port
 #   - source 第三方固定 thirdparty
-# 本包内含 x86_64 ELF（fnos/backend release 构建），因此 platform = x86；ARM 版需交叉编译后再出包。
+# 打包时按原生后台的架构写入 platform，x86_64 取 x86，AArch64 取 arm。
 appname               = fusionplay-fnos
 version               = 0.2.6
 display_name          = "FusionPlay"

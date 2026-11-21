@@ -14,12 +14,13 @@ set -uo pipefail
 umask 022
 
 SELF_DIR="$(cd "$(dirname "$0")" && pwd)"
-FPK="${1:-$SELF_DIR/../dist/fusionplay-fnos.fpk}"
+source "$SELF_DIR/fpk-platform.sh" || exit 1
+FPK="${1:-$SELF_DIR/../dist/$FPK_FILENAME}"
 EXPECTED_APPNAME="fusionplay-fnos"
 EXPECTED_PORT="18080"
 EXPECTED_UIDIR="ui"
 EXPECTED_LAUNCH="fusionplay-fnos.main"
-EXPECTED_PLATFORM="$(uname -m | sed -e 's/x86_64/x86/' -e 's/aarch64/arm/')"
+EXPECTED_PLATFORM="$FPK_PLATFORM"
 
 [ -f "$FPK" ] || { echo "❌ 找不到 $FPK"; exit 1; }
 
@@ -145,13 +146,17 @@ if platform in ("x86", "arm", "all"):
 else:
     bad(f"platform 取值非法（x86/arm/all）：{platform!r}")
 bin_path = tmp / "app" / "bin" / "fusionplay-fnos"
-is_elf = bin_path.is_file() and bin_path.read_bytes()[:4] == b"\x7fELF"
-if is_elf and platform == "all":
-    bad("包含架构特定的 ELF 二进制时 platform 不能写 all（装到别的架构会直接崩）")
-elif is_elf and platform != exp_platform:
-    bad(f"platform={platform} 与检测到的构建架构 {exp_platform} 不一致")
+with bin_path.open("rb") as binary:
+    header = binary.read(20)
+if len(header) != 20 or header[:6] != b"\x7fELF\x02\x01":
+    bad("后台必须是 64 位小端 ELF")
 else:
-    ok("platform 与二进制架构匹配")
+    machine = struct.unpack_from("<H", header, 18)[0]
+    elf_platform = {62: "x86", 183: "arm"}.get(machine)
+    if platform != exp_platform or platform != elf_platform:
+        bad(f"架构不匹配：manifest={platform}, ELF e_machine={machine}, 本机={exp_platform}")
+    else:
+        ok(f"manifest、64 位 ELF 和本机构架一致：{platform} (e_machine={machine})")
 
 if man.get("service_port") == exp_port:
     ok(f"service_port = {exp_port}")
