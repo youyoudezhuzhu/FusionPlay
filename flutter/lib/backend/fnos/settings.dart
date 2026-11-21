@@ -4,7 +4,7 @@ import 'dart:js_interop';
 
 import 'package:flutter/material.dart';
 import '../../models/app_state.dart';
-import '../../ui/liquid_glass.dart';
+import '../../ui/frosted_glass.dart';
 import '../../theme/fusion_theme.dart';
 import '../../ui/settings_view.dart';
 import 'player_location.dart';

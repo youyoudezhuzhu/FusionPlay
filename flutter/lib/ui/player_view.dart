@@ -10,7 +10,7 @@ import 'animated_press_scale.dart';
 import 'artwork.dart';
 import 'floating_album_art.dart';
 import 'g2_shape.dart';
-import 'liquid_glass.dart';
+import 'frosted_glass.dart';
 
 import 'lyrics_view.dart';
 import 'remote_focus.dart';
@@ -40,7 +40,7 @@ int airPlayInterpolatedPositionMs({
 }
 
 /// YAQMC-style player surface: full-bleed artwork background (owned by the
-/// host), top bar with source chips + liquid-glass action menu trigger, a large
+/// host), top bar with source chips + frosted action menu trigger, a large
 /// artwork/title column plus a large lyrics column, and a floating glass
 /// transport dock with progress and volume.
 class PlayerView extends StatefulWidget {
@@ -61,7 +61,6 @@ class PlayerView extends StatefulWidget {
     this.overlayOpen = false,
     this.menuButtonKey,
     this.volumeFocusNode,
-    this.forceGlassFallback = false,
   });
 
   final AppState state;
@@ -92,9 +91,6 @@ class PlayerView extends StatefulWidget {
   final GlobalKey? menuButtonKey;
 
   final FocusNode? volumeFocusNode;
-
-  /// Test hook: render LiquidGlass surfaces without the backdrop shader.
-  final bool forceGlassFallback;
 
   @override
   State<PlayerView> createState() => _PlayerViewState();
@@ -704,11 +700,10 @@ class _PlayerViewState extends State<PlayerView> {
     setState(() => _lyricsVisible = !_lyricsVisible);
   }
 
-  Widget _chip(String text) => LiquidGlass(
-    interactive: true,
+  Widget _chip(String text) => FrostedGlass(
     level: GlassLevel.card,
     borderRadius: 999,
-    forceFallback: widget.forceGlassFallback,
+
     padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
     child: Text(
       text,
@@ -912,8 +907,7 @@ class _PlayerViewState extends State<PlayerView> {
       child: SizedBox(
         key: const ValueKey('player-volume-capsule'),
         height: height,
-        child: LiquidGlass(
-          forceFallback: widget.forceGlassFallback,
+        child: FrostedGlass(
           borderRadius: 999,
           padding: EdgeInsets.symmetric(horizontal: compact ? 7 : 10),
           child: Row(
@@ -1369,9 +1363,7 @@ class _PlayerViewState extends State<PlayerView> {
         },
         child: SizedBox.square(
           dimension: size,
-          child: LiquidGlass(
-            interactive: onTap != null,
-            forceFallback: widget.forceGlassFallback,
+          child: FrostedGlass(
             borderRadius: 999,
             child: Material(
               color: Colors.transparent,
@@ -1472,9 +1464,7 @@ class _PlayerViewState extends State<PlayerView> {
       },
       child: Semantics(
         button: true,
-        child: LiquidGlass(
-          interactive: true,
-          forceFallback: widget.forceGlassFallback,
+        child: FrostedGlass(
           borderRadius: 999,
           child: IconButton(
             padding: EdgeInsets.zero,
@@ -1639,7 +1629,7 @@ class _PlayerViewState extends State<PlayerView> {
                       ? 60
                       : (MediaQuery.sizeOf(context).width >= 1500 ? 82 : 70)),
             // Reference design: the primary action is an opaque white disc.
-            // Only previous/next and the volume capsule use refractive glass.
+            // Previous/next and the volume capsule use frosted glass.
             child: DecoratedBox(
               decoration: BoxDecoration(
                 color: const Color(0xF2FFFFFF),

@@ -8,9 +8,9 @@ import 'package:fusionplay_android_flutter/theme/fusion_theme.dart';
 import 'package:fusionplay_android_flutter/ui/artwork.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:fusionplay_android_flutter/models/app_state.dart';
-import 'package:fusionplay_android_flutter/ui/glass_backdrop.dart';
+import 'package:fusionplay_android_flutter/ui/glass_appearance.dart';
 import 'package:fusionplay_android_flutter/ui/player_view.dart';
-import 'package:fusionplay_android_flutter/ui/liquid_glass.dart';
+import 'package:fusionplay_android_flutter/ui/frosted_glass.dart';
 
 class _Stripes extends CustomPainter {
   @override
@@ -68,7 +68,7 @@ void main() {
           home: Scaffold(
             body: RepaintBoundary(
               key: key,
-              child: GlassBackdropScope(
+              child: FrostedScene(
                 background: stripes
                     ? CustomPaint(painter: _Stripes())
                     : PlayerBackdrop(source: photo, hasPlayback: true),
@@ -103,11 +103,11 @@ void main() {
         );
       }
       expect(
-        find.descendant(of: capsule, matching: find.byType(LiquidGlass)),
+        find.descendant(of: capsule, matching: find.byType(FrostedGlass)),
         findsOneWidget,
       );
       expect(
-        find.descendant(of: slider, matching: find.byType(LiquidGlass)),
+        find.descendant(of: slider, matching: find.byType(FrostedGlass)),
         findsNothing,
       );
       final bounds = tester.getRect(slider);

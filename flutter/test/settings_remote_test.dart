@@ -21,7 +21,6 @@ void main() {
           controller: controller,
           state: const AppState(initialized: true),
           isAndroid: false,
-          forceGlassFallback: true,
         ),
       ),
     );
@@ -254,7 +253,6 @@ void main() {
             ),
           ),
           isAndroid: false,
-          forceGlassFallback: true,
         ),
       ),
     );
@@ -302,7 +300,6 @@ void main() {
             ),
           ),
           isAndroid: false,
-          forceGlassFallback: true,
         ),
       ),
     );

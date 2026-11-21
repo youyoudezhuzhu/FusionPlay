@@ -10,8 +10,6 @@ import '../models/app_state.dart';
 import '../theme/fusion_theme.dart';
 import 'g2_shape.dart';
 import 'remote_focus.dart';
-import 'liquid_glass.dart';
-import 'glass_backdrop.dart';
 import 'update_dialogs.dart';
 import 'vector_icon.dart';
 
@@ -20,8 +18,8 @@ const fusionPlayVersion = String.fromEnvironment(
   defaultValue: '1.7.13',
 );
 
-/// Dark liquid-glass palette used by the settings panel. The outer
-/// [LiquidGlass] surface provides the actual glass; everything here is a
+/// Dark frosted-material palette used by the settings panel. The outer
+/// [FrostedGlass] surface provides the actual glass; everything here is a
 /// translucent surface/fill painted on top of it.
 abstract final class _GlassStyle {
   static const cardRadius = 22.0;
@@ -1014,9 +1012,6 @@ class _G2SettingsSwitch extends StatelessWidget {
                 _GlassStyle.switchOnThumb,
                 progress,
               )!;
-              final glassThumb =
-                  GlassAppearance.enabledOf(context) &&
-                  GlassBackdropScope.of(context) != null;
               return DecoratedBox(
                 decoration: ShapeDecoration(
                   color: trackColor,
@@ -1031,16 +1026,12 @@ class _G2SettingsSwitch extends StatelessWidget {
                       top: 4,
                       child: SizedBox.square(
                         dimension: 24,
-                        child: glassThumb
-                            ? LiquidGlass.droplet(
-                                tint: thumb.withValues(alpha: .46),
-                              )
-                            : DecoratedBox(
-                                decoration: ShapeDecoration(
-                                  color: thumb,
-                                  shape: const CircleBorder(),
-                                ),
-                              ),
+                        child: DecoratedBox(
+                          decoration: ShapeDecoration(
+                            color: thumb,
+                            shape: const CircleBorder(),
+                          ),
+                        ),
                       ),
                     ),
                   ],

@@ -7,8 +7,8 @@ import '../../models/app_state.dart';
 import '../../theme/fusion_theme.dart';
 import '../../ui/app_menu.dart';
 import '../../ui/artwork.dart';
-import '../../ui/glass_backdrop.dart';
-import '../../ui/liquid_glass.dart';
+import '../../ui/glass_appearance.dart';
+import '../../ui/frosted_glass.dart';
 import '../../ui/player_view.dart';
 import '../../ui/vector_icon.dart';
 import 'player_location.dart';
@@ -183,9 +183,7 @@ class _ReceiverState extends State<_Receiver> {
       ).toDart;
     } catch (_) {
       if (mounted) {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(
+        ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             behavior: SnackBarBehavior.floating,
             backgroundColor: Colors.transparent,
@@ -193,7 +191,7 @@ class _ReceiverState extends State<_Receiver> {
             padding: EdgeInsets.zero,
             content: GlassAppearance(
               enabled: advancedEffects,
-              child: const LiquidGlass(
+              child: const FrostedGlass(
                 level: GlassLevel.popup,
                 blurSigma: 9,
                 padding: EdgeInsets.symmetric(horizontal: 16, vertical: 12),
@@ -279,13 +277,11 @@ class _ReceiverState extends State<_Receiver> {
     return Scaffold(
       body: GlassAppearance(
         enabled: advancedEffects,
-        child: GlassBackdropScope(
-          enabled: advancedEffects,
+        child: FrostedScene(
           background: PlayerBackdrop(
             source: art,
             hasPlayback: state.playback.streamActive,
           ),
-          revision: art,
           child: MediaQuery(
             data: MediaQuery.of(context).copyWith(
               disableAnimations:
@@ -330,16 +326,15 @@ class _ReceiverState extends State<_Receiver> {
                           child: SizedBox.square(
                             key: speakerKey,
                             dimension: 44,
-                            child: LiquidGlass(
+                            child: FrostedGlass(
                               borderRadius: 22,
-                              interactive: true,
                               child: Tooltip(
                                 padding: EdgeInsets.zero,
                                 decoration: const BoxDecoration(),
                                 richMessage: WidgetSpan(
                                   child: GlassAppearance(
                                     enabled: advancedEffects,
-                                    child: const LiquidGlass(
+                                    child: const FrostedGlass(
                                       level: GlassLevel.popup,
                                       borderRadius: 10,
                                       blurSigma: 6,
@@ -358,7 +353,9 @@ class _ReceiverState extends State<_Receiver> {
                                   focusNode: speakerFocus,
                                   onPressed: () => menu(forSpeakers: true),
                                   icon: Image.network(
-                                    Uri.base.resolve('fnos-mark.png').toString(),
+                                    Uri.base
+                                        .resolve('fnos-mark.png')
+                                        .toString(),
                                     width: 23,
                                     height: 23,
                                     excludeFromSemantics: true,

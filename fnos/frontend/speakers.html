@@ -5,7 +5,6 @@
 <script src="js/browser-diagnostics.js"></script>
 </head><body>
 <div class="scene" aria-hidden="true"><img id="scene-art" alt="" hidden></div>
-<svg class="defs" aria-hidden="true"><defs id="glass-filters"></defs></svg>
 <header><div class="brand"><img src="player/fnos-mark.png" alt="">FusionPlay</div><a id="back" class="back" href="player/index.html">返回播放器 <span aria-hidden="true">↗</span></a></header>
 <main>
 <section id="rooms" hidden>
@@ -48,7 +47,7 @@
 <div id="curve-device-row" class="device-row"><label for="curve-device">输出音箱</label><select id="curve-device"></select></div>
 <div id="editor" class="card editor" hidden>
 <div class="controls"><div class="small">响应模式</div><div id="modes" class="modes" role="group" aria-label="响应模式"></div>
-<div class="response"><label for="probe">音量映射预览</label><output for="probe" id="readout"></output><div class="probe-slider"><span class="probe-track" aria-hidden="true"></span><span class="probe-lens" aria-hidden="true"></span><input type="range" id="probe" aria-label="预览发送端音量" min="0" max="100" value="50"></div></div>
+<div class="response"><label for="probe">音量映射预览</label><output for="probe" id="readout"></output><div class="probe-slider"><input type="range" id="probe" aria-label="预览发送端音量" min="0" max="100" value="50"></div></div>
 </div>
 <div class="plot"><div class="axis">音箱输出幅度</div><canvas id="graph" tabindex="0" aria-label="音量响应曲线，自定义模式可拖动控制点"></canvas><div class="x-axis">发送端音量</div></div>
 <div id="custom" hidden><div class="toolbar"><strong>控制点</strong><button type="button" id="add">添加点</button><button type="button" id="reset">重置</button></div><div id="points"></div></div>

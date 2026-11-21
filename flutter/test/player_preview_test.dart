@@ -9,7 +9,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:fusionplay_android_flutter/models/app_state.dart';
 import 'package:fusionplay_android_flutter/ui/artwork.dart';
-import 'package:fusionplay_android_flutter/ui/glass_backdrop.dart';
+import 'package:fusionplay_android_flutter/ui/glass_appearance.dart';
 import 'package:fusionplay_android_flutter/ui/player_view.dart';
 
 final String _coverData =
@@ -74,8 +74,7 @@ Widget _host({
       backgroundColor: const Color(0xFF0B0D11),
       body: RepaintBoundary(
         key: boundaryKey,
-        child: GlassBackdropScope(
-          revision: 'preview',
+        child: FrostedScene(
           background: Stack(
             fit: StackFit.expand,
             children: [

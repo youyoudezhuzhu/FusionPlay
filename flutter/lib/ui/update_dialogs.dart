@@ -4,7 +4,7 @@ import 'package:flutter/material.dart';
 
 import '../backend/update_service.dart';
 import '../theme/fusion_theme.dart';
-import 'liquid_glass.dart';
+import 'frosted_glass.dart';
 
 /// Shared in-app update flow (progress → result → install) used by both the
 /// settings page row and the three-dot action menu.

@@ -54,7 +54,7 @@ abstract final class FusionColors {
 /// Panel materials also exported to fnOS HTML by tools/sync_web_theme.py.
 abstract final class FusionGlassColors {
   static const settingsTint = Color(0x72181A26);
-  static const popupTint = Color(0x84191B28);
+  static const popupTint = Color(0x99191B28);
   static const solidPanel = Color(0xFF252530);
   static const panelBlur = 24.0;
   // Darken blend leaves channels below the knee unchanged. The artwork card

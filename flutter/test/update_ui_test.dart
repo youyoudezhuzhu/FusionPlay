@@ -4,7 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:fusionplay_android_flutter/backend/update_service.dart';
 import 'package:fusionplay_android_flutter/models/app_state.dart';
-import 'package:fusionplay_android_flutter/ui/liquid_glass.dart';
+import 'package:fusionplay_android_flutter/ui/frosted_glass.dart';
 import 'package:fusionplay_android_flutter/ui/settings_view.dart';
 
 Future<void> _pumpSettings(

@@ -8,7 +8,7 @@ import 'package:fusionplay_android_flutter/backend/update_service.dart';
 import 'package:fusionplay_android_flutter/main.dart';
 import 'package:fusionplay_android_flutter/models/app_state.dart';
 import 'package:fusionplay_android_flutter/theme/fusion_theme.dart';
-import 'package:fusionplay_android_flutter/ui/liquid_glass.dart';
+import 'package:fusionplay_android_flutter/ui/frosted_glass.dart';
 import 'package:fusionplay_android_flutter/ui/app_menu.dart';
 import 'package:fusionplay_android_flutter/ui/artwork.dart';
 import 'package:fusionplay_android_flutter/ui/settings_view.dart';
@@ -71,7 +71,6 @@ Future<void> _pumpHome(
         controller: controller,
         state: _state(advancedEffects: advancedEffects),
         isAndroid: isAndroid,
-        forceGlassFallback: true,
       ),
     ),
   );
@@ -119,7 +118,6 @@ void main() {
               streamActive: true,
             ),
           ),
-          forceGlassFallback: true,
         ),
       ),
     );
@@ -175,7 +173,6 @@ void main() {
           onDismiss: () {},
           onClosed: () {},
           onSettingsClose: () {},
-          forceFallback: true,
         ),
       ),
     );
@@ -200,7 +197,7 @@ void main() {
     expect(find.text('导出日志'), findsOneWidget);
     expect(find.text('关于'), findsOneWidget);
     expect(find.text('检查更新'), findsNothing);
-    expect(find.byType(LiquidGlass), findsWidgets);
+    expect(find.byType(FrostedGlass), findsWidgets);
     // 焦点进入菜单第一项。
     expect(FocusManager.instance.primaryFocus?.debugLabel, 'menu-item-0');
     expect(tester.takeException(), isNull);
@@ -262,7 +259,6 @@ void main() {
           controller: errorController,
           state: const AppState(initialized: true, lastError: '同步妙播音量失败'),
           isAndroid: false,
-          forceGlassFallback: true,
         ),
       ),
     );
@@ -270,7 +266,7 @@ void main() {
     final toast = find.byKey(const ValueKey('error-toast'));
     expect(toast, findsOneWidget);
     expect(find.text('同步妙播音量失败'), findsOneWidget);
-    final glass = tester.widget<LiquidGlass>(toast);
+    final glass = tester.widget<FrostedGlass>(toast);
     expect(glass.level, GlassLevel.panel);
     expect(tester.takeException(), isNull);
   });
@@ -458,7 +454,12 @@ void main() {
     final about = find.byKey(const ValueKey('about-dialog'));
     expect(about, findsOneWidget);
     expect(
-      find.descendant(of: about, matching: find.byType(BackdropFilter)),
+      find.descendant(
+        of: about,
+        matching: find.byWidgetPredicate(
+          (w) => w is BackdropFilter && w.enabled,
+        ),
+      ),
       findsNothing,
     );
     expect(
@@ -547,7 +548,7 @@ void main() {
     expect(menuRect.right, closeTo(buttonRect.right, .01));
     expect(menuRect.top, closeTo(buttonRect.top, .01));
     expect(menuRect.height, closeTo(3 * 46 + 20, .01));
-    final container = tester.widget<LiquidGlass>(
+    final container = tester.widget<FrostedGlass>(
       find.byKey(const ValueKey('morph-container')),
     );
     expect(container.borderRadius, closeTo(buttonRect.height / 2, .01));
@@ -716,6 +717,5 @@ class _ErrorToastHostState extends State<_ErrorToastHost> {
     controller: widget.controller,
     state: AppState(initialized: true, lastError: _error),
     isAndroid: false,
-    forceGlassFallback: true,
   );
 }
