@@ -889,22 +889,12 @@ fn handle_miplay_event(value: Value, state: SharedState, sink: Arc<EngineSink>) 
         }
         "media_info" => {
             let mut runtime = state.state.write().unwrap();
-            let media = crate::state::MediaInfo {
-                title: text("title"), artist: text("artist"), album: text("album"),
-                lyrics_text: text("lyrics"), cover_url: text("artwork"),
-                duration_ms: value["duration_ms"].as_u64(),
-                position_ms: value["position_ms"].as_u64(),
-                ..Default::default()
-            };
-            if runtime.current_source.as_deref() == Some("miplay") {
-                let codec = runtime.media.detail_codec.take();
-                runtime.media = media;
-                runtime.media.detail_codec = codec;
+            let media = if runtime.current_source.as_deref() == Some("miplay") {
+                &mut runtime.media
             } else {
-                let mut media = media;
-                media.detail_codec = runtime.pending_miplay.take().and_then(|previous| previous.detail_codec);
-                runtime.pending_miplay = Some(media);
-            }
+                runtime.pending_miplay.get_or_insert_with(Default::default)
+            };
+            media.update_miplay(&value);
         }
         "progress" | "volume" => {
             let mut runtime = state.state.write().unwrap();
@@ -1111,6 +1101,13 @@ mod tests {
             MiPlayPcmOutput::write(sink.as_ref(), 1.0, 48000, 2, &[0.; 128]);
             assert_eq!(state.snapshot().media.lyrics_text.as_deref(), Some(name));
         }
+        handle_miplay_event(serde_json::json!({"event":"media_info","lyrics":"Second line","duration_ms":0}),
+            study.clone(), first_sink.clone());
+        assert_eq!(study.snapshot().media.title.as_deref(), Some("Study"));
+        assert_eq!(study.snapshot().media.lyrics_text.as_deref(), Some("Second line"));
+        handle_miplay_event(serde_json::json!({"event":"media_info","title":"Next song","track_id":"song-2"}),
+            study.clone(), first_sink.clone());
+        assert!(study.snapshot().media.lyrics_text.is_none());
         handle_core_event(serde_json::json!({"type":"source_takeover","source":"airplay"}).to_string(),
             study.clone(), first_dlna.clone());
         handle_core_event(serde_json::json!({"type":"now_playing","source":"airplay","title":"New song",

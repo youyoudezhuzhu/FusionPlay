@@ -17,6 +17,8 @@ pub struct ProtocolRuntime {
 
 #[derive(Debug, Clone, Default, Serialize)]
 pub struct MediaInfo {
+    #[serde(skip)]
+    miplay_track_id: Option<String>,
     pub title: Option<String>,
     pub artist: Option<String>,
     pub album: Option<String>,
@@ -25,6 +27,34 @@ pub struct MediaInfo {
     pub duration_ms: Option<u64>,
     pub detail_codec: Option<String>,
     pub lyrics_text: Option<String>,
+}
+
+impl MediaInfo {
+    // SDK field updates may contain only lyrics or timing. Its "metadata:"
+    // IDs are derived from optional display fields and can change when those
+    // fields arrive in separate messages.
+    pub(crate) fn update_miplay(&mut self, value: &serde_json::Value) {
+        let text = |key: &str| value[key].as_str().filter(|s| !s.trim().is_empty());
+        let id = text("track_id").filter(|id| !id.starts_with("metadata:"));
+        let title = text("title");
+        let artist = text("artist");
+        let changes = |old: Option<&str>, new: Option<&str>| old.zip(new).is_some_and(|(a, b)| a != b);
+        let changed = match self.miplay_track_id.as_deref().zip(id) {
+            Some((a, b)) => a != b,
+            None => changes(self.title.as_deref(), title) || changes(self.artist.as_deref(), artist),
+        };
+        if changed {
+            *self = Self { detail_codec: self.detail_codec.take(), ..Default::default() };
+        }
+        if let Some(id) = id { self.miplay_track_id = Some(id.to_owned()); }
+        if let Some(title) = title { self.title = Some(title.to_owned()); }
+        if let Some(artist) = artist { self.artist = Some(artist.to_owned()); }
+        if let Some(album) = text("album") { self.album = Some(album.to_owned()); }
+        if let Some(lyrics) = text("lyrics") { self.lyrics_text = Some(lyrics.to_owned()); }
+        if let Some(art) = text("artwork") { self.cover_url = Some(art.to_owned()); }
+        if let Some(ms) = value["duration_ms"].as_u64().filter(|ms| *ms > 0) { self.duration_ms = Some(ms); }
+        if let Some(ms) = value["position_ms"].as_u64() { self.position_ms = Some(ms); }
+    }
 }
 
 #[derive(Debug, Clone, Default, Serialize)]
