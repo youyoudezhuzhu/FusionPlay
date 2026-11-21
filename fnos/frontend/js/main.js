@@ -8,8 +8,8 @@ window.FP = window.FP || {};
 (function (FP) {
   const u = FP.util;
 
-  const ROUTES = ['overview', 'audio', 'receive', 'settings'];
-  const TITLES = { overview: '概览', audio: '音频', receive: '接收', settings: '设置' };
+  const ROUTES = ['overview', 'audio', 'receive', 'settings', 'curve'];
+  const TITLES = { overview: '概览', audio: '音频', curve: '音箱音量曲线', receive: '接收', settings: '设置' };
   const THEMES = ['system', 'light', 'dark'];
   const THEME_LABELS = { system: '跟随系统', light: '浅色', dark: '深色' };
   const THEME_ICONS = { system: 'auto', light: 'sun', dark: 'moon' };
@@ -320,10 +320,15 @@ window.FP = window.FP || {};
     if (pollBusy || store.isSaving()) return;
     pollBusy = true;
     try {
-      const results = await Promise.allSettled([FP.api.health(), FP.api.status(), FP.api.config()]);
+      const fetches = [FP.api.health(), FP.api.status(), FP.api.config()];
+      const dedicated = originId && originId !== 'default';
+      if (dedicated && /^[a-z0-9-]{1,40}$/.test(originId)) fetches.push(FP.api.status(originId));
+      const results = await Promise.allSettled(fetches);
       const health = results[0].status === 'fulfilled' ? results[0].value : null;
       const status = results[1].status === 'fulfilled' ? results[1].value : null;
       const config = results[2].status === 'fulfilled' ? results[2].value : null;
+      const scene = dedicated ? results[3]?.value : status;
+      updateArtwork(health ? scene : null, dedicated ? originId : null);
       if (!health) {
         setConnected(false);
       } else {
@@ -361,7 +366,7 @@ window.FP = window.FP || {};
     }
     ROUTES.forEach(function (name) {
       const section = el('page-' + name);
-      if (section) section.hidden = name !== route;
+      if (section) section.hidden = name !== (route === 'curve' ? 'audio' : route);
     });
     u.qsa('.nav-link').forEach(function (link) {
       if (link.dataset.route === route) link.setAttribute('aria-current', 'page');
@@ -391,11 +396,6 @@ window.FP = window.FP || {};
       if (!document.hidden) refreshCore();
     });
     store.subscribe(function (reason) {
-      if (reason === 'remote' || reason === 'baseline') {
-        const base = store.state.baseline;
-        const showPrimaryArt = base && FP.primaryActive(base.audio) && (!originId || originId === 'default');
-        updateArtwork(showPrimaryArt ? store.state.status : null);
-      }
       if (reason === 'dirty' || reason === 'revert') saveError = '';
       updateSavebar();
     });
@@ -427,6 +427,7 @@ window.FP = window.FP || {};
       receive: FP.createReceivePage(ctx),
       settings: FP.createSettingsPage(ctx)
     };
+    pages.curve = pages.audio;
     updateServiceStatus();
     navigate();
     updateSavebar();

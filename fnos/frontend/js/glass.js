@@ -88,8 +88,11 @@ FP.initGlass = function () {
     }));
     document.querySelectorAll('.card:not(.now-card), .savebar, .app-header, .toast').forEach(p => visibility.observe(p));
   }
-  return function updateArtwork(status) {
-    const url = status && status.current_source && status.media && status.media.cover_url || '';
+  return function updateArtwork(status, instance) {
+    let url = status && status.current_source && status.media && status.media.cover_url || '';
+    if (instance && url.startsWith('artwork/')) {
+      url = FP.apiUrl('/api/instances/' + encodeURIComponent(instance) + '/' + url);
+    }
     if (url === lastArt) return;
     lastArt = url;
     art.hidden = true;

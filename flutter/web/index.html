@@ -1,11 +1,11 @@
 <!doctype html>
 <html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>播放器 · FusionPlay</title>
 <style>body{margin:0;background:#181821;color:white;font:16px system-ui}main{padding:24px}a{color:inherit}</style></head>
-<body><main id="loading">正在打开播放器… <a id="settings" href="../index.html#/audio">设置</a></main>
+<body><main id="loading">正在打开播放器… <a id="settings" href="../index.html#/settings">设置</a></main>
 <script>
 const settings = new URL('../index.html', location.href);
 settings.search = location.search;
-settings.hash = '/audio';
+settings.hash = '/settings';
 document.getElementById('settings').href = settings.href;
 window.fpRead = async url => {
   const response = await fetch(url, {cache: 'no-store'});

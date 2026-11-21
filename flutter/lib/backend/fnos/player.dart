@@ -9,6 +9,7 @@ import '../../theme/fusion_theme.dart';
 import '../../ui/app_menu.dart';
 import '../../ui/artwork.dart';
 import '../../ui/glass_backdrop.dart';
+import '../../ui/liquid_glass.dart';
 import '../../ui/player_view.dart';
 import '../../ui/vector_icon.dart';
 import 'lyrics.dart';
@@ -177,17 +178,22 @@ class _ReceiverState extends State<_Receiver> {
 
   final menuKey = GlobalKey();
   final menuFocus = FocusNode();
+  final speakerKey = GlobalKey();
+  final speakerFocus = FocusNode();
+  bool speakerMenu = false;
   final pickerFocus = FocusNode();
-  final menuNodes = List.generate(2, (_) => FocusNode());
+  final menuNodes = List.generate(3, (_) => FocusNode());
   MorphStage? stage;
   Rect? anchor;
   Uri? destination;
 
-  void menu() {
-    final box = menuKey.currentContext?.findRenderObject();
+  void menu({bool forSpeakers = false}) {
+    final trigger = forSpeakers ? speakerKey : menuKey;
+    final box = trigger.currentContext?.findRenderObject();
     if (box is! RenderBox || stage != null) return;
     refreshSpeakers();
     setState(() {
+      speakerMenu = forSpeakers;
       anchor = box.localToGlobal(Offset.zero) & box.size;
       stage = MorphStage.menu;
     });
@@ -207,7 +213,7 @@ class _ReceiverState extends State<_Receiver> {
     if (destination case final Uri route) {
       _navigate(route.toString().toJS);
     } else {
-      menuFocus.requestFocus();
+      (speakerMenu ? speakerFocus : menuFocus).requestFocus();
     }
   }
 
@@ -236,7 +242,7 @@ class _ReceiverState extends State<_Receiver> {
                   onOpenMenu: menu,
                   menuButtonKey: menuKey,
                   menuFocusNode: menuFocus,
-                  menuOpen: stage == MorphStage.menu,
+                  menuOpen: !speakerMenu && stage == MorphStage.menu,
                   overlayOpen: stage != null,
                   volumeEnabled: volume && !offline,
                   onPlayback: (action) => send(
@@ -248,6 +254,40 @@ class _ReceiverState extends State<_Receiver> {
                   ),
                   onSeek: (ms) => send('seek', ms),
                   onVolume: (percent) => send('set_volume', percent),
+                ),
+              ),
+              Positioned(
+                right: 8,
+                bottom: 8,
+                child: SafeArea(
+                  child: ExcludeFocus(
+                    excluding: stage != null,
+                    child: IgnorePointer(
+                      ignoring: stage != null,
+                      child: Opacity(
+                        opacity: speakerMenu && stage != null ? 0 : 1,
+                        child: SizedBox.square(
+                          key: speakerKey,
+                          dimension: 44,
+                          child: LiquidGlass(
+                            borderRadius: 22,
+                            interactive: true,
+                            child: IconButton(
+                              tooltip: '飞牛音箱',
+                              focusNode: speakerFocus,
+                              onPressed: () => menu(forSpeakers: true),
+                              icon: Image.network(
+                                Uri.base.resolve('fnos-mark.png').toString(),
+                                width: 23,
+                                height: 23,
+                                excludeFromSemantics: true,
+                              ),
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
                 ),
               ),
               if (stage != null)
@@ -266,26 +306,44 @@ class _ReceiverState extends State<_Receiver> {
                     anchorRect: anchor!,
                     menuFocusNodes: menuNodes,
                     menuItems: [
-                      FusionMenuItem(
-                        icon: const FusionVectorIcon(
-                          FusionIcons.settings,
-                          size: 19,
-                          color: Colors.white,
-                        ),
-                        label: '设置',
-                        onSelected: () => closeMenu(location.settings),
-                      ),
-                      if (speakers.length > 1 || missing)
+                      if (speakerMenu) ...[
                         FusionMenuItem(
                           icon: const Icon(Icons.speaker_group_rounded),
                           label: '切换音箱',
                           onSelected: () =>
                               setState(() => stage = MorphStage.settings),
                         ),
+                        FusionMenuItem(
+                          icon: const Icon(Icons.tune_rounded),
+                          label: '音箱音量曲线',
+                          onSelected: () => closeMenu(location.volumeCurve),
+                        ),
+                        FusionMenuItem(
+                          icon: const Icon(Icons.add_rounded),
+                          label: '新建实例',
+                          onSelected: () => closeMenu(location.createInstance),
+                        ),
+                      ] else
+                        FusionMenuItem(
+                          icon: const FusionVectorIcon(
+                            FusionIcons.settings,
+                            size: 19,
+                            color: Colors.white,
+                          ),
+                          label: '设置',
+                          onSelected: () => closeMenu(location.settings),
+                        ),
                     ],
+                    settingsMinWidth: 300,
                     settingsTitle: '选择播放音箱',
                     settingsChild: Column(
                       children: [
+                        if (speakers.isEmpty)
+                          TextButton(
+                            focusNode: pickerFocus,
+                            onPressed: refreshSpeakers,
+                            child: const Text('重新获取音箱'),
+                          ),
                         for (final entry in speakers.entries)
                           ListTile(
                             focusNode:
@@ -326,7 +384,7 @@ class _ReceiverState extends State<_Receiver> {
                 Align(
                   alignment: Alignment.bottomCenter,
                   child: Text(
-                    missing ? '此音箱已移除，可从菜单切换音箱' : '接收器连接中断，正在重连',
+                    missing ? '此音箱已移除，请在右下角切换音箱' : '接收器连接中断，正在重连',
                     style: const TextStyle(color: Colors.white),
                   ),
                 ),
@@ -341,6 +399,7 @@ class _ReceiverState extends State<_Receiver> {
   void dispose() {
     timer?.cancel();
     menuFocus.dispose();
+    speakerFocus.dispose();
     pickerFocus.dispose();
     for (final node in menuNodes) {
       node.dispose();

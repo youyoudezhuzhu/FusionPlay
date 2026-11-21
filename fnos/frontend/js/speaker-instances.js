@@ -67,6 +67,12 @@ window.FP.createSpeakerSettings = function (ctx, renderAudio) {
     const draft = store.getDraft();
     if (!draft) return;
     byId('new-instance').disabled = false;
+    const url = new URL(location.href);
+    if (url.searchParams.get('action') === 'new-instance') {
+      url.searchParams.delete('action');
+      history.replaceState(history.state, '', url);
+      open(null);
+    }
     const outputs = devices();
     if (!form.hidden) renderOptions(outputs);
     const saved = (store.state.baseline.audio.instances || []).map(s => s.id);

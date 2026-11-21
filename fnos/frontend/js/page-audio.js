@@ -17,6 +17,9 @@ window.FP = window.FP || {};
     let active = false;
     let chart = null;
     let selectedId = null;
+    let curveOnly = false;
+    let curveChoicesKey;
+    const originId = new URLSearchParams(location.search).get('instance');
     let pendingDeleteId = null;
     let deleteTimer = null;
     let refreshing = false;
@@ -92,6 +95,31 @@ window.FP = window.FP || {};
       if (speaker) parts.push(speaker.name);
       else if (!device.enabled) parts.push('主接收器未启用');
       return parts.join(' · ');
+    }
+
+    function selectCurveTarget() {
+      const audio = store.getDraft()?.audio;
+      const instance = audio?.instances?.find(s => s.id === originId);
+      const outputs = draftDevices().filter(d => originId === 'default'
+        ? d.enabled : instance && instance.device_id === d.id);
+      const select = el('curve-device');
+      const key = JSON.stringify(outputs.map(d => [d.id, d.name]));
+      if (key !== curveChoicesKey) {
+        curveChoicesKey = key;
+        select.replaceChildren(new Option('请选择', ''), ...outputs.map(d =>
+          new Option(d.name || d.id, d.id)));
+      }
+      const id = outputs.length === 1 ? outputs[0].id :
+        outputs.some(d => d.id === selectedId) ? selectedId : null;
+      if (id !== selectedId) resetPreview();
+      selectedId = id;
+      select.value = id || '';
+      el('curve-target').hidden = outputs.length < 2;
+      renderPanel();
+      if (!selectedId) {
+        u.setText(el('audio-empty-sub'), !audio ? '正在加载配置…' :
+          outputs.length ? '请选择要调整音量曲线的输出音箱。' : '此播放器没有已分配的输出音箱。');
+      }
     }
 
     function ensureSelection() {
@@ -619,6 +647,10 @@ window.FP = window.FP || {};
 
     function render() {
       if (!active) return;
+      if (curveOnly) {
+        selectCurveTarget();
+        return;
+      }
       ensureSelection();
       renderDeviceList();
       renderGroups();
@@ -854,6 +886,12 @@ window.FP = window.FP || {};
         store.setDeviceField(selectedId, 'sample_rate', Math.max(0, Math.round(u.finite(el('audio-rate').value, 0))));
       });
 
+      el('curve-device').addEventListener('change', event => {
+        selectedId = event.target.value || null;
+        resetPreview();
+        render();
+      });
+
       el('curve-presets').addEventListener('click', function (event) {
         const button = event.target.closest('button[data-curve-kind]');
         if (button) setCurveKind(button.dataset.curveKind);
@@ -897,9 +935,13 @@ window.FP = window.FP || {};
     return {
       enter: function () {
         active = true;
+        curveOnly = location.hash === '#/curve';
+        el('page-audio').classList.toggle('curve-only', curveOnly);
+        u.setText(el('audio-title'), curveOnly ? '音箱音量曲线' : '音频');
+        el('curve-target').hidden = true;
+        if (curveOnly) selectedId = null;
         bind();
         document.body.classList.remove('audio-detail-open');
-        ensureSelection();
         render();
         loadDiscovery(true);
       },

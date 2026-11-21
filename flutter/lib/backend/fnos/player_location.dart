@@ -39,8 +39,15 @@ class SpeakerPlayerLocation {
       .resolve('index.html')
       .replace(
         queryParameters: pinned ? {'instance': id} : null,
-        fragment: '/audio',
+        fragment: '/settings',
       );
+
+  Uri get volumeCurve => settings.replace(fragment: '/curve');
+
+  Uri get createInstance => settings.replace(
+    queryParameters: {...settings.queryParameters, 'action': 'new-instance'},
+    fragment: '/audio',
+  );
 
   Uri select(String nextId) => page.replace(
     queryParameters: {...page.queryParameters, 'instance': nextId},

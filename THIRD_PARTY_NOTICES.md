@@ -44,3 +44,7 @@ DLNA 宿主播放器新增的 TLS 传输依赖：`rustls`（Apache-2.0/MIT/ISC �
 - 路径：`flutter/third_party/liquid_glass_widgets/`
 - 许可证：MIT，Copyright (c) 2024 Sebastian Degenaar；全文见该目录 `LICENSE`。
 - 本地兼容性修改：移除 4 处 Flutter 3.32 不支持的 `filterQuality:` 参数；通过 `dependency_overrides` 固定 `vector_math 2.3.0`。未改写 shader 算法或视觉参数。
+
+## 飞牛平台标识
+
+飞牛播放器入口使用飞牛官网站点图标中的白色图形识别 fnOS 平台。标识权利归原权利人。图形随 Web 播放器本地打包。[原图](https://www.fnnas.com/favicon.ico)

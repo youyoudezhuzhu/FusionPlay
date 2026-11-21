@@ -21,7 +21,14 @@ void main() {
           'https://sender/art.png',
         );
         expect(location.settings.queryParameters['instance'], id);
-        expect(location.settings.fragment, '/audio');
+        expect(location.settings.fragment, '/settings');
+        expect(location.volumeCurve.fragment, '/curve');
+        expect(location.volumeCurve.queryParameters['instance'], id);
+        expect(location.createInstance.fragment, '/audio');
+        expect(location.createInstance.queryParameters, {
+          'action': 'new-instance',
+          'instance': id,
+        });
         expect(SpeakerPlayerLocation(location.select('kitchen')).id, 'kitchen');
         expect(location.id, id);
       },

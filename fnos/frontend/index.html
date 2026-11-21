@@ -271,6 +271,10 @@ try {
       <p class="page-sub">为音箱分配接收器，调整输出音量与播放同步。</p>
     </div>
 
+    <div id="curve-target" class="card" hidden>
+      <label for="curve-device">选择要调整的音箱</label>
+      <select id="curve-device"></select>
+    </div>
     <div class="audio-layout">
       <div class="audio-col audio-col-left">
         <article class="card" aria-labelledby="speaker-instances-title">
@@ -359,7 +363,7 @@ try {
             </div>
           </div>
 
-          <section class="panel-section">
+          <section class="panel-section calibration">
             <h3 class="section-title">音频校准</h3>
             <div class="field">
               <div class="field-head">

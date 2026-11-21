@@ -426,7 +426,10 @@ window.FP = window.FP || {};
 
   const api = {
     health: function () { return request('GET', '/healthz', undefined, 6000); },
-    status: function () { return request('GET', '/api/status', undefined, 9000); },
+    status: function (instance) {
+      const path = instance ? '/api/instances/' + encodeURIComponent(instance) + '/status' : '/api/status';
+      return request('GET', path, undefined, 9000);
+    },
     config: function () { return request('GET', '/api/config', undefined, 9000); },
     saveConfig: function (config) { return request('PUT', '/api/config', config, 45000); },
     devices: function () { return request('GET', '/api/devices', undefined, 10000); },

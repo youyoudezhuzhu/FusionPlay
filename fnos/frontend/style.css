@@ -1213,3 +1213,26 @@ body { isolation: isolate; }
 .instance-info .hint, #instance-form .hint { margin: 0; }
 #instance-form:not([hidden]) { display: grid; gap: .5rem; margin-top: .75rem; }
 #instance-form input, #instance-form select { width: 100%; min-width: 0; padding: .55rem; color: var(--text); font: inherit; border: 1px solid var(--border); border-radius: 8px; }
+
+/* The form shares its panel's refracted backdrop. A translucent inset marks
+   the editing area without sampling the parent glass a second time. */
+#instance-form:not([hidden]) {
+  padding: 14px;
+  background: var(--glass-field, var(--surface-2));
+  border: 1px solid var(--glass-edge, var(--border));
+  border-radius: var(--fusion-card-radius, 15px);
+}
+
+.curve-only .page-sub, .curve-only .audio-col-left, .curve-only #audio-back,
+.curve-only .device-panel > .panel-section:not(.calibration),
+.curve-only .device-panel > details,
+.curve-only .calibration > :not(.curve-field) { display: none; }
+.curve-only .audio-layout { display: block; }
+.curve-only .audio-col-right { display: flex; }
+.curve-only .audio-layout, #curve-target { max-width: 720px; margin-inline: auto; }
+#curve-target:not([hidden]) { display: flex; align-items: center; flex-wrap: wrap; gap: 12px; margin-bottom: 12px; }
+#curve-target select { max-width: 100%; font: inherit; color: var(--text); border-radius: 8px; padding: 6px; }
+.curve-only .curve-chart, .curve-only .segmented {
+  background: var(--glass-field, var(--surface-2));
+  border-color: var(--glass-edge, var(--border));
+}
