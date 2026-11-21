@@ -743,6 +743,7 @@ dependencies = [
  "cpal",
  "fusionplay-miplay-sdk",
  "if-addrs 0.15.0",
+ "regex-lite",
  "rubato",
  "rustls",
  "serde",

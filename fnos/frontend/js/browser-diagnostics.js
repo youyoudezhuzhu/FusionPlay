@@ -21,8 +21,8 @@
       const room = new URLSearchParams(location.search).get('instance') || 'default';
       const page = location.pathname.split('/').pop();
       const text = '[' + page + ' ' + (/^[a-z0-9-]{1,40}$/.test(room) ? room : '?') + '] ' +
-        String(message).slice(0, 2400).replace(/(?:https?:\/\/|data:)\S+/gi, '<URL>')
-          .replace(/(?:password|token|authorization|cookie)\s*[:=]\s*[^\s,;]+/gi, '<redacted>');
+        String(message).slice(0, 2400).replace(/(?:(?:https?|rtsp|file):\/\/|data:)\S+/gi, '<URL>')
+          .replace(/(?:authorization|cookie)\s*[:=]\s*[^\r\n]+|(?:password|token|secret)\s*[:=]\s*[^\s,;]+/gi, '<redacted>');
       const last = records[records.length - 1];
       if (last && last.text === text && Date.now() - last.time < 30000) return;
       records.push({time: Date.now(), text});

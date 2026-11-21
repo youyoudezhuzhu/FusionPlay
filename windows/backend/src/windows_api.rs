@@ -263,7 +263,7 @@ pub fn export_diagnostics(
             }
         }
     }
-    std::fs::write(&path, report)
+    std::fs::write(&path, crate::shared_logging::redact(&report).as_bytes())
         .map_err(|error| anyhow::anyhow!("无法写入诊断文件 {}：{error}", path.display()))?;
     clean_exports(&exports_dir);
     tracing::info!("诊断包已导出：{}", path.display());

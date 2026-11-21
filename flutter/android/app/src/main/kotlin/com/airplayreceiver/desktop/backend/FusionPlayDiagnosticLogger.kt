@@ -559,6 +559,7 @@ class FusionPlayDiagnosticLogger(
             .replace(IPV4_PATTERN, "<IP_ADDRESS>")
             .replace(MAC_ADDRESS_PATTERN, "<MAC_ADDRESS>")
             .replace(URL_PATTERN, "<URL>")
+            .replace(HEADER_PATTERN, "<REDACTED>")
             .replace(SECRET_PATTERN, "$1=<REDACTED>")
     }
 
@@ -593,6 +594,7 @@ class FusionPlayDiagnosticLogger(
             )
         private val URL_PATTERN =
             Regex("""(?i)\b(?:https?|rtsp)://[^\s"']+""")
+        private val HEADER_PATTERN = Regex("""(?i)\b(?:authorization|cookie)\s*[:=]\s*[^\r\n]+""")
         private val SECRET_PATTERN =
             Regex(
                 """(?i)\b(password|token|authorization|cookie|account)""" +

@@ -15,6 +15,7 @@ name = "fusionplay-fnos"
 path = "src/main.rs"
 
 [dependencies]
+regex-lite = "0.1"
 airplay-receiver-core = { path = "../../src/AirPlayReceiver.Core" }
 fusionplay-miplay-sdk = { path = "../../src/FusionPlay.MiPlaySdk" }
 alsa = "0.9"

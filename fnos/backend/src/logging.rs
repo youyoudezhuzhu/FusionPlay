@@ -133,7 +133,7 @@ pub fn export_report(dir: &Path, speakers: &[SpeakerInstance]) -> String {
     let mut section = |label: &str, file: PathBuf| {
         report.push_str(&format!("\n--- {label} ---\n"));
         match shared_logging::read_tail(&file, budget) {
-            Ok(data) => report.push_str(&String::from_utf8_lossy(&data)),
+            Ok(data) => report.push_str(&shared_logging::redact(&String::from_utf8_lossy(&data))),
             Err(e) => report.push_str(&format!("无法读取日志 ({})", e.kind())),
         }
         report.push('\n');

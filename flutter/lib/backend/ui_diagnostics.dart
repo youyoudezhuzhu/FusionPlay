@@ -38,12 +38,15 @@ String sanitizeDiagnostic(String text, int limit) {
   final prefix = text.length > limit ? text.substring(0, limit) : text;
   return prefix
       .replaceAll(
-        RegExp(r'(?:https?://|data:)[^\s]+', caseSensitive: false),
+        RegExp(
+          r'(?:(?:https?|rtsp|file)://|data:)[^\s]+',
+          caseSensitive: false,
+        ),
         '<URL>',
       )
       .replaceAll(
         RegExp(
-          r'(?:password|token|authorization|cookie)\s*[:=]\s*[^\s,;]+',
+          r'(?:authorization|cookie)\s*[:=]\s*[^\r\n]+|(?:password|token|secret)\s*[:=]\s*[^\s,;]+',
           caseSensitive: false,
         ),
         '<redacted>',

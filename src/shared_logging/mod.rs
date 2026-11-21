@@ -11,6 +11,15 @@ pub const MIB: u64 = 1024 * 1024;
 pub const IDLE_RETENTION: Duration = Duration::from_secs(7 * 86400);
 const MAX_RECORD: usize = 16 * 1024;
 
+/// Drop request URLs and authentication values while preserving error type and context.
+pub fn redact(text: &str) -> std::borrow::Cow<'_, str> {
+    static PATTERN: std::sync::OnceLock<regex_lite::Regex> = std::sync::OnceLock::new();
+    let pattern = PATTERN.get_or_init(|| regex_lite::Regex::new(
+        r#"(?i)(?:https?|rtsp|file)://[^\s"<>]+|data:[^\s"<>]+|(?:authorization|cookie)\s*[:=]\s*[^\r\n]+|(?:password|token|secret)\s*[:=]\s*[^\s,;]+"#
+    ).expect("constant diagnostic redaction pattern"));
+    pattern.replace_all(text, "<redacted>")
+}
+
 pub fn read_tail(path: &Path, bytes: u64) -> io::Result<Vec<u8>> {
     let mut file = File::open(path)?;
     tail(&mut file, bytes)
@@ -115,6 +124,13 @@ impl DiagnosticFiles {
     }
 
     pub fn append(&self, bytes: &[u8], important: bool) -> io::Result<()> {
+        let clipped = bytes.len() > MAX_RECORD;
+        let prefix = String::from_utf8_lossy(&bytes[..bytes.len().min(MAX_RECORD)]);
+        let mut safe = redact(&prefix);
+        if clipped {
+            safe.to_mut().push_str(" [truncated]\n");
+        }
+        let bytes = safe.as_bytes();
         let history = if important {
             self.errors.append(bytes)
         } else {
@@ -161,6 +177,15 @@ impl Write for EventWriter<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn redaction_retains_the_failure_and_removes_credentials() {
+        let line = "DLNA HTTP 403 https://host/track?token=abc\nAuthorization: Bearer private-value\nPANIC at player";
+        assert_eq!(
+            redact(line),
+            "DLNA HTTP 403 <redacted>\n<redacted>\nPANIC at player"
+        );
+    }
+
     #[test]
     fn background_error_survives_info_flood_and_preserves_inode() {
         use tracing_subscriber::fmt::MakeWriter;
