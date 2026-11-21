@@ -242,13 +242,10 @@ impl MockProvider {
     fn set_present(&self, id: &str, present: bool) {
         let runtime = self.runtime(id);
         runtime.present.store(present, Ordering::Release);
-        if present {
-            // Wake a sink blocked on the gate.
-            if let Ok(mut guard) = runtime.gate.lock() {
-                *guard = true;
-            }
-            runtime.gate_cv.notify_all();
-        }
+        // Presence and write permission are independent. A replugged device
+        // must keep its existing gate so the test can inspect the prefill
+        // before the first hardware write completes.
+        runtime.gate_cv.notify_all();
     }
 
     fn set_gate(&self, id: &str, open: bool) {
