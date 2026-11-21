@@ -30,7 +30,7 @@
 
 ## 如何验证一次共享修改
 
-拉取请求的 `.github/workflows/shared-platform-checks.yml` 针对相关路径运行只读检查。Linux 运行共用协议、飞牛宿主测试、Flutter 分析与测试，并编译飞牛实际使用的 Web 入口。Windows 运行侧车测试并编译 Flutter 桌面入口。Android 编译 arm64 调试 APK 并运行 Kotlin 单测。发版仍由各平台已有工作流负责。
+拉取请求的 `.github/workflows/shared-platform-checks.yml` 针对相关路径运行只读检查。Linux 运行共用协议、飞牛宿主测试、Flutter 分析与测试，并编译飞牛实际使用的 Web 入口。Windows 运行侧车测试并编译 Flutter 桌面入口。Android 编译 arm64 调试 APK 并运行 Kotlin 单测。三端发版与 PR 检查统一通过 `.github/actions/setup-flutter/action.yml` 选择 Flutter SDK 版本。发版仍由各平台已有工作流负责。
 
 本次在 Linux 本地复核了共享内核的外部 PCM 测试、Windows 侧车测试与命令行版本、飞牛宿主测试、Android 后端及更新模块的 JVM 单测，以及 Flutter 全量测试与飞牛 Web release 构建。飞牛真实 ALSA 设备测试需要连接声卡，桌面音量链路通过 PCM 接口测量。CI 每个宿主的具体结果以 PR 检查记录为准。
 

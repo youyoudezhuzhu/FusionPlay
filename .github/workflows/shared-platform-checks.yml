@@ -13,6 +13,7 @@ on:
       - 'VERSION'
       - 'INSTALLER_VERSION'
       - '.github/workflows/**'
+      - '.github/actions/**'
 
 permissions:
   contents: read
@@ -23,7 +24,6 @@ concurrency:
 
 env:
   RUSTUP_TOOLCHAIN: stable
-  FLUTTER_VERSION: '3.32.8'
 
 jobs:
   player-and-fnos:
@@ -38,10 +38,7 @@ jobs:
       - run: cargo test --locked --manifest-path src/AirPlayReceiver.Core/Cargo.toml --all-targets
       - run: cargo test --locked --manifest-path src/FusionPlay.MiPlaySdk/Cargo.toml --lib
       - run: cargo test --locked --manifest-path fnos/backend/Cargo.toml --all-targets
-      - uses: subosito/flutter-action@v2
-        with:
-          flutter-version: ${{ env.FLUTTER_VERSION }}
-          cache: true
+      - uses: ./.github/actions/setup-flutter
       - run: python3 tools/sync_web_theme.py --check
       - working-directory: flutter
         run: |
@@ -58,10 +55,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - run: cargo test --locked --manifest-path windows/backend/Cargo.toml --all-targets
-      - uses: subosito/flutter-action@v2
-        with:
-          flutter-version: ${{ env.FLUTTER_VERSION }}
-          cache: true
+      - uses: ./.github/actions/setup-flutter
       - working-directory: flutter
         run: flutter pub get --enforce-lockfile
       - working-directory: flutter
@@ -84,10 +78,7 @@ jobs:
       - run: echo "CARGO_HOME=$HOME/.cargo" >> "$GITHUB_ENV"
       - run: cargo install cargo-ndk --locked
       - run: '"$ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager" "platforms;android-36" "build-tools;36.0.0" "ndk;28.2.13676358"'
-      - uses: subosito/flutter-action@v2
-        with:
-          flutter-version: ${{ env.FLUTTER_VERSION }}
-          cache: true
+      - uses: ./.github/actions/setup-flutter
       - working-directory: flutter
         run: |
           flutter pub get --enforce-lockfile

@@ -336,11 +336,7 @@ jobs:
       # Flutter Windows application
       # ---------------------------------------------------------------------
       - name: Set up Flutter
-        uses: subosito/flutter-action@v2
-        with:
-          flutter-version: '3.32.8'
-          channel: stable
-          cache: true
+        uses: ./.github/actions/setup-flutter
 
       - name: Resolve Flutter dependencies
         working-directory: flutter
