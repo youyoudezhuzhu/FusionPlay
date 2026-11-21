@@ -2,14 +2,14 @@
   "schema_version": 1,
   "channel": "stable",
   "published": true,
-  "version_name": "1.7.10",
-  "version_code": 10710,
-  "sha256": "b7f321e5f68f1a1bd6c7db7133f0a3022536fa0ce2ba96a6e2a9aaf7056fcc62",
+  "version_name": "1.7.11",
+  "version_code": 10711,
+  "sha256": "49effa464a897db2dfb728f5cb6797cc26bad4646d9e0ed28187dd79325a9ef7",
   "signer_sha256": "4836fb96c2ef76fd81ac385455f1b0154af77fadae1b45bbb752b192499dc12f",
-  "apk_url": "https://youyoudezhuzhu.github.io/FusionPlay/update/android/dl/latest.apk?v=10710",
-  "apk_url_alt": "https://github.com/youyoudezhuzhu/FusionPlay/releases/download/v1.7.10/FusionPlay-Android-1.7.10.apk",
-  "apk_size": 12721523,
-  "source_commit": "faa721bb01b1710d3240642aac085a4db5f5f114",
-  "notes": "## FusionPlay 1.7.10\n\n- Windows 和飞牛修复妙播输出偶发插入静音的问题，并稳定音频输出节拍。\n- 飞牛修复 DLNA 快放、曲末状态、暂停后刷新元数据导致的重播，并支持在服务器允许时按字节续传。\n- 飞牛统一使用共享播放和设置界面。音箱输出校准、实例和音量曲线通过右下角飞牛菜单管理。\n- Android、Windows、飞牛 x64 和飞牛 ARM64 使用同一发布版本号。若旧版 Windows 或飞牛未提示更新，可在本页下载对应安装包手动覆盖安装。",
-  "published_at": "2026-11-21T07:34:17Z"
+  "apk_url": "https://youyoudezhuzhu.github.io/FusionPlay/update/android/dl/latest.apk?v=10711",
+  "apk_url_alt": "https://github.com/youyoudezhuzhu/FusionPlay/releases/download/v1.7.11/FusionPlay-Android-1.7.11.apk",
+  "apk_size": 12726397,
+  "source_commit": "0dd56f4b8bdc00b8e32f49bf70cb4b8e40605416",
+  "notes": "## FusionPlay 1.7.11\n\n- 改善播放器和飞牛设置在浅色、深色封面背景上的文字、图标与曲线可读性。\n- 统一飞牛专属界面与共享播放器的玻璃材质，关闭高级效果时使用实色界面。\n- 音量滑块恢复实心圆点，开启高级效果时由底部胶囊折射背景。\n- 改进安卓 DLNA 第一首歌的播放控制响应，并在可用时从音频文件读取内嵌封面。",
+  "published_at": "2026-11-21T13:16:52Z"
 }
