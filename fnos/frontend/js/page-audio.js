@@ -12,6 +12,7 @@ window.FP = window.FP || {};
   FP.createAudioPage = function (ctx) {
     const store = ctx.store;
     const els = {};
+    const speakerSettings = FP.createSpeakerSettings(ctx, render);
     let bound = false;
     let active = false;
     let chart = null;
@@ -49,7 +50,13 @@ window.FP = window.FP || {};
       return info ? !!info.online : false;
     }
 
+    function assignedSpeaker(id) {
+      const audio = (store.getDraft() || {}).audio;
+      return audio && (audio.instances || []).find(instance => instance.device_id === id);
+    }
+
     function deviceState(device) {
+      if (assignedSpeaker(device.id)) return {text: '独立接收', tone: 'neutral'};
       const online = deviceOnline(device);
       if (!online) return { text: '离线', tone: 'warn' };
       if (!device.enabled) return { text: '未启用', tone: 'neutral' };
@@ -81,7 +88,9 @@ window.FP = window.FP || {};
       } else {
         parts.push('当前离线');
       }
-      if (!device.enabled) parts.push('已停用输出');
+      const speaker = assignedSpeaker(device.id);
+      if (speaker) parts.push(speaker.name);
+      else if (!device.enabled) parts.push('主接收器未启用');
       return parts.join(' · ');
     }
 
@@ -154,9 +163,12 @@ window.FP = window.FP || {};
       main.setAttribute('aria-pressed', device.id === selectedId ? 'true' : 'false');
       main.setAttribute('aria-label', '选择音箱 ' + (device.name || device.id));
       const toggle = item.querySelector('.switch');
+      const assigned = assignedSpeaker(device.id);
+      toggle.disabled = !!assigned;
       u.setSwitch(toggle, !!device.enabled);
       toggle.setAttribute('aria-label', (device.enabled ? '停用' : '启用') + '音箱 ' + (device.name || device.id));
       const remove = item.querySelector('.device-delete');
+      remove.disabled = !!assigned;
       remove.setAttribute('aria-label', '删除音箱配置 ' + (device.name || device.id));
       const pending = pendingDeleteId === device.id;
       remove.classList.toggle('confirm', pending);
@@ -568,7 +580,7 @@ window.FP = window.FP || {};
       if (!audio) return;
       const groups = audio.output_groups || [];
       const enabled = audio.devices.filter(d => d.enabled).map(d => d.id);
-      const signature = JSON.stringify([groups, enabled, audio.devices.map(d => d.id)]);
+      const signature = JSON.stringify([groups, enabled, audio.devices.map(d => d.id), audio.instances]);
       if (groupsSignature === signature) return;
       groupsSignature = signature;
       const list = el('output-groups');
@@ -581,6 +593,10 @@ window.FP = window.FP || {};
         apply.setAttribute('aria-pressed', String(selected));
         apply.disabled = selected;
         apply.onclick = function () {
+          if (group.devices.some(id => assignedSpeaker(id))) {
+            ctx.toast('此方案包含独立音箱，请先调整音箱分配。', 'warn');
+            return;
+          }
           const devices = store.getDraft().audio.devices;
           if (group.devices.some(id => !devices.some(d => d.id === id))) {
             ctx.toast('方案中的音箱已被移除，请重新添加设备。', 'warn');
@@ -606,6 +622,7 @@ window.FP = window.FP || {};
       ensureSelection();
       renderDeviceList();
       renderGroups();
+      speakerSettings.render();
       renderAddList();
       renderGlobal();
       renderPanel();

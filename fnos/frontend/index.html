@@ -7,7 +7,7 @@
 <title>FusionPlay · 音频接收与输出管理</title>
 <link rel="icon" href="data:,">
 <script>
-if (!location.hash || location.hash === '#/player') location.replace('player/index.html');
+if (!location.hash || location.hash === '#/player') location.replace('player/index.html' + location.search);
 /* Apply the persisted theme before first paint to avoid a flash. */
 try {
   var savedTheme = localStorage.getItem('fusionplay.theme');
@@ -155,7 +155,7 @@ try {
       </span>
       <div class="brand-text">
         <p class="brand-name">FusionPlay</p>
-        <p class="brand-sub">音频接收与输出管理</p>
+        <p class="brand-sub">飞牛设置</p>
       </div>
     </div>
     <div class="header-actions">
@@ -170,7 +170,7 @@ try {
     </div>
   </div>
   <nav class="main-nav" aria-label="主导航">
-    <a class="nav-link" href="player/index.html">播放器</a>
+    <a class="nav-link" id="return-player" href="player/index.html">返回播放器</a>
     <a class="nav-link" href="#/overview" data-route="overview">概览</a>
     <a class="nav-link" href="#/audio" data-route="audio">音频</a>
     <a class="nav-link" href="#/receive" data-route="receive">接收</a>
@@ -268,11 +268,31 @@ try {
   <section class="page" id="page-audio" aria-labelledby="audio-title" hidden>
     <div class="page-head">
       <h1 id="audio-title">音频</h1>
-      <p class="page-sub">选择输出音箱，分别调整每个设备的音量响应与播放同步。</p>
+      <p class="page-sub">为音箱分配接收器，调整输出音量与播放同步。</p>
     </div>
 
     <div class="audio-layout">
       <div class="audio-col audio-col-left">
+        <article class="card" aria-labelledby="speaker-instances-title">
+          <div class="card-head">
+            <h2 class="card-title" id="speaker-instances-title">音箱播放器</h2>
+            <button class="btn small" id="new-instance" type="button" disabled>添加独立音箱</button>
+          </div>
+          <p class="hint">第一只音箱可分配给主接收器，其余音箱可独立接收。每只独立音箱有自己的播放页，自动开启 AirPlay、妙播和 DLNA。</p>
+          <ul class="device-list" id="speaker-instances"></ul>
+          <form id="instance-form" hidden>
+            <label for="instance-name">投送名称</label>
+            <input id="instance-name" maxlength="64" required placeholder="例如：书房音箱">
+            <label for="instance-device">输出设备</label>
+            <select id="instance-device" required></select>
+            <p class="hint" id="instance-assignment-hint"></p>
+            <div class="row">
+              <button class="btn primary" type="submit">确认分配</button>
+              <button class="btn" id="cancel-instance" type="button">取消</button>
+            </div>
+          </form>
+        </article>
+
         <article class="card" aria-labelledby="audio-devices-title">
           <div class="card-head">
             <h2 class="card-title" id="audio-devices-title">输出设备</h2>
@@ -287,11 +307,11 @@ try {
             <p class="section-label">可添加的输出设备</p>
             <ul class="add-list" id="audio-add-list"></ul>
           </div>
-          <p class="hint">点击卡片选择音箱；开关控制该音箱是否输出，可同时启用多个。</p>
+          <p class="hint">点击音箱进行校准。开关控制主接收器的输出，启用多个时同步播放。</p>
         </article>
 
         <article class="card" aria-labelledby="output-groups-title">
-          <h2 class="card-title" id="output-groups-title">输出方案</h2>
+          <h2 class="card-title" id="output-groups-title">主接收器的输出方案</h2>
           <p class="hint">把当前启用的音箱存为一组。切换方案后点击「保存并应用」，各音箱沿用自己的音量和延迟。</p>
           <label for="group-name">新方案名称</label>
           <input id="group-name" maxlength="64" placeholder="例如：客厅">
@@ -427,7 +447,7 @@ try {
   <!-- ============================== 接收 ============================== -->
   <section class="page" id="page-receive" aria-labelledby="receive-title" hidden>
     <div class="page-head">
-      <h1 id="receive-title">接收</h1>
+      <h1 id="receive-title">主接收器设置</h1>
       <p class="page-sub">一个统一名称，三种接收协议。</p>
     </div>
 
@@ -589,6 +609,7 @@ try {
 <script src="js/store.js"></script>
 <script src="js/curve.js"></script>
 <script src="js/page-overview.js"></script>
+<script src="js/speaker-instances.js"></script>
 <script src="js/page-audio.js"></script>
 <script src="js/page-receive.js"></script>
 <script src="js/page-settings.js"></script>

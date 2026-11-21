@@ -405,6 +405,16 @@ window.FP = window.FP || {};
   }
 
   function init() {
+    const originId = new URLSearchParams(location.search).get('instance');
+    el('return-player').href = FP.playerUrl(originId);
+    store.subscribe(function () {
+      const base = store.state.baseline;
+      if (!base || !originId || originId === 'default') return;
+      const instance = (base.audio.instances || []).find(item => item.id === originId);
+      el('return-player').href = FP.playerUrl(instance && instance.id);
+      const mainActive = !(base.audio.instances || []).length || base.audio.devices.some(d => d.enabled);
+      u.setText(el('return-player'), instance ? '返回' + instance.name : mainActive ? '返回主播放器' : '返回播放器');
+    });
     applyTheme(readTheme(), false);
     bind();
     pages = {

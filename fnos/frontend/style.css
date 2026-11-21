@@ -1205,3 +1205,11 @@ body { isolation: isolate; }
   .glass-scene { display: none; }
   .card:not(.now-card), .app-header, .savebar, .toast { background: var(--card); backdrop-filter: none; }
 }
+
+.speaker-instance, .instance-actions { display: flex; align-items: center; flex-wrap: wrap; gap: .5rem; }
+.speaker-instance { justify-content: space-between; padding: .6rem 0; }
+.speaker-instance + .speaker-instance { border-top: 1px solid var(--border); }
+.instance-info { display: grid; overflow-wrap: anywhere; }
+.instance-info .hint, #instance-form .hint { margin: 0; }
+#instance-form:not([hidden]) { display: grid; gap: .5rem; margin-top: .75rem; }
+#instance-form input, #instance-form select { width: 100%; min-width: 0; padding: .55rem; color: var(--text); font: inherit; border: 1px solid var(--border); border-radius: 8px; }

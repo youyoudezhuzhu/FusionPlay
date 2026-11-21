@@ -442,6 +442,11 @@ window.FP = window.FP || {};
     diagnostics: function () { return request('GET', '/api/diagnostics', undefined, 10000); }
   };
 
+  FP.playerUrl = function (id) {
+    const url = new URL('player/index.html', document.baseURI);
+    if (id && id !== 'default') url.searchParams.set('instance', id);
+    return url.href;
+  };
   FP.GATEWAY_BASE = GATEWAY_BASE;
   FP.PROTOCOLS = PROTOCOLS;
   FP.MIPLAY_DEVICE_TYPES = MIPLAY_DEVICE_TYPES;
