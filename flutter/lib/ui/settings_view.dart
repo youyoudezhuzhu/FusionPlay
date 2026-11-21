@@ -15,7 +15,7 @@ import 'vector_icon.dart';
 
 const fusionPlayVersion = String.fromEnvironment(
   'FUSIONPLAY_VERSION',
-  defaultValue: '1.7.13',
+  defaultValue: '1.7.14',
 );
 
 /// Dark frosted-material palette used by the settings panel. The outer
