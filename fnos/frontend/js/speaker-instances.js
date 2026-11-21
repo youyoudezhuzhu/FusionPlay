@@ -71,8 +71,7 @@ window.FP.createSpeakerSettings = function (ctx, renderAudio) {
     if (!form.hidden) renderOptions(outputs);
     const saved = (store.state.baseline.audio.instances || []).map(s => s.id);
     const primaryOutputs = draft.audio.devices.filter(d => d.enabled).map(d => outputs.get(d.id));
-    const activeMain = !store.state.baseline.audio.instances?.length ||
-      store.state.baseline.audio.devices.some(d => d.enabled);
+    const activeMain = FP.primaryActive(store.state.baseline.audio);
     const rows = [{ id: 'default', name: draft.receiver.name }, ...instances()];
     const key = JSON.stringify([rows, saved, activeMain, primaryOutputs, Array.from(outputs)]);
     if (key === listKey) return;
@@ -126,8 +125,9 @@ window.FP.createSpeakerSettings = function (ctx, renderAudio) {
     event.preventDefault();
     const label = name.value.trim();
     const draft = store.getDraft();
-    if (!label || (editing !== 'default' && draft.receiver.name.trim() === label) ||
-        instances().some(s => s.id !== editing && s.name === label)) {
+    const canonical = label.toLowerCase();
+    if (!label || (editing !== 'default' && draft.receiver.name.trim().toLowerCase() === canonical) ||
+        instances().some(s => s.id !== editing && s.name.trim().toLowerCase() === canonical)) {
       toast('请填写尚未使用的投送名称。', 'warn');
       name.focus();
       return;

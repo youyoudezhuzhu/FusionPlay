@@ -442,6 +442,9 @@ window.FP = window.FP || {};
     diagnostics: function () { return request('GET', '/api/diagnostics', undefined, 10000); }
   };
 
+  FP.primaryActive = function (audio) {
+    return !(audio.instances || []).length || audio.devices.some(d => d.enabled);
+  };
   FP.playerUrl = function (id) {
     const url = new URL('player/index.html', document.baseURI);
     if (id && id !== 'default') url.searchParams.set('instance', id);

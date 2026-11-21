@@ -14,6 +14,7 @@ window.FP = window.FP || {};
   const THEME_LABELS = { system: '跟随系统', light: '浅色', dark: '深色' };
   const THEME_ICONS = { system: 'auto', light: 'sun', dark: 'moon' };
   const POLL_MS = 2000;
+  const originId = new URLSearchParams(location.search).get('instance');
 
   const store = FP.createStore();
   const updateArtwork = FP.initGlass();
@@ -390,7 +391,11 @@ window.FP = window.FP || {};
       if (!document.hidden) refreshCore();
     });
     store.subscribe(function (reason) {
-      if (reason === 'remote') updateArtwork(store.state.status);
+      if (reason === 'remote' || reason === 'baseline') {
+        const base = store.state.baseline;
+        const showPrimaryArt = base && FP.primaryActive(base.audio) && (!originId || originId === 'default');
+        updateArtwork(showPrimaryArt ? store.state.status : null);
+      }
       if (reason === 'dirty' || reason === 'revert') saveError = '';
       updateSavebar();
     });
@@ -405,14 +410,13 @@ window.FP = window.FP || {};
   }
 
   function init() {
-    const originId = new URLSearchParams(location.search).get('instance');
     el('return-player').href = FP.playerUrl(originId);
     store.subscribe(function () {
       const base = store.state.baseline;
       if (!base || !originId || originId === 'default') return;
       const instance = (base.audio.instances || []).find(item => item.id === originId);
       el('return-player').href = FP.playerUrl(instance && instance.id);
-      const mainActive = !(base.audio.instances || []).length || base.audio.devices.some(d => d.enabled);
+      const mainActive = FP.primaryActive(base.audio);
       u.setText(el('return-player'), instance ? '返回' + instance.name : mainActive ? '返回主播放器' : '返回播放器');
     });
     applyTheme(readTheme(), false);

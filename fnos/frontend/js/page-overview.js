@@ -403,7 +403,10 @@ window.FP = window.FP || {};
     }
 
     function render() {
-      renderNow();
+      const base = store.state.baseline;
+      const primaryActive = !base || FP.primaryActive(base.audio);
+      el('primary-now-card').hidden = !primaryActive;
+      if (primaryActive) renderNow();
       renderOutputs();
       renderProtocols();
       renderService();
