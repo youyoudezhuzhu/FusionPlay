@@ -119,7 +119,7 @@ internal class NativeNetworkPlayer(
                 onError("${error.errorCodeName}：${error.message ?: "未知播放器错误"}")
             }
         })
-        volume = if (muted) 0f else unmutedVolume
+        volume = if (dlnaMuted) 0f else dlnaGain
     }
 
     private fun recordPlayback(event: String, details: Map<String, Any?>) {
@@ -144,14 +144,19 @@ internal class NativeNetworkPlayer(
         private set
     var rate: Double = 1.0
         private set
-    private var unmutedVolume = 1f
-    private var muted = false
+    private var dlnaGain = 1f
+    private var dlnaMuted = false
     val positionMs: Long get() = player?.currentPosition?.coerceAtLeast(0) ?: 0
     val durationMs: Long get() = player?.duration?.takeIf { it > 0 } ?: 0
 
     fun open(source: MediaSource, url: String, epoch: Long?, positionMs: Long, autoPlay: Boolean) = onMain {
         val activePlayer = player ?: createPlayer().also { player = it }
         clearEmbeddedCover()
+        if (this.source != source || sourceEpoch != epoch) {
+            dlnaMuted = false
+            dlnaGain = 1f
+            activePlayer.volume = 1f
+        }
         this.source = source
         this.url = url
         sourceEpoch = epoch
@@ -173,14 +178,13 @@ internal class NativeNetworkPlayer(
             activePlayer.play()
         }
     }
-    fun setVolumePercent(percent: Int) = onMain {
-        unmutedVolume = percent.coerceIn(0, 100) / 100f
-        if (!muted) player?.volume = unmutedVolume
+    fun setDlnaVolume(fallbackPercent: Int?, muted: Boolean?) = onMain {
+        if (source != MediaSource.DLNA) return@onMain
+        dlnaGain = (fallbackPercent?.coerceIn(0, 100) ?: 100) / 100f
+        if (muted != null) dlnaMuted = muted
+        player?.volume = if (dlnaMuted) 0f else dlnaGain
     }
-    fun setMuted(muted: Boolean) = onMain {
-        this.muted = muted
-        player?.volume = if (muted) 0f else unmutedVolume
-    }
+
     private fun clearEmbeddedCover() {
         embeddedCover?.delete()
         embeddedCover = null

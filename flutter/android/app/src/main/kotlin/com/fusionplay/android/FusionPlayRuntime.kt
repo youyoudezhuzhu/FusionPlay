@@ -1042,11 +1042,27 @@ class FusionPlayRuntime(
                 mediaSourceArbiter.deactivate(MediaSource.DLNA)
             }
             is AppEvent.DlnaVolume -> if (
-                eventTargetsSourcePlayback("DLNA", event.source, event.epoch) &&
-                networkPlayer.source == MediaSource.DLNA
+                viewModel.state.value.activeMediaSource == MediaSource.DLNA &&
+                networkEventMatches(MediaSource.DLNA, CORE_SOURCE_DLNA, event.source, event.epoch)
             ) {
-                event.percent?.let(networkPlayer::setVolumePercent)
-                event.muted?.let(networkPlayer::setMuted)
+                // STREAM_MUSIC owns the percent. Player gain only handles DLNA
+                // mute and devices whose system volume cannot be changed.
+                val applied = event.percent?.let(FusionPlayMediaChannel::setSystemMediaVolumePercent)
+                networkPlayer.setDlnaVolume(
+                    fallbackPercent = event.percent?.takeIf { applied == false },
+                    muted = event.muted,
+                )
+                diagnosticLogger.write("dlna", "system_volume", when (applied) {
+                    true -> "applied"
+                    false -> "player_gain_fallback"
+                    null -> "mute_only"
+                }, mapOf(
+                    "epoch" to event.epoch,
+                    "requested_percent" to event.percent,
+                    "system_percent" to FusionPlayMediaChannel.currentSystemMediaVolumePercent(),
+                    "muted" to event.muted,
+                ))
+                publishState(viewModel.state.value)
             }
             else -> Unit
         }
