@@ -21,6 +21,7 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use crate::MiPlayDeviceType;
 use crate::media::EventEmitter;
+#[cfg(test)]
 use crate::protocol::CONTROL_PORT;
 
 pub const LYRA_COMMAND_PORT: u16 = 55_982;
@@ -85,8 +86,9 @@ pub fn start_lyra_server(
     shutdown: Arc<AtomicBool>,
     events: EventEmitter,
 ) -> Result<LyraControlServer> {
-    let socket = UdpSocket::bind((local_ip, LYRA_COMMAND_PORT)).with_context(|| {
-        format!("bind Xiaomi Lyra command socket {local_ip}:{LYRA_COMMAND_PORT}")
+    let port = crate::receiver_ports().lyra;
+    let socket = UdpSocket::bind((local_ip, port)).with_context(|| {
+        format!("bind Xiaomi Lyra command socket {local_ip}:{port}")
     })?;
     socket
         .set_read_timeout(Some(Duration::from_millis(50)))
@@ -114,9 +116,7 @@ pub fn start_lyra_server(
             );
         })
         .context("spawn Xiaomi Lyra command server")?;
-    Ok(LyraControlServer {
-        port: LYRA_COMMAND_PORT,
-    })
+    Ok(LyraControlServer { port })
 }
 
 fn run_server(
@@ -697,10 +697,11 @@ fn build_logical_connect_response(request: &[u8]) -> Result<(Vec<u8>, PeerPortNe
     // stable non-zero server channel id is sufficient and avoids leaking the
     // peer's identifier back as our own.
     let server_channel_id = 1_u64;
+    let control_port = crate::receiver_ports().control;
     let response_peer_port = pb_join([
         pb_varint(1, client_channel_id),
         pb_varint(2, server_channel_id),
-        pb_varint(3, u64::from(CONTROL_PORT)),
+        pb_varint(3, u64::from(control_port)),
         pb_varint(5, 1),
         pb_varint(6, 0),
     ]);
@@ -727,7 +728,7 @@ fn build_logical_connect_response(request: &[u8]) -> Result<(Vec<u8>, PeerPortNe
     let response = pb_join([pb_varint(1, 0), pb_bytes(2, &response_user_info)]);
     Ok((
         response,
-        Some((client_channel_id, server_channel_id, CONTROL_PORT)),
+        Some((client_channel_id, server_channel_id, control_port)),
     ))
 }
 

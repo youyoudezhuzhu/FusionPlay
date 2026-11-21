@@ -40,7 +40,6 @@ const LEGACY_LAN_SERVICE_TYPE: &str = "_miplay_lan._tcp.local.";
 const LEGACY_LAN_SERVICE_QNAME: &[u8] = b"\x0b_miplay_lan\x04_tcp\x05local\x00";
 const LEGACY_LAN_SERVICE_NAME: &str = "_miplay_lan._tcp.local";
 const LEGACY_LAN_LOCAL_LABEL_OFFSET: u16 = 12 + 1 + 11 + 1 + 4;
-const LEGACY_LAN_SERVICE_PORT: u16 = 8899;
 const LEGACY_LAN_UNICAST_TTL: u32 = 10;
 const LEGACY_LAN_ANNOUNCE_TTL: u32 = 60;
 const LEGACY_LAN_ANNOUNCEMENT_COUNT: usize = 3;
@@ -172,7 +171,7 @@ fn build_legacy_lan_packet(
     );
     push_u16(&mut packet, 0);
     push_u16(&mut packet, 0);
-    push_u16(&mut packet, LEGACY_LAN_SERVICE_PORT);
+    push_u16(&mut packet, crate::receiver_ports().control);
     let hostname_label_offset = u16::try_from(packet.len()).expect("legacy DNS-SD packet offset");
     push_label(&mut packet, &advertisement.hostname);
     push_pointer(&mut packet, LEGACY_LAN_LOCAL_LABEL_OFFSET);

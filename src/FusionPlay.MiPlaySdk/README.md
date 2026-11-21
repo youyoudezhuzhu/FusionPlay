@@ -29,8 +29,11 @@
 - macOS：`aarch64-apple-darwin`、`x86_64-apple-darwin`
 - Android：`armv7-linux-androideabi`、`aarch64-linux-android`、`x86_64-linux-android`
 
-宿主应用必须允许局域网访问，并允许 UDP 5353、TCP 8899 与动态 RTSP/RTP
-端口。Android 宿主还需要声明网络权限并在接收期间持有 Wi-Fi MulticastLock；
+宿主应用需要允许局域网访问。妙播默认使用 UDP 5353 进行发现，UDP 55982 和 TCP 8899
+用于控制，媒体使用动态 RTSP/RTP 端口。飞牛端在同一 IP 运行多个音箱实例时，每个
+接收进程通过环境变量 `FUSIONPLAY_RECEIVER_PORT_OFFSET` 指定自己的端口偏移。
+例如偏移 1 使用 UDP 55983 和 TCP 8900；所有实例共享 UDP 5353，并在各自的
+发现记录中公布自己的控制端口。Android 宿主还需要声明网络权限并在接收期间持有 Wi-Fi MulticastLock；
 这属于系统网络权限，不是外部服务依赖。
 
 小米公开的电脑端使用条件写的是同一 Wi-Fi 和受支持的小米笔记本。当前实现会绑定

@@ -2158,6 +2158,11 @@ fn build_mi_connect_response(
     packet
 }
 
+fn mi_connect_apps_data(control_port: u16) -> String {
+    let [hi, lo] = control_port.to_be_bytes();
+    base64::engine::general_purpose::STANDARD.encode([0x81, 0, 4, 4, 0x83, hi, lo])
+}
+
 pub(crate) fn build_mi_connect_txt(
     receiver_name: &str,
     idm_device_id: &str,
@@ -2171,6 +2176,7 @@ pub(crate) fn build_mi_connect_txt(
     // identity is advertised as `YnNs`.
     let id_hash = mdns_id_hash(idm_device_id);
     let mut txt = Vec::new();
+    let apps_data = mi_connect_apps_data(crate::receiver_ports().control);
     let mut values = vec![
         "version=196608".to_owned(),
         "apps=[5]".to_owned(),
@@ -2195,7 +2201,7 @@ pub(crate) fn build_mi_connect_txt(
         // Preserve the descriptor emitted by Android 1.1.7. Its Lyra support
         // marker is intentionally absent: Mi Connect owns the sole picker
         // route while Lyra remains the discovery/control handshake.
-        "appsData=gQAEBIMiww==".to_owned(),
+        format!("appsData={apps_data}"),
     ];
     // Xiaomi's BonjourGovernor first reads `mac` from the TXT record. If the
     // field is absent it pings the IPv4 address and asks the Wi-Fi stack for a
@@ -2236,7 +2242,7 @@ pub(crate) fn parse_hardware_address(device_id: &str) -> Option<[u8; 6]> {
 fn build_txt_data(
     receiver_name: &str,
     instance: &str,
-    media_device_id: &str,
+    _media_device_id: &str,
     device_type: MiPlayDeviceType,
     local_ip: Ipv4Addr,
     link_local_v6: Option<Ipv6Addr>,
@@ -2245,7 +2251,7 @@ fn build_txt_data(
     let app_data = base64::engine::general_purpose::STANDARD.encode(build_app_data(
         receiver_name,
         instance,
-        media_device_id,
+        crate::receiver_ports().lyra,
         device_type,
     ));
     let timestamp = SystemTime::now()
@@ -2481,7 +2487,7 @@ fn mi_connect_instance_for_platform(
 fn build_app_data(
     receiver_name: &str,
     instance: &str,
-    _hardware_address: &str,
+    lyra_port: u16,
     device_type: MiPlayDeviceType,
 ) -> Vec<u8> {
     let mut instance_bytes = hex::decode(instance).unwrap_or_else(|_| vec![0, 0, 0, 1]);
@@ -2503,8 +2509,9 @@ fn build_app_data(
     let mut payload = vec![0x00, 0x40, lyra_discovery_device_type(device_type)];
     payload.extend_from_slice(&instance_bytes);
     payload.extend_from_slice(&[0x00, 0x05, 0x19, 0x24]);
+    let [hi, lo] = lyra_port.to_be_bytes();
     payload.extend_from_slice(&[
-        0x10, 0x01, 0x03, 0x0a, 0x03, 0x01, 0xda, 0xae, 0x01, 0x01, 0x80, 0x02,
+        0x10, 0x01, 0x03, 0x0a, 0x03, 0x01, hi, lo, 0x01, 0x01, 0x80, 0x02,
     ]);
     payload.push(name.len() as u8);
     payload.extend_from_slice(&name);
@@ -2583,7 +2590,7 @@ mod tests {
         let payload = build_app_data(
             "FusionPlay",
             "2433CD31",
-            "A0-36-BC-25-05-43",
+            crate::lyra::LYRA_COMMAND_PORT,
             MiPlayDeviceType::Television,
         );
         let name_offset = payload
@@ -2596,7 +2603,7 @@ mod tests {
         let wired_payload = build_app_data(
             "Asus",
             "BC250543",
-            "A0-36-BC-25-05-43",
+            crate::lyra::LYRA_COMMAND_PORT,
             MiPlayDeviceType::Television,
         );
         assert!(wired_payload.windows(4).any(|window| window == b"Asus"));
@@ -2604,11 +2611,23 @@ mod tests {
     }
 
     #[test]
+    fn instance_slot_is_encoded_in_both_unicast_port_descriptors() {
+        let ports = crate::ReceiverPorts::for_offset(17).unwrap();
+        let lyra = build_app_data("Kitchen", "2433CD31", ports.lyra, MiPlayDeviceType::Speaker);
+        let mi_connect = base64::engine::general_purpose::STANDARD
+            .decode(super::mi_connect_apps_data(ports.control))
+            .unwrap();
+        assert_eq!(&lyra[17..19], &55_999_u16.to_be_bytes());
+        assert_eq!(&mi_connect[5..], &8_916_u16.to_be_bytes());
+        assert!(crate::ReceiverPorts::for_offset(u16::MAX).is_err());
+    }
+
+    #[test]
     fn television_discovery_uses_the_official_lyra_tv_category() {
         let payload = build_app_data(
             "FusionPlay",
             "2433CD31",
-            "A0-36-BC-25-05-43",
+            crate::lyra::LYRA_COMMAND_PORT,
             MiPlayDeviceType::Television,
         );
         assert_eq!(payload[2], 3);
@@ -2633,7 +2652,7 @@ mod tests {
             (MiPlayDeviceType::DisplaySpeaker, 5),
         ] {
             let payload =
-                build_app_data("FusionPlay", "2433CD31", "A0-36-BC-25-05-43", device_type);
+                build_app_data("FusionPlay", "2433CD31", crate::lyra::LYRA_COMMAND_PORT, device_type);
             assert_eq!(
                 payload[2], expected_lyra_type,
                 "unexpected Lyra projection for {device_type:?}",

@@ -1037,8 +1037,9 @@ pub fn start_control_server(
     shutdown: Arc<AtomicBool>,
     events: EventEmitter,
 ) -> Result<ControlHub> {
-    let listener = TcpListener::bind(SocketAddr::from((local_ip, CONTROL_PORT)))
-        .with_context(|| format!("bind Xiaomi MiPlay control socket {local_ip}:{CONTROL_PORT}"))?;
+    let port = crate::receiver_ports().control;
+    let listener = TcpListener::bind(SocketAddr::from((local_ip, port)))
+        .with_context(|| format!("bind Xiaomi MiPlay control socket {local_ip}:{port}"))?;
     listener.set_nonblocking(true)?;
     let hub = ControlHub::new(volume_percent);
     let server_hub = hub.clone();
