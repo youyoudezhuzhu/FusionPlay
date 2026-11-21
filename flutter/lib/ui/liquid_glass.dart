@@ -685,8 +685,8 @@ class GlassSurface extends StatelessWidget {
 
 /// Full-bleed glass dialog surface used by the about/update dialogs.
 ///
-/// Reads the composited layers below the route, including settings and other
-/// dialogs. The player artwork texture excludes those layers.
+/// The face transmits the composited layers below the route. The shared
+/// shader adds refraction around the rim using the clean artwork texture.
 class GlassDialog extends StatelessWidget {
   const GlassDialog({
     super.key,
@@ -740,12 +740,11 @@ class GlassDialog extends StatelessWidget {
               interactive: true,
               borderRadius: 24,
               padding: padding,
-              // Blur the live scene lightly enough to keep the shape and
-              // color of the layer underneath visible through the dialog.
-              forceFallback: true,
               blurSigma: 9,
               tint: FusionGlassColors.popupTint.withValues(alpha: .58),
-              specular: .18,
+              refraction: 1,
+              thickness: 10,
+              specular: .22,
               child: Theme(
                 data: surfaceTheme,
                 child: Material(
@@ -770,14 +769,24 @@ Future<T?> showGlassDialog<T>({
   required WidgetBuilder builder,
   Key? dialogKey,
   bool barrierDismissible = true,
-}) => showDialog<T>(
-  context: context,
-  barrierDismissible: barrierDismissible,
-  barrierColor: Colors.black.withValues(
-    alpha: GlassAppearance.enabledOf(context) ? .16 : .42,
-  ),
-  builder: (_) => GlassDialog(
-    key: dialogKey,
-    child: Builder(builder: builder),
-  ),
-);
+}) {
+  final backdrop = context
+      .getInheritedWidgetOfExactType<GlassBackdropProvider>()
+      ?.notifier;
+  return showDialog<T>(
+    context: context,
+    barrierDismissible: barrierDismissible,
+    barrierColor: Colors.black.withValues(
+      alpha: GlassAppearance.enabledOf(context) ? .16 : .42,
+    ),
+    builder: (_) {
+      final dialog = GlassDialog(
+        key: dialogKey,
+        child: Builder(builder: builder),
+      );
+      return backdrop == null
+          ? dialog
+          : GlassBackdropProvider(notifier: backdrop, child: dialog);
+    },
+  );
+}

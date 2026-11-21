@@ -117,9 +117,7 @@ void main() {
     final glass = tester.widget<LiquidGlass>(
       find.descendant(of: dialog, matching: find.byType(LiquidGlass)),
     );
-    // Even with a captured player backdrop, dialogs must read the live
-    // composited scene, including the contents of the lower route.
-    expect(glass.forceFallback, isTrue);
+    expect(glass.forceFallback, isFalse);
     expect(
       find.descendant(of: dialog, matching: find.byType(BackdropFilter)),
       findsOneWidget,

@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 import 'dart:typed_data';
 import 'dart:ui' as ui;
@@ -8,6 +9,7 @@ import 'package:flutter/rendering.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:fusionplay_android_flutter/ui/glass_backdrop.dart';
 import 'package:fusionplay_android_flutter/ui/liquid_glass.dart';
+import 'package:fusionplay_android_flutter/ui/update_dialogs.dart';
 
 class _GridBackdrop extends StatelessWidget {
   const _GridBackdrop();
@@ -193,6 +195,76 @@ void main() {
     expect(blue[center + 2], greaterThan(red[center + 2] + 35));
     expect(tester.takeException(), isNull);
   });
+
+  testWidgets(
+    'checking for updates uses refraction and transmits its lower route',
+    (tester) async {
+      final checking = Completer<void>();
+      final lowerLayer = ValueNotifier<Color>(Colors.red);
+      addTearDown(lowerLayer.dispose);
+      final boundary = GlobalKey();
+      tester.view.physicalSize = const Size(640, 420);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+
+      await tester.pumpWidget(
+        RepaintBoundary(
+          key: boundary,
+          child: MaterialApp(
+            home: GlassBackdropScope(
+              background: const _GridBackdrop(),
+              child: ValueListenableBuilder<Color>(
+                valueListenable: lowerLayer,
+                builder: (_, color, _) => Scaffold(
+                  backgroundColor: color,
+                  body: Builder(
+                    builder: (context) => TextButton(
+                      onPressed: () => showBusyDialog<void>(
+                        context: context,
+                        message: '正在检查更新…',
+                        task: () => checking.future,
+                      ),
+                      child: const Text('打开更新'),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ),
+      );
+      await _captureRgba(tester, boundary);
+      await tester.tap(find.text('打开更新'));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
+      final red = await _captureRgba(tester, boundary);
+      final dialog = find.byKey(const ValueKey('update-busy-dialog'));
+      expect(GlassBackdropScope.of(tester.element(dialog)), isNotNull);
+      expect(
+        find.descendant(
+          of: dialog,
+          matching: find.byWidgetPredicate(
+            (widget) =>
+                widget is CustomPaint &&
+                widget.painter.runtimeType.toString() == '_RefractionPainter',
+          ),
+        ),
+        findsOneWidget,
+      );
+
+      lowerLayer.value = Colors.blue;
+      final blue = await _captureRgba(tester, boundary);
+      // Sample the empty central area just inside the top padding.
+      final pixel = ((210 - 21) * 2 * 1280 + 340 * 2) * 4;
+      expect(red[pixel], greaterThan(blue[pixel] + 30));
+      expect(blue[pixel + 2], greaterThan(red[pixel + 2] + 30));
+
+      checking.complete();
+      await tester.pumpAndSettle();
+      expect(dialog, findsNothing);
+    },
+  );
 
   testWidgets('pressing clear glass bends the scene and release restores it', (
     tester,
