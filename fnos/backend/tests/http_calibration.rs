@@ -101,6 +101,25 @@ fn curve(kind: CurveKind, points: Vec<(f32, f32)>) -> VolumeCurve {
 }
 
 #[test]
+fn receiver_settings_patch_preserves_audio_settings_and_rejects_bad_types() {
+    let dir = tempfile::tempdir().unwrap();
+    let (_app, http) = start_app(dir.path(), vec![device("hw:a", VolumeCurve::default())]);
+    let (status, body) = http.request("PATCH", "/api/config", Some(
+        r#"{"name":"NAS 客厅","dlna":false,"device_type":"speaker"}"#,
+    ));
+    assert_eq!(status, 200, "{body}");
+    let updated = Config::load(&dir.path().join("config.json")).unwrap();
+    assert_eq!(updated.receiver.name, "NAS 客厅");
+    assert!(!updated.protocols.dlna.enabled);
+    assert!(updated.protocols.airplay.enabled);
+    assert_eq!(updated.protocols.miplay.device_type, "speaker");
+    assert_eq!(updated.audio.devices[0].id, "hw:a");
+    assert_eq!(http.request("PATCH", "/api/config", Some(
+        r#"{"device_type":"unknown"}"#,
+    )).0, 400);
+}
+
+#[test]
 fn device_curves_are_independent_and_survive_restart() {
     let dir = tempfile::tempdir().unwrap();
     let (_app, http) = start_app(

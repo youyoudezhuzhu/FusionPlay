@@ -35,12 +35,7 @@ class SpeakerPlayerLocation {
     return source.startsWith('artwork/') ? api(source) : root.resolve(source);
   }
 
-  Uri get settings => root
-      .resolve('index.html')
-      .replace(
-        queryParameters: pinned ? {'instance': id} : null,
-        fragment: '/settings',
-      );
+  Uri get settings => page.replace(fragment: '/settings');
 
   Uri speakerPage(String section) => root
       .resolve('speakers.html')

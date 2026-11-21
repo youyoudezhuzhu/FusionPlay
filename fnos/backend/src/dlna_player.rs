@@ -568,7 +568,7 @@ impl DlnaPlayer {
                 Ok(())
             }
             Err(error) => {
-                self.record_failure(&format!("DLNA 播放失败（{}）：{error:#}", track.uri));
+                self.record_failure(&format!("DLNA 播放失败：{error:#}"));
                 self.store_stats(track, None, elapsed, Some(format!("{error:#}")));
                 Err(error)
             }
@@ -577,10 +577,11 @@ impl DlnaPlayer {
     }
 
     fn record_failure(&self, message: &str) {
-        self.state.record_error(message.to_string());
+        let message = crate::shared_logging::redact(message);
+        self.state.record_error(message.as_ref());
         let mut state = self.state.state.write().unwrap();
         state.dlna.state = "error".into();
-        state.dlna.detail = message.to_string();
+        state.dlna.detail = message.into_owned();
     }
 
     fn store_stats(
@@ -2137,6 +2138,7 @@ struct HttpEstablished {
     /// Total resource length in bytes (Content-Length or Content-Range total).
     content_length: Option<u64>,
     range_supported: bool,
+    etag: Option<String>,
     content_type: Option<String>,
 }
 
@@ -2341,6 +2343,7 @@ fn establish_http(
         };
 
         let content_type = response.header("content-type").map(str::to_string);
+        let etag = response.header("etag").map(str::to_owned);
         let HttpHead {
             reader,
             headers: _,
@@ -2359,6 +2362,7 @@ fn establish_http(
             position,
             content_length,
             range_supported,
+            etag,
             content_type,
         });
     }
@@ -2530,6 +2534,17 @@ enum ChunkedPhase {
     Trailers,
 }
 
+#[derive(Debug)]
+struct ShortHttpBody(u64);
+
+impl std::fmt::Display for ShortHttpBody {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(formatter, "DLNA 下载中断：Content-Length 仍差 {} 字节未收到（服务器提前关闭连接）", self.0)
+    }
+}
+
+impl std::error::Error for ShortHttpBody {}
+
 /// Streaming HTTP body: decodes `Content-Length`, chunked and connection-close
 /// framing on demand. Holds O(1) memory regardless of media size.
 struct HttpBody {
@@ -2601,9 +2616,7 @@ impl Read for HttpBody {
                     if read == 0 {
                         return Err(io::Error::new(
                             io::ErrorKind::InvalidData,
-                            format!(
-                                "DLNA 下载中断：Content-Length 仍差 {remaining} 字节未收到（服务器提前关闭连接）"
-                            ),
+                            ShortHttpBody(remaining),
                         ));
                     }
                     self.kind = BodyKind::Length(remaining - read as u64);
@@ -2719,6 +2732,8 @@ struct HttpSource {
     /// Absolute media byte position of the next byte `body` will return.
     position: u64,
     range_supported: bool,
+    etag: Option<String>,
+    resume_attempted: bool,
     context: HttpContext,
     bytes: Arc<AtomicU64>,
 }
@@ -2732,6 +2747,7 @@ impl HttpSource {
             position,
             content_length,
             range_supported,
+            etag,
             content_type: _,
         } = established;
         let body = HttpBody {
@@ -2748,6 +2764,8 @@ impl HttpSource {
             content_length,
             position,
             range_supported,
+            etag,
+            resume_attempted: false,
             context,
             bytes,
         }
@@ -2765,7 +2783,7 @@ impl HttpSource {
         let mut buffer = [0u8; 16 * 1024];
         while remaining > 0 {
             let want = buffer.len().min(remaining as usize);
-            let read = self.body.read(&mut buffer[..want])?;
+            let read = self.read(&mut buffer[..want])?;
             if read == 0 {
                 return Err(io::Error::new(
                     io::ErrorKind::UnexpectedEof,
@@ -2773,7 +2791,6 @@ impl HttpSource {
                 ));
             }
             remaining -= read as u64;
-            self.position += read as u64;
         }
         Ok(())
     }
@@ -2795,6 +2812,7 @@ impl HttpSource {
             position,
             content_length,
             range_supported,
+            etag,
             content_type: _,
         } = established;
         let health_bytes = Arc::clone(&self.bytes);
@@ -2810,6 +2828,7 @@ impl HttpSource {
         self.context = context;
         self.content_length = content_length.or(self.content_length);
         self.range_supported = range_supported;
+        self.etag = etag;
         if position == target {
             self.position = target;
             return Ok(());
@@ -2830,6 +2849,36 @@ impl HttpSource {
         Err(io::Error::other(format!(
             "DLNA Range 响应起始位置异常（请求 {target}，响应 {position}）"
         )))
+    }
+
+    /// Keep the decoder positioned on the next byte after a premature EOF.
+    /// A full 200 response, a different object size or a changed ETag cannot
+    /// safely be spliced into the existing decoder stream.
+    fn resume_body(&mut self) -> Result<()> {
+        let position = self.position;
+        let length = self.content_length.context("DLNA 媒体总长度未知")?;
+        anyhow::ensure!(position > 0 && position < length, "DLNA 续读偏移无效");
+        let response = establish_http(
+            &self.context.url,
+            self.context.timeout,
+            &self.context.abort,
+            Some(position),
+            Some(self.context.user_agent.clone()),
+        )?;
+        anyhow::ensure!(
+            response.position == position && response.content_length == Some(length)
+                && matches!(response.body_kind, BodyKind::Length(bytes) if bytes == length - position),
+            "DLNA 服务器未返回匹配的 206 字节范围"
+        );
+        anyhow::ensure!(
+            self.etag.is_none() || response.etag == self.etag,
+            "DLNA 媒体在续读时已变更"
+        );
+        let mut resumed = Self::new(response, Arc::clone(&self.bytes));
+        resumed.resume_attempted = true;
+        *self = resumed;
+        tracing::info!(target: "dlna", position, length, "DLNA HTTP 已按字节偏移续读");
+        Ok(())
     }
 
     /// Compute a seek target from a [`SeekFrom`], validating it against the
@@ -2866,7 +2915,23 @@ impl HttpSource {
 
 impl Read for HttpSource {
     fn read(&mut self, buffer: &mut [u8]) -> io::Result<usize> {
-        let read = self.body.read(buffer)?;
+        let read = match self.body.read(buffer) {
+            Err(error) if !self.resume_attempted
+                && error.get_ref().is_some_and(|cause| cause.is::<ShortHttpBody>())
+                && !self.context.abort.aborted()
+                && self.position > 0 =>
+            {
+                self.resume_attempted = true;
+                if let Err(resume_error) = self.resume_body() {
+                    let message = format!("{resume_error:#}");
+                    let safe = crate::shared_logging::redact(&message);
+                    tracing::warn!(target: "dlna", position = self.position, error = %safe, "DLNA HTTP 续读失败");
+                    return Err(error);
+                }
+                self.body.read(buffer)?
+            }
+            result => result?,
+        };
         self.position += read as u64;
         Ok(read)
     }

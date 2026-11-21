@@ -2,20 +2,46 @@
 <html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>播放器 · FusionPlay</title>
 <style>body{margin:0;background:#181821;color:white;font:16px system-ui}main{padding:24px}a{color:inherit}</style><script src="../js/browser-diagnostics.js"></script>
 </head>
-<body><main id="loading">正在打开播放器… <a id="settings" href="../index.html#/settings">设置</a></main>
+<body><main id="loading">正在打开播放器… <a id="settings" href="#/settings">设置</a></main>
 <script>
-const settings = new URL('../index.html', location.href);
+const settings = new URL(location.href);
 settings.search = location.search;
 settings.hash = '/settings';
 document.getElementById('settings').href = settings.href;
-window.fpRead = async url => {
-  const response = await fetch(url, {cache: 'no-store'});
+window.fpRequest = async (url, method, payload) => {
+  const response = await fetch(url, {cache: 'no-store', method,
+    ...(payload ? {headers:{'Content-Type':'application/json'}, body:payload} : {})});
+  const text = await response.text();
   if (!response.ok) {
-    window.fpRecordBrowserError?.('读取接收器状态失败 HTTP ' + response.status);
-    throw new Error('接收器暂时不可用');
+    let message;
+    try { message = JSON.parse(text).error; } catch (_) {}
+    throw new Error(message || '接收器暂时不可用（HTTP ' + response.status + '）');
   }
-  return response.text();
+  return text;
 };
+window.fpDownloadText = (name, text) => {
+  const url = URL.createObjectURL(new Blob([text], {type:'text/plain;charset=utf-8'}));
+  const link = Object.assign(document.createElement('a'), {href:url, download:name});
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+};
+window.fpOpenConfig = () => new Promise((resolve, reject) => {
+  const input = Object.assign(document.createElement('input'), {type:'file', accept:'.json,application/json', hidden:true});
+  document.body.appendChild(input);
+  input.oncancel = () => { input.remove(); resolve(''); };
+  input.onchange = async () => {
+    const file = input.files[0];
+    input.remove();
+    if (!file) { resolve(''); return; }
+    try {
+      if (file.size > 1024 * 1024) throw new Error('配置文件不能超过 1 MiB');
+      resolve(await file.text());
+    } catch (error) { reject(error); }
+  };
+  input.click();
+});
 window.fpControl = async (url, source, command, value) => {
   const response = await fetch(url, {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({source,command,value})});
   if (!response.ok) {

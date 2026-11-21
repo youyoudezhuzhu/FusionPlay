@@ -150,8 +150,12 @@ impl AppState {
 
     pub fn record_error(&self, message: impl Into<String>) {
         let message = message.into();
-        tracing::error!(%message, "接收器错误");
+        let message = crate::shared_logging::redact(&message).into_owned();
         let mut state = self.state.write().unwrap();
+        if state.errors.last() == Some(&message) {
+            return;
+        }
+        tracing::error!(%message, "接收器错误");
         state.last_error = Some(message.clone());
         state.errors.push(message);
         if state.errors.len() > 20 {

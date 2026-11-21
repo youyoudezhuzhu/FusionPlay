@@ -10,6 +10,7 @@
 if (location.hash === '#/curve') location.replace('speakers.html'+location.search+'#curve');
 else if (new URLSearchParams(location.search).get('action') === 'new-instance')
   location.replace('speakers.html'+location.search+'#new');
+else if (location.hash === '#/settings') location.replace('player/index.html' + location.search + '#/settings');
 else if (!location.hash || location.hash === '#/player') location.replace('player/index.html' + location.search);
 /* Apply the persisted theme before first paint to avoid a flash. */
 try {
@@ -178,7 +179,7 @@ try {
     <a class="nav-link" href="#/overview" data-route="overview">概览</a>
     <a class="nav-link" href="#/audio" data-route="audio">音频</a>
     <a class="nav-link" href="#/receive" data-route="receive">接收</a>
-    <a class="nav-link" href="#/settings" data-route="settings">设置</a>
+    <a class="nav-link" id="open-settings" href="player/index.html#/settings">设置</a>
   </nav>
 </header>
 
@@ -461,111 +462,6 @@ try {
   </section>
 
   <!-- ============================== 设置 ============================== -->
-  <section class="page" id="page-settings" aria-labelledby="settings-title" hidden>
-    <div class="page-head">
-      <h1 id="settings-title">设置</h1>
-      <p class="page-sub">应用维护、配置备份与诊断。</p>
-    </div>
-
-    <article class="card" aria-labelledby="settings-app-title">
-      <div class="card-head">
-        <h2 class="card-title" id="settings-app-title">应用信息</h2>
-        <span class="pill neutral" id="settings-version">v—</span>
-      </div>
-      <dl class="kv compact" id="settings-kv"></dl>
-      <a class="btn" id="get-update" href="update.html">检查更新</a>
-      <div class="field log-level-field">
-        <label for="settings-log-level">日志级别</label>
-        <div class="row">
-          <select id="settings-log-level">
-            <option value="error">error</option>
-            <option value="warn">warn</option>
-            <option value="info">info</option>
-            <option value="debug">debug</option>
-            <option value="trace">trace</option>
-          </select>
-          <button class="btn small" id="settings-log-apply" type="button">应用</button>
-        </div>
-        <p class="hint">运行时生效，无需重启服务。</p>
-      </div>
-    </article>
-
-    <article class="card" aria-labelledby="settings-config-title">
-      <div class="card-head">
-        <h2 class="card-title" id="settings-config-title">配置管理</h2>
-      </div>
-      <p class="hint">导出包含接收器、协议、音频与日志设置的完整配置；导入会覆盖当前配置并立即应用。</p>
-      <div class="row">
-        <button class="btn" id="config-export" type="button">
-          <svg class="icon small" aria-hidden="true"><use href="#icon-download"></use></svg>
-          导出配置
-        </button>
-        <button class="btn" id="config-import" type="button">导入配置</button>
-        <input type="file" id="config-file" accept="application/json,.json" hidden>
-      </div>
-      <p class="hint">兼容旧版（config_version 1）导出：全局曲线会自动迁移到每个已配置音箱。</p>
-      <dl class="kv compact" id="config-summary"></dl>
-      <p class="field-error" id="config-error" hidden></p>
-    </article>
-
-    <details class="card diagnostics-card" id="settings-advanced">
-      <summary class="advanced-summary">
-        <span class="advanced-title">高级诊断</span>
-        <span class="hint">音频引擎、网络与 ALSA、运行日志、故障信息</span>
-        <svg class="icon small chevron" aria-hidden="true"><use href="#icon-chevron-down"></use></svg>
-      </summary>
-      <div class="diag-body">
-        <section class="diag-section" aria-labelledby="diag-engine-title">
-          <h3 class="section-title" id="diag-engine-title">音频引擎统计</h3>
-          <dl class="kv compact" id="diag-engine"></dl>
-        </section>
-
-        <section class="diag-section" aria-labelledby="diag-alsa-title">
-          <h3 class="section-title" id="diag-alsa-title">网络与 ALSA 设备</h3>
-          <div class="chips" id="diag-interfaces"></div>
-          <dl class="kv compact" id="diag-alsa"></dl>
-          <p class="sub-label">/proc/asound/cards</p>
-          <pre class="code-block" id="diag-cards">—</pre>
-          <p class="sub-label">/proc/asound/pcm</p>
-          <pre class="code-block" id="diag-pcm">—</pre>
-        </section>
-
-        <section class="diag-section" aria-labelledby="diag-logs-title">
-          <div class="logs-head">
-            <h3 class="section-title" id="diag-logs-title">运行日志</h3>
-            <div class="logs-actions">
-              <input type="search" id="log-search" placeholder="搜索日志" aria-label="搜索日志">
-              <select id="log-filter" aria-label="按级别过滤">
-                <option value="">全部级别</option>
-                <option value="ERROR">错误</option>
-                <option value="WARN">警告</option>
-                <option value="INFO">信息</option>
-                <option value="DEBUG">调试</option>
-                <option value="TRACE">跟踪</option>
-              </select>
-              <button class="btn small" id="log-refresh" type="button">刷新</button>
-              <button class="btn small" id="log-copy" type="button">
-                <svg class="icon small" aria-hidden="true"><use href="#icon-copy"></use></svg>
-                复制
-              </button>
-              <button class="btn small" id="log-download" type="button">
-                <svg class="icon small" aria-hidden="true"><use href="#icon-download"></use></svg>
-                下载
-              </button>
-              <label class="checkbox-inline"><input type="checkbox" id="log-auto" checked> 自动刷新</label>
-            </div>
-          </div>
-          <div class="log-list" id="logs-list" role="log" aria-label="运行日志" tabindex="0"></div>
-          <p class="hint" id="logs-hint">—</p>
-        </section>
-
-        <section class="diag-section" aria-labelledby="diag-errors-title">
-          <h3 class="section-title" id="diag-errors-title">故障信息</h3>
-          <div class="issue-list" id="diag-errors"></div>
-        </section>
-      </div>
-    </details>
-  </section>
 </main>
 
 <div class="savebar" id="savebar" hidden>
@@ -591,7 +487,6 @@ try {
 <script src="js/speaker-instances.js"></script>
 <script src="js/page-audio.js"></script>
 <script src="js/page-receive.js"></script>
-<script src="js/page-settings.js"></script>
 <script src="js/glass.js"></script>
 <script src="js/main.js"></script>
 </body>

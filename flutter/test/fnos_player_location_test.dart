@@ -22,6 +22,7 @@ void main() {
         );
         expect(location.settings.queryParameters['instance'], id);
         expect(location.settings.fragment, '/settings');
+        expect(location.settings.path, location.page.path);
         expect(
           location.speakerPicker.path,
           '/app/fusionplay-fnos/speakers.html',

@@ -73,6 +73,10 @@ class SettingsView extends StatefulWidget {
     this.onInstallUpdate,
     this.saveUpdate,
     this.showHeader = true,
+    this.showHostControls = true,
+    this.extraActions = const [],
+    this.onOpenUpdate,
+    this.productVersion = fusionPlayVersion,
   });
 
   final AppState state;
@@ -115,6 +119,10 @@ class SettingsView extends StatefulWidget {
 
   /// When false the page title is omitted (hosted inside the glass overlay).
   final bool showHeader;
+  final bool showHostControls;
+  final List<({IconData icon, String label, VoidCallback onTap})> extraActions;
+  final VoidCallback? onOpenUpdate;
+  final String productVersion;
 
   @override
   State<SettingsView> createState() => _SettingsViewState();
@@ -259,30 +267,39 @@ class _SettingsViewState extends State<SettingsView> {
                           ),
                         ]),
                         SizedBox(height: cardSpacing),
-                        _card([
-                          _switchRow(
-                            asset: 'assets/icon-power-settings-new.svg',
-                            title: '开机自启',
-                            value: settings.startupEnabled,
-                            onChanged: widget.onStartup,
-                          ),
-                          _switchRow(
-                            asset: 'assets/auto-wake.svg',
-                            title: '自动唤起',
-                            value: settings.autoWakeEnabled,
-                            onChanged: widget.onAutoWake,
-                          ),
-                          _switchRow(
-                            icon: Icons.auto_awesome_rounded,
-                            title: '高级效果',
-                            value: settings.advancedEffectsEnabled,
-                            onChanged: widget.onAdvancedEffects,
-                          ),
-                        ]),
+                        if (widget.showHostControls)
+                          _card([
+                            _switchRow(
+                              asset: 'assets/icon-power-settings-new.svg',
+                              title: '开机自启',
+                              value: settings.startupEnabled,
+                              onChanged: widget.onStartup,
+                            ),
+                            _switchRow(
+                              asset: 'assets/auto-wake.svg',
+                              title: '自动唤起',
+                              value: settings.autoWakeEnabled,
+                              onChanged: widget.onAutoWake,
+                            ),
+                            _switchRow(
+                              icon: Icons.auto_awesome_rounded,
+                              title: '高级效果',
+                              value: settings.advancedEffectsEnabled,
+                              onChanged: widget.onAdvancedEffects,
+                            ),
+                          ]),
                         SizedBox(height: cardSpacing),
                         _card([
                           _aboutRow(),
                           if (_showUpdateRow) _checkUpdateRow(),
+                          for (final action in widget.extraActions)
+                            _row(
+                              leading: Icon(action.icon),
+                              title: action.label,
+                              onTap: action.onTap,
+                              enabled: !widget.state.busy,
+                              trailing: const Icon(Icons.chevron_right_rounded),
+                            ),
                           _exportLogsRow(),
                         ]),
                       ],
@@ -400,9 +417,9 @@ class _SettingsViewState extends State<SettingsView> {
   Widget _aboutRow() => _row(
     leading: _glassIcon(FusionIcons.about),
     title: '关于应用',
-    trailing: const Text(
-      fusionPlayVersion,
-      style: TextStyle(fontSize: 13, color: _GlassStyle.textSecondary),
+    trailing: Text(
+      widget.productVersion,
+      style: const TextStyle(fontSize: 13, color: _GlassStyle.textSecondary),
     ),
   );
 
@@ -445,18 +462,25 @@ class _SettingsViewState extends State<SettingsView> {
   }
 
   bool get _showUpdateRow =>
+      widget.onOpenUpdate != null ||
       widget.onCheckUpdate != null &&
-      (widget.saveUpdate != null ||
-          ((widget.isAndroid ??
-                  defaultTargetPlatform == TargetPlatform.android) &&
-              widget.onDownloadUpdate != null &&
-              widget.onInstallUpdate != null));
+          (widget.saveUpdate != null ||
+              ((widget.isAndroid ??
+                      defaultTargetPlatform == TargetPlatform.android) &&
+                  widget.onDownloadUpdate != null &&
+                  widget.onInstallUpdate != null));
 
   Widget _checkUpdateRow() {
     final busy = _checkingUpdate || _downloadingUpdate;
     final enabled = !busy && !widget.state.busy;
     void check() {
-      if (enabled) unawaited(_checkForUpdate());
+      if (!enabled) return;
+      final open = widget.onOpenUpdate;
+      if (open != null) {
+        open();
+      } else {
+        unawaited(_checkForUpdate());
+      }
     }
 
     return _row(

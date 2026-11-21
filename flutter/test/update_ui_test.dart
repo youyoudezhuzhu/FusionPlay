@@ -14,6 +14,8 @@ Future<void> _pumpSettings(
   Future<UpdateInstallResult> Function()? onInstallUpdate,
   DownloadUpdate? onDownload,
   SaveUpdate? onSave,
+  VoidCallback? onOpenUpdate,
+  VoidCallback? onDiagnostics,
   Size size = const Size(480, 1100),
 }) async {
   final initialFocus = FocusNode(debugLabel: 'settings-update-test');
@@ -42,6 +44,16 @@ Future<void> _pumpSettings(
           onExportLogs: () async {},
           isAndroid: isAndroid,
           saveUpdate: onSave,
+          onOpenUpdate: onOpenUpdate,
+          showHostControls: onDiagnostics == null,
+          extraActions: [
+            if (onDiagnostics != null)
+              (
+                icon: Icons.monitor_heart_outlined,
+                label: '日志与故障信息',
+                onTap: onDiagnostics,
+              ),
+          ],
           onCheckUpdate: onCheckUpdate,
           onDownloadUpdate: onDownload ?? (_, _) async {},
           onInstallUpdate: onInstallUpdate == null
@@ -71,6 +83,26 @@ const _available = UpdateCheckResult(
 );
 
 void main() {
+  testWidgets('飞牛设置复用更新和诊断行，并隐藏宿主专有开关', (tester) async {
+    var updates = 0;
+    var diagnostics = 0;
+    await _pumpSettings(
+      tester,
+      isAndroid: false,
+      onOpenUpdate: () => updates++,
+      onDiagnostics: () => diagnostics++,
+    );
+
+    expect(find.text('开机自启'), findsNothing);
+    expect(find.text('自动唤起'), findsNothing);
+    await _tapCheckUpdate(tester);
+    expect(updates, 1);
+    final entry = find.text('日志与故障信息');
+    await tester.ensureVisible(entry);
+    await tester.tap(entry);
+    expect(diagnostics, 1);
+  });
+
   testWidgets('没有保存安装包能力的平台隐藏更新入口', (tester) async {
     await _pumpSettings(
       tester,

@@ -782,20 +782,17 @@ fn handle_core_event(json: String, state: SharedState, dlna: Arc<DlnaPlayer>) {
             std::thread::Builder::new()
                 .name("dlna-media".into())
                 .spawn(move || {
-                    let result = serde::Deserialize::deserialize(&value)
-                        .map_err(anyhow::Error::from)
-                        .and_then(|track| dlna.play_track(&track));
-                    if let Err(error) = result {
-                        let message = format!("DLNA 播放失败：{error:#}");
-                        tracing::error!("{message}");
-                        state.record_error(message);
-                        let mut runtime = state.state.write().unwrap();
-                        if runtime.dlna.enabled {
-                            set_proto(
-                                &mut runtime.dlna,
-                                proto_state::ERROR,
-                                "DLNA 播放失败（详见诊断日志）",
-                            );
+                    match serde::Deserialize::deserialize(&value) {
+                        Ok(track) => {
+                            // DlnaPlayer records and sanitizes its own playback failures.
+                            let _ = dlna.play_track(&track);
+                        }
+                        Err(error) => {
+                            state.record_error(format!("DLNA 媒体事件无效：{error}"));
+                            let mut runtime = state.state.write().unwrap();
+                            if runtime.dlna.enabled {
+                                set_proto(&mut runtime.dlna, proto_state::ERROR, "DLNA 媒体信息无效");
+                            }
                         }
                     }
                 })

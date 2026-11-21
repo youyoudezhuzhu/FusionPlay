@@ -8,14 +8,13 @@ window.FP = window.FP || {};
 (function (FP) {
   const u = FP.util;
 
-  const ROUTES = ['overview', 'audio', 'receive', 'settings'];
-  const TITLES = { overview: '概览', audio: '音频', receive: '接收', settings: '设置' };
+  const ROUTES = ['overview', 'audio', 'receive'];
+  const TITLES = { overview: '概览', audio: '音频', receive: '接收' };
   const THEMES = ['system', 'light', 'dark'];
   const THEME_LABELS = { system: '跟随系统', light: '浅色', dark: '深色' };
   const THEME_ICONS = { system: 'auto', light: 'sun', dark: 'moon' };
   const POLL_MS = 2000;
   const originId = new URLSearchParams(location.search).get('instance');
-  if (originId) document.getElementById('get-update').href = 'update.html?instance=' + encodeURIComponent(originId);
 
   const store = FP.createStore();
   const updateArtwork = FP.initGlass();
@@ -413,6 +412,7 @@ window.FP = window.FP || {};
 
   function init() {
     el('return-player').href = FP.playerUrl(originId);
+    el('open-settings').href = FP.playerUrl(originId) + '#/settings';
     store.subscribe(function () {
       const base = store.state.baseline;
       if (!base || !originId || originId === 'default') return;
@@ -426,8 +426,7 @@ window.FP = window.FP || {};
     pages = {
       overview: FP.createOverviewPage(ctx),
       audio: FP.createAudioPage(ctx),
-      receive: FP.createReceivePage(ctx),
-      settings: FP.createSettingsPage(ctx)
+      receive: FP.createReceivePage(ctx)
     };
     updateServiceStatus();
     navigate();

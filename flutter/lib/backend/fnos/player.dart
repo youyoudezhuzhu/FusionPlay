@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:convert';
 import 'dart:js_interop';
 
 import 'package:flutter/material.dart';
@@ -13,13 +12,12 @@ import '../../ui/liquid_glass.dart';
 import '../../ui/player_view.dart';
 import '../../ui/vector_icon.dart';
 import 'player_location.dart';
+import 'settings.dart';
 import '../ui_diagnostics.dart';
 
 @JS('fpRecordBrowserError')
 external void _recordError(JSString message);
 
-@JS('fpRead')
-external JSPromise<JSString> _read(JSString url);
 @JS('fpControl')
 external JSPromise<JSAny?> _control(
   JSString url,
@@ -33,11 +31,6 @@ external void _navigate(JSString url);
 external void _pin(JSString url);
 @JS('fpSpeakerName')
 external void _setTabName(JSString name);
-
-Future<Map<String, dynamic>> _readMap(Uri url) async {
-  final result = await _read(url.toString().toJS).toDart;
-  return jsonDecode(result.toDart) as Map<String, dynamic>;
-}
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
@@ -74,13 +67,22 @@ class _ReceiverState extends State<_Receiver> {
     super.initState();
     if (location.pinned) refreshSpeakers();
     refresh();
+    if (location.page.fragment == '/settings') {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        final page = location.page.removeFragment();
+        location = SpeakerPlayerLocation(page);
+        _pin(page.toString().toJS);
+        menu(showSettings: true);
+      });
+    }
   }
 
   Future<void> refreshSpeakers() async {
     if (loadingSpeakers) return;
     loadingSpeakers = true;
     try {
-      final catalog = await _readMap(location.catalog);
+      final catalog = await fnosRequest(location.catalog);
       final next = {
         for (final item in catalog['instances'] as List)
           item['id'] as String: item['name'] as String,
@@ -109,7 +111,7 @@ class _ReceiverState extends State<_Receiver> {
     try {
       if (!location.pinned) await refreshSpeakers();
       if (!mounted) return;
-      final json = await _readMap(location.api('status'));
+      final json = await fnosRequest(location.api('status'));
       if (!mounted) return;
       final source = json['current_source'] as String?;
       final media = source == null ? const {} : json['media'] as Map;
@@ -185,15 +187,17 @@ class _ReceiverState extends State<_Receiver> {
 
   final menuKey = GlobalKey();
   final menuFocus = FocusNode();
+  final settingsFocus = FocusNode();
   final speakerKey = GlobalKey();
   final speakerFocus = FocusNode();
   bool speakerMenu = false;
   final menuNodes = List.generate(2, (_) => FocusNode());
   MorphStage? stage;
   Rect? anchor;
+  bool focusesSettings = false;
   Uri? destination;
 
-  void menu({bool forSpeakers = false}) {
+  void menu({bool forSpeakers = false, bool showSettings = false}) {
     final trigger = forSpeakers ? speakerKey : menuKey;
     final box = trigger.currentContext?.findRenderObject();
     if (box is! RenderBox || stage != null) return;
@@ -201,12 +205,28 @@ class _ReceiverState extends State<_Receiver> {
     setState(() {
       speakerMenu = forSpeakers;
       anchor = box.localToGlobal(Offset.zero) & box.size;
-      stage = MorphStage.menu;
+      focusesSettings = showSettings;
+      stage = showSettings ? MorphStage.settings : MorphStage.menu;
     });
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (mounted) menuNodes.first.requestFocus();
+    if (!showSettings) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) menuNodes.first.requestFocus();
+      });
+    }
+  }
+
+  Uri get updatePage => location.root
+      .resolve('update.html')
+      .replace(queryParameters: location.page.queryParameters);
+
+  void openSettings() {
+    setState(() {
+      focusesSettings = true;
+      stage = MorphStage.settings;
     });
   }
+
+  void closeSettings() => setState(() => stage = MorphStage.menu);
 
   void closeMenu([Uri? route]) {
     if (stage == MorphStage.closing) return;
@@ -215,7 +235,10 @@ class _ReceiverState extends State<_Receiver> {
   }
 
   void menuClosed() {
-    setState(() => stage = null);
+    setState(() {
+      stage = null;
+      focusesSettings = false;
+    });
     if (destination case final Uri route) {
       _navigate(route.toString().toJS);
     } else {
@@ -304,7 +327,7 @@ class _ReceiverState extends State<_Receiver> {
                   bindings: {
                     const SingleActivator(LogicalKeyboardKey.escape): () {
                       if (stage == MorphStage.settings) {
-                        setState(() => stage = MorphStage.menu);
+                        closeSettings();
                       } else {
                         closeMenu();
                       }
@@ -334,28 +357,32 @@ class _ReceiverState extends State<_Receiver> {
                             color: Colors.white,
                           ),
                           label: '设置',
-                          onSelected: () => closeMenu(location.settings),
+                          onSelected: openSettings,
                         ),
                         FusionMenuItem(
                           icon: const Icon(Icons.system_update_rounded),
                           label: '检查更新',
-                          onSelected: () => closeMenu(
-                            location.root
-                                .resolve('update.html')
-                                .replace(
-                                  queryParameters:
-                                      location.page.queryParameters,
-                                ),
-                          ),
+                          onSelected: () => closeMenu(updatePage),
                         ),
                       ],
                     ],
                     settingsTitle: '设置',
-                    settingsChild: const SizedBox.shrink(),
+                    settingsChild: focusesSettings
+                        ? FnosSettings(
+                            location: location,
+                            initialFocus: settingsFocus,
+                            onClose: closeSettings,
+                            onOpenUpdate: () => closeMenu(updatePage),
+                          )
+                        : const SizedBox.shrink(),
                     onDismiss: closeMenu,
-                    onSettingsClose: closeMenu,
+                    onSettingsClose: closeSettings,
                     onTransitionCompleted: (s) {
                       if (s == MorphStage.menu) menuNodes.first.requestFocus();
+                      if (s == MorphStage.settings &&
+                          settingsFocus.context != null) {
+                        settingsFocus.requestFocus();
+                      }
                     },
                     onClosed: menuClosed,
                   ),
@@ -379,6 +406,7 @@ class _ReceiverState extends State<_Receiver> {
   void dispose() {
     timer?.cancel();
     menuFocus.dispose();
+    settingsFocus.dispose();
     speakerFocus.dispose();
     for (final node in menuNodes) {
       node.dispose();

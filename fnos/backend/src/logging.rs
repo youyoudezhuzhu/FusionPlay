@@ -117,7 +117,8 @@ pub fn recent_lines(lines: usize) -> Vec<String> {
         return Vec::new();
     };
     let text = String::from_utf8_lossy(&bytes);
-    let mut rows: Vec<_> = text.lines().rev().take(lines).map(str::to_owned).collect();
+    let mut rows: Vec<_> = text.lines().rev().take(lines)
+        .map(|line| shared_logging::redact(line).into_owned()).collect();
     rows.reverse();
     rows
 }

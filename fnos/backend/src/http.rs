@@ -540,6 +540,39 @@ fn handle(
             Ok(config) => respond_json(respond, json!({"ok": true, "config": config})),
             Err(error) => respond_error(respond, 400, &format!("{error:#}")),
         },
+        ("PATCH", "/api/config") => {
+            #[derive(serde::Deserialize)]
+            #[serde(deny_unknown_fields)]
+            struct SettingsPatch {
+                name: Option<String>,
+                airplay: Option<bool>,
+                dlna: Option<bool>,
+                miplay: Option<bool>,
+                device_type: Option<String>,
+                interface: Option<String>,
+                pin: Option<String>,
+            }
+            let result = serde_json::from_slice::<SettingsPatch>(&request.body)
+                .context("设置字段不合法")
+                .and_then(|patch| app.update_config(|config| {
+                    use crate::config::MIPLAY_DEVICE_TYPES;
+                    if let Some(name) = patch.name { config.receiver.name = name.trim().into(); }
+                    if let Some(enabled) = patch.airplay { config.protocols.airplay.enabled = enabled; }
+                    if let Some(enabled) = patch.dlna { config.protocols.dlna.enabled = enabled; }
+                    if let Some(enabled) = patch.miplay { config.protocols.miplay.enabled = enabled; }
+                    if let Some(device_type) = patch.device_type {
+                        anyhow::ensure!(MIPLAY_DEVICE_TYPES.contains(&device_type.as_str()), "无效的妙播设备类型");
+                        config.protocols.miplay.device_type = device_type;
+                    }
+                    if let Some(interface) = patch.interface { config.receiver.interface = interface; }
+                    if let Some(pin) = patch.pin { config.receiver.pin = (!pin.is_empty()).then_some(pin); }
+                    Ok(())
+                }));
+            match result {
+                Ok(config) => respond_json(respond, json!({"config": config})),
+                Err(error) => respond_error(respond, 400, &format!("{error:#}")),
+            }
+        }
         ("POST", "/api/player") => {
             let result = request_json(&request).and_then(|body| {
                 let source = body["source"].as_str().context("缺少播放来源")?;
