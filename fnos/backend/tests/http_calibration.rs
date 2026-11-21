@@ -11,7 +11,7 @@ use std::sync::{Arc, RwLock};
 use std::time::Duration;
 
 use fusionplay_fnos::audio::{AudioEngine, NullBackend};
-use fusionplay_fnos::config::{AudioSettings, Config, DeviceSetting};
+use fusionplay_fnos::config::{Config, DeviceSetting};
 use fusionplay_fnos::http::{self, HttpApp};
 use fusionplay_fnos::state::AppState;
 use fusionplay_fnos::volume::{CurveKind, VolumeCurve};
@@ -75,6 +75,7 @@ fn start_app(dir: &Path, devices: Vec<DeviceSetting>) -> (Arc<HttpApp>, Http) {
     let config = Config::load(&config_path).expect("load initial config");
     let engine = AudioEngine::new(config.audio.clone(), NullBackend::new()).expect("engine");
     let app = Arc::new(HttpApp {
+        instances: None,
         config_path,
         config: RwLock::new(config),
         state: AppState::new(),
@@ -240,4 +241,42 @@ fn output_groups_persist_without_changing_calibration_or_receiver_identity() {
     assert_eq!(saved["audio"]["devices"][1]["delay_ms"], 120.0);
     assert!(!app.engine.settings().devices[1].enabled);
     assert_eq!(saved["receiver"], config["receiver"]);
+}
+
+#[test]
+fn catalog_scopes_commands_and_never_falls_back_to_default_for_missing_speakers() {
+    let dir = tempfile::tempdir().unwrap();
+    let (app, http) = start_app(dir.path(), vec![device("hw:main", VolumeCurve::default())]);
+    let mut cfg = serde_json::to_value(app.snapshot()).unwrap();
+    cfg["audio"]["instances"] = serde_json::json!([{"id":"kitchen","name":"Kitchen","device_id":"hw:usb"}]);
+    assert_eq!(http.request("PUT", "/api/config", Some(&cfg.to_string())).0, 200);
+    let (code, catalog) = http.request("GET", "/app/fusionplay-fnos/api/instances", None);
+    assert_eq!(code, 200);
+    let catalog: serde_json::Value = serde_json::from_str(&catalog).unwrap();
+    assert_eq!(catalog["default"], "default");
+    assert_eq!(catalog["instances"][0]["device_id"], "hw:main");
+    assert_eq!(catalog["instances"][1]["name"], "Kitchen");
+    assert_eq!(http.request("GET", "/api/instances/default/status", None).0, 200);
+    // This fixture deliberately has no worker supervisor. The default route
+    // is healthy, but neither status nor commands may leak across instances.
+    assert_eq!(http.request("GET", "/api/instances/kitchen/status", None).0, 503);
+    let command = Some(r#"{"source":"airplay","command":"play_pause"}"#);
+    assert_eq!(http.request("POST", "/api/instances/kitchen/player", command).0, 503);
+    assert_eq!(http.request("POST", "/api/instances/removed/player", command).0, 404);
+    assert_eq!(http.request("GET", "/api/instances/kitchen/artwork/../config.json", None).0, 404);
+    assert_eq!(http.request("GET", "/api/instances/default/config", None).0, 404);
+
+    cfg["audio"]["instances"][0]["device_id"] = "hw:main".into();
+    assert_eq!(http.request("PUT", "/api/config", Some(&cfg.to_string())).0, 400);
+    assert_eq!(Config::load(&app.config_path).unwrap().audio.instances[0].device_id, "hw:usb");
+
+    // Giving the last default output to an independent speaker removes the
+    // dormant default room from the catalog and its scoped control API.
+    cfg["audio"]["devices"][0]["enabled"] = false.into();
+    assert_eq!(http.request("PUT", "/api/config", Some(&cfg.to_string())).0, 200);
+    let catalog: serde_json::Value =
+        serde_json::from_str(&http.request("GET", "/api/instances", None).1).unwrap();
+    assert_eq!(catalog["default"], "kitchen");
+    assert_eq!(catalog["instances"].as_array().unwrap().len(), 1);
+    assert_eq!(http.request("GET", "/api/instances/default/status", None).0, 404);
 }

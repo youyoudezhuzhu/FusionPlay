@@ -19,6 +19,7 @@ use crate::state::SharedState;
 use crate::volume::{CurveKind, VolumeCurve};
 
 pub struct HttpApp {
+    pub instances: Option<Arc<crate::instances::SpeakerSupervisor>>,
     pub config_path: PathBuf,
     pub config: RwLock<Config>,
     pub state: SharedState,
@@ -32,15 +33,33 @@ pub struct HttpApp {
 }
 
 impl HttpApp {
-    pub fn save_config(&self, mut config: Config) -> Result<()> {
-        // Any write path (config PUT, calibration PUT, import) must migrate
-        // v1 exports before validation so a legacy global curve is copied to
-        // the devices instead of being silently dropped.
-        config.migrate();
-        config.validate()?;
-        config.save(&self.config_path)?;
-        *self.config.write().unwrap() = config;
-        Ok(())
+    /// Serialize a change against the current snapshot, including device
+    /// ownership changes and their corresponding process transitions.
+    fn update_config(&self, edit: impl FnOnce(&mut Config) -> Result<()>) -> Result<Config> {
+        let mut current = self.config.write().unwrap();
+        let mut next = current.clone();
+        edit(&mut next)?;
+        next.migrate();
+        next.validate()?;
+        let apply = |cfg: &Config| -> Result<()> {
+            self.engine.configure(cfg.audio.clone())?;
+            if let Some(supervisor) = &self.instances {
+                supervisor.apply(cfg)?;
+            }
+            if let Some(hosts) = self.protocols.lock().unwrap().as_ref() {
+                hosts.restart(cfg)?;
+            }
+            logging::set_level(&cfg.logging.level)
+        };
+        if let Err(error) = apply(&next).and_then(|()| next.save(&self.config_path)) {
+            if let Err(rollback) = apply(&current) {
+                tracing::error!("无法恢复先前的接收器配置：{rollback:#}");
+                return Err(error.context(format!("恢复先前配置时出错：{rollback:#}")));
+            }
+            return Err(error);
+        }
+        *current = next.clone();
+        Ok(next)
     }
 
     pub fn snapshot(&self) -> Config {
@@ -65,7 +84,12 @@ pub fn start(
         let listener = std::os::unix::net::UnixListener::bind(&path)
             .with_context(|| format!("无法绑定 Unix socket {}", path.display()))?;
         use std::os::unix::fs::PermissionsExt;
-        let _ = std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o666));
+        let mode = if std::env::var_os(crate::instances::PORT_OFFSET).is_some() {
+            0o600
+        } else {
+            0o666 // fnOS unified gateway
+        };
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(mode))?;
         let app = Arc::clone(&app);
         handles.push(
             std::thread::Builder::new()
@@ -190,7 +214,9 @@ fn write_response<S: Write>(
         400 => "Bad Request",
         404 => "Not Found",
         405 => "Method Not Allowed",
+        409 => "Conflict",
         500 => "Internal Server Error",
+        503 => "Service Unavailable",
         _ => "OK",
     };
     let mut head = format!(
@@ -232,6 +258,65 @@ fn request_json(request: &Request) -> Result<Value> {
     serde_json::from_slice(&request.body).context("请求体不是合法 JSON")
 }
 
+/// Send a gateway/supervisor-selected route to a private worker. The caller
+/// constructs the route and no client-supplied headers are forwarded.
+pub(crate) fn request_worker(
+    socket: &Path,
+    method: &str,
+    route: &str,
+    body: &[u8],
+) -> Result<(u16, String, Vec<u8>)> {
+    use std::os::unix::net::UnixStream;
+    use std::time::Duration;
+    let mut stream = UnixStream::connect(socket)?;
+    let timeout = Some(Duration::from_secs(if method == "PUT" { 15 } else { 5 }));
+    stream.set_read_timeout(timeout)?;
+    stream.set_write_timeout(timeout)?;
+    write!(stream, "{method} {route} HTTP/1.1\r\nHost: localhost\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n", body.len())?;
+    stream.write_all(body)?;
+
+    // Worker HTTP always sends a length and closes the socket. Bound the
+    // response even for cover art; preserve raw image bytes without decoding.
+    let limit = 16 * 1024 * 1024;
+    let mut bytes = Vec::new();
+    stream.take(limit + 1).read_to_end(&mut bytes)?;
+    anyhow::ensure!(bytes.len() as u64 <= limit, "实例响应过大");
+    let end = find_subslice(&bytes, b"\r\n\r\n").context("实例响应不完整")?;
+    let mut lines = std::str::from_utf8(&bytes[..end])?.split("\r\n");
+    let status = lines.next().and_then(|line| line.split_whitespace().nth(1))
+        .context("缺少响应状态")?.parse::<u16>()?;
+    let mut length = None;
+    let mut mime = "application/octet-stream".to_owned();
+    for line in lines {
+        let Some((key, value)) = line.split_once(':') else { continue };
+        if key.eq_ignore_ascii_case("Content-Length") {
+            length = Some(value.trim().parse::<usize>()?);
+        } else if key.eq_ignore_ascii_case("Content-Type") {
+            mime = value.trim().to_owned();
+        }
+    }
+    let payload = bytes.split_off(end + 4);
+    anyhow::ensure!(Some(payload.len()) == length, "实例响应长度不符");
+    Ok((status, mime, payload))
+}
+
+fn forward_instance(
+    app: &HttpApp,
+    id: &str,
+    method: &str,
+    route: &str,
+    body: &[u8],
+    respond: &mut dyn FnMut(u16, &str, &[u8], &[(&str, &str)]) -> Result<()>,
+) -> Result<()> {
+    let reply = app.instances.as_ref().and_then(|supervisor| supervisor.socket(id))
+        .context("实例未启动")
+        .and_then(|socket| request_worker(&socket, method, route, body));
+    match reply {
+        Ok((status, mime, bytes)) => respond(status, &mime, &bytes, &[]),
+        Err(err) => respond_error(respond, 503, &format!("输出实例暂不可用：{err}")),
+    }
+}
+
 fn handle(
     request: Request,
     respond: &mut dyn FnMut(u16, &str, &[u8], &[(&str, &str)]) -> Result<()>,
@@ -254,9 +339,44 @@ fn handle(
         path = "/".into();
     }
     let method = request.method.clone();
-    let request = std::sync::Arc::new(request);
     let method = method.as_str();
+    if let Some(scoped) = path.strip_prefix("/api/instances/") {
+        let Some((id, target)) = scoped.split_once('/') else {
+            return respond_error(respond, 404, "未知实例接口");
+        };
+        let route = match (method, target) {
+            ("GET", "status") | ("POST", "player") => format!("/api/{target}"),
+            ("GET", art) if art.strip_prefix("artwork/").is_some_and(artwork_filename) => format!("/{art}"),
+            _ => return respond_error(respond, 404, "未知实例接口"),
+        };
+        if id != "default" {
+            let cfg = app.config.read().unwrap();
+            if !cfg.audio.instances.iter().any(|instance| instance.id == id) {
+                return respond_error(respond, 404, "输出实例不存在");
+            }
+            return forward_instance(&app, id, method, &route, &request.body, respond);
+        }
+        if !app.config.read().unwrap().has_primary() {
+            return respond_error(respond, 404, "默认接收器未分配输出");
+        }
+        path = route;
+    }
     match (method, path.as_str()) {
+        ("GET", "/api/instances") => {
+            let cfg = app.config.read().unwrap();
+            let mut devices = cfg.audio.devices.iter().filter(|device| device.enabled);
+            let first = devices.next().map(|device| &device.id);
+            let sole_output = if devices.next().is_none() { first } else { None };
+            let mut instances = Vec::new();
+            let default = if cfg.has_primary() {
+                instances.push(json!({"id":"default","name":cfg.receiver.name,"device_id":sole_output}));
+                "default"
+            } else {
+                cfg.audio.instances.first().map(|s| s.id.as_str()).unwrap_or("default")
+            };
+            instances.extend(cfg.audio.instances.iter().map(|s| json!(s)));
+            respond_json(respond, json!({"default": default,"instances": instances}))
+        }
         ("GET", "/healthz") => respond_json(&mut *respond, json!({
             "status": "ok",
             "version": crate::VERSION,
@@ -295,18 +415,11 @@ fn handle(
         }
         ("GET", "/api/config") => respond_json(&mut *respond, json!(app.snapshot())),
         ("PUT", "/api/config") => match request_json(&request).and_then(|value| {
-            let mut incoming: Config = serde_json::from_value(value).context("配置字段不合法")?;
-            incoming.migrate();
-            incoming.validate()?;
-            app.save_config(incoming.clone())?;
-            app.engine.configure(incoming.audio.clone())?;
-            if let Some(hosts) = app.protocols.lock().unwrap().clone() {
-                hosts.restart(&incoming)?;
-            }
-            Ok(incoming)
+            let incoming: Config = serde_json::from_value(value).context("配置字段不合法")?;
+            app.update_config(|cfg| { *cfg = incoming; Ok(()) })
         }) {
-            Ok(config) => respond_json(&mut *respond, json!({"ok": true, "config": config})),
-            Err(error) => respond_error(&mut *respond, 400, &format!("{error:#}")),
+            Ok(config) => respond_json(respond, json!({"ok": true, "config": config})),
+            Err(error) => respond_error(respond, 400, &format!("{error:#}")),
         },
         ("POST", "/api/player") => {
             let result = request_json(&request).and_then(|body| {
@@ -322,8 +435,9 @@ fn handle(
         }
         ("GET", "/api/devices") => respond_json(&mut *respond, json!({"devices": app.engine.devices()})),
         ("POST", "/api/devices/refresh") => {
-            let config = app.snapshot();
+            let config = app.config.read().unwrap();
             let result = app.engine.configure(config.audio.clone());
+            drop(config);
             match result {
                 Ok(()) => respond_json(&mut *respond, json!({"ok": true, "devices": app.engine.devices()})),
                 Err(error) => respond_error(&mut *respond, 500, &format!("{error:#}")),
@@ -332,6 +446,10 @@ fn handle(
         ("POST", "/api/devices/test") => match request_json(&request) {
             Ok(value) => {
                 let id = value.get("id").and_then(|v| v.as_str()).unwrap_or("");
+                let cfg = app.config.read().unwrap();
+                if let Some(owner) = cfg.audio.instances.iter().find(|speaker| speaker.device_id == id) {
+                    return forward_instance(&app, &owner.id, method, "/api/devices/test", &request.body, respond);
+                }
                 match app.engine.test_tone(id) {
                     Ok(()) => respond_json(&mut *respond, json!({"ok": true})),
                     Err(error) => respond_error(&mut *respond, 400, &format!("{error:#}")),
@@ -349,9 +467,8 @@ fn handle(
                 "devices": config.audio.devices,
             }))
         }
-        ("PUT", "/api/calibration") => match request_json(&request) {
-            Ok(value) => {
-                let mut config = app.snapshot();
+        ("PUT", "/api/calibration") => match request_json(&request).and_then(|value| {
+            app.update_config(|config| {
                 if let Some(percent) = value.get("global_attenuation_percent").and_then(|v| v.as_f64()) {
                     config.audio.global_attenuation_percent = percent as f32;
                 }
@@ -365,14 +482,14 @@ fn handle(
                     match serde_json::from_value::<VolumeCurve>(curve.clone()) {
                         Ok(parsed) => {
                             if let Err(error) = parsed.validate() {
-                                return respond_error(&mut *respond, 400, &error);
+                                anyhow::bail!("{error}");
                             }
                             for device in &mut config.audio.devices {
                                 device.curve = parsed.clone();
                             }
                         }
                         Err(error) => {
-                            return respond_error(&mut *respond, 400, &format!("curve 不合法：{error}"));
+                            anyhow::bail!("curve 不合法：{error}");
                         }
                     }
                 }
@@ -400,35 +517,31 @@ fn handle(
                             match serde_json::from_value::<VolumeCurve>(curve.clone()) {
                                 Ok(parsed) => {
                                     if let Err(error) = parsed.validate() {
-                                        return respond_error(&mut *respond, 400, &format!("设备 {id} 的曲线不合法：{error}"));
+                                        anyhow::bail!("设备 {id} 的曲线不合法：{error}");
                                     }
                                     device.curve = parsed;
                                 }
                                 Err(error) => {
-                                    return respond_error(&mut *respond, 400, &format!("设备 {id} 的曲线不合法：{error}"));
+                                    anyhow::bail!("设备 {id} 的曲线不合法：{error}");
                                 }
                             }
                         }
                     }
                     if !unknown.is_empty() {
-                        return respond_error(&mut *respond, 400, &format!("未知设备：{}", unknown.join(", ")));
+                        anyhow::bail!("未知设备：{}", unknown.join(", "));
                     }
                 }
-                match app.save_config(config.clone()) {
-                    Ok(()) => match app.engine.configure(config.audio.clone()) {
-                        Ok(()) => respond_json(&mut *respond, json!({
-                            "ok": true,
-                            "config_version": config.config_version,
-                            "global_attenuation_percent": config.audio.global_attenuation_percent,
-                            "muted": config.audio.muted,
-                            "devices": config.audio.devices,
-                        })),
-                        Err(error) => respond_error(&mut *respond, 500, &format!("{error:#}")),
-                    },
-                    Err(error) => respond_error(&mut *respond, 400, &format!("{error:#}")),
-                }
-            }
-            Err(error) => respond_error(&mut *respond, 400, &format!("{error:#}")),
+                Ok(())
+            })
+        }) {
+            Ok(config) => respond_json(respond, json!({
+                "ok": true,
+                "config_version": config.config_version,
+                "global_attenuation_percent": config.audio.global_attenuation_percent,
+                "muted": config.audio.muted,
+                "devices": config.audio.devices,
+            })),
+            Err(error) => respond_error(respond, 400, &format!("{error:#}")),
         },
         ("POST", "/api/calibration/preview") => match request_json(&request) {
             Ok(value) => {
@@ -483,48 +596,23 @@ fn handle(
             let lines = requested.clamp(1, 500);
             respond_json(&mut *respond, json!({"lines": logging::recent_lines(lines), "requested": requested}))
         }
-        ("POST", "/api/logs/level") => match request_json(&request) {
-            Ok(value) => {
-                let level = value.get("level").and_then(|v| v.as_str()).unwrap_or("info");
-                let mut config = app.snapshot();
-                config.logging.level = level.to_string();
-                match logging::set_level(level) {
-                    Ok(()) => {
-                        let _ = app.save_config(config);
-                        respond_json(&mut *respond, json!({"ok": true, "level": logging::level_name()}))
-                    }
-                    Err(error) => respond_error(&mut *respond, 500, &format!("{error:#}")),
-                }
-            }
-            Err(error) => respond_error(&mut *respond, 400, &format!("{error:#}")),
+        ("POST", "/api/logs/level") => match request_json(&request).and_then(|value| {
+            app.update_config(|cfg| {
+                cfg.logging.level = value.get("level").and_then(Value::as_str).unwrap_or("info").into();
+                Ok(())
+            })
+        }) {
+            Ok(_) => respond_json(respond, json!({"ok":true,"level":logging::level_name()})),
+            Err(error) => respond_error(respond, 400, &format!("{error:#}")),
         },
         ("GET", "/api/export") => respond_json(&mut *respond, json!({"ok": true, "config": app.snapshot()})),
-        ("POST", "/api/import") => match request_json(&request) {
-            Ok(value) => {
-                let incoming = match value.get("config") {
-                    Some(config) => serde_json::from_value::<Config>(config.clone()),
-                    None => serde_json::from_value::<Config>(value),
-                };
-                match incoming.context("配置字段不合法") {
-                    Ok(mut config) => {
-                        config.migrate();
-                        match app.save_config(config.clone()) {
-                        Ok(()) => match app.engine.configure(config.audio.clone()) {
-                            Ok(()) => {
-                                if let Some(hosts) = app.protocols.lock().unwrap().clone() {
-                                    let _ = hosts.restart(&config);
-                                }
-                                respond_json(&mut *respond, json!({"ok": true, "config": config}))
-                            }
-                            Err(error) => respond_error(&mut *respond, 500, &format!("{error:#}")),
-                        },
-                            Err(error) => respond_error(&mut *respond, 400, &format!("{error:#}")),
-                        }
-                    }
-                    Err(error) => respond_error(&mut *respond, 400, &format!("{error:#}")),
-                }
-            }
-            Err(error) => respond_error(&mut *respond, 400, &format!("{error:#}")),
+        ("POST", "/api/import") => match request_json(&request).and_then(|mut value| {
+            let incoming: Config = serde_json::from_value(value.get_mut("config").map(Value::take).unwrap_or(value))
+                .context("配置字段不合法")?;
+            app.update_config(|cfg| { *cfg = incoming; Ok(()) })
+        }) {
+            Ok(config) => respond_json(respond, json!({"ok": true, "config": config})),
+            Err(error) => respond_error(respond, 400, &format!("{error:#}")),
         },
         ("GET", "/api/diagnostics") => {
             let alsa = crate::audio::alsa::diagnostics();
@@ -613,5 +701,37 @@ pub fn curve_label(kind: CurveKind) -> &'static str {
         CurveKind::Soft => "soft",
         CurveKind::Balanced => "balanced",
         CurveKind::Custom => "custom",
+    }
+}
+
+#[cfg(test)]
+mod instance_proxy_tests {
+    use super::*;
+    use std::os::unix::net::UnixListener;
+
+    #[test]
+    fn worker_proxy_preserves_binary_art_and_player_error_status() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("worker.sock");
+        let listener = UnixListener::bind(&path).unwrap();
+        let handle = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let request = read_request(&mut stream).unwrap();
+            assert_eq!(request.path, "/artwork/cover-art-aaaaaaaaaaaaaaaa.jpg");
+            write_response(&mut stream, 200, "image/jpeg", &[0xff, 0xd8, 0xff], &[]).unwrap();
+            drop(stream);
+            let (mut stream, _) = listener.accept().unwrap();
+            let request = read_request(&mut stream).unwrap();
+            assert_eq!(request.method, "POST");
+            assert_eq!(request.path, "/api/player");
+            assert_eq!(&request.body, br#"{"source":"airplay"}"#);
+            write_response(&mut stream, 409, "application/json", br#"{"ok":false}"#, &[]).unwrap();
+        });
+        let art = request_worker(&path, "GET", "/artwork/cover-art-aaaaaaaaaaaaaaaa.jpg", &[]).unwrap();
+        assert_eq!(art, (200, "image/jpeg".into(), vec![0xff, 0xd8, 0xff]));
+        let result = request_worker(&path, "POST", "/api/player", br#"{"source":"airplay"}"#).unwrap();
+        assert_eq!(result.0, 409);
+        assert_eq!(result.2, br#"{"ok":false}"#);
+        handle.join().unwrap();
     }
 }
