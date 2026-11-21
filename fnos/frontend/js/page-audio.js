@@ -15,19 +15,10 @@ window.FP = window.FP || {};
     const speakerSettings = FP.createSpeakerSettings(ctx, render);
     let bound = false;
     let active = false;
-    let chart = null;
     let selectedId = null;
-    let curveOnly = false;
-    let curveChoicesKey;
-    const originId = new URLSearchParams(location.search).get('instance');
     let pendingDeleteId = null;
     let deleteTimer = null;
     let refreshing = false;
-    let previewSeq = 0;
-    let previewTimer = null;
-    let previewSamples = null;
-    let previewNote = '';
-    let chartKey = '';
     let rateSig = '';
 
     function el(id) {
@@ -97,46 +88,12 @@ window.FP = window.FP || {};
       return parts.join(' · ');
     }
 
-    function selectCurveTarget() {
-      const audio = store.getDraft()?.audio;
-      const instance = audio?.instances?.find(s => s.id === originId);
-      const outputs = draftDevices().filter(d => originId === 'default'
-        ? d.enabled : instance && instance.device_id === d.id);
-      const select = el('curve-device');
-      const key = JSON.stringify(outputs.map(d => [d.id, d.name]));
-      if (key !== curveChoicesKey) {
-        curveChoicesKey = key;
-        select.replaceChildren(new Option('请选择', ''), ...outputs.map(d =>
-          new Option(d.name || d.id, d.id)));
-      }
-      const id = outputs.length === 1 ? outputs[0].id :
-        outputs.some(d => d.id === selectedId) ? selectedId : null;
-      if (id !== selectedId) resetPreview();
-      selectedId = id;
-      select.value = id || '';
-      el('curve-target').hidden = outputs.length < 2;
-      renderPanel();
-      if (!selectedId) {
-        u.setText(el('audio-empty-sub'), !audio ? '正在加载配置…' :
-          outputs.length ? '请选择要调整音量曲线的输出音箱。' : '此播放器没有已分配的输出音箱。');
-      }
-    }
-
     function ensureSelection() {
       const devices = draftDevices();
       if (!devices.some(function (device) { return device.id === selectedId; })) {
         const preferred = devices.find(function (device) { return device.enabled; }) || devices[0];
         selectedId = preferred ? preferred.id : null;
-        previewSamples = null;
-        previewNote = '';
-        chartKey = '';
       }
-    }
-
-    function resetPreview() {
-      previewSamples = null;
-      previewNote = '';
-      chartKey = '';
     }
 
     // ------------------------------------------------------------ device list
@@ -284,222 +241,6 @@ window.FP = window.FP || {};
       u.setSwitch(el('audio-muted'), !!(draft && draft.audio && draft.audio.muted));
     }
 
-    // -------------------------------------------------------------- curve edit
-    function curveKeyOf(curve) {
-      return JSON.stringify(curve);
-    }
-
-    function schedulePreview() {
-      if (previewTimer) clearTimeout(previewTimer);
-      const seq = ++previewSeq;
-      previewNote = '正在获取后端预览…';
-      updatePreviewStatus();
-      previewTimer = setTimeout(function () {
-        previewTimer = null;
-        const id = selectedId;
-        const device = id ? store.getDevice(id) : null;
-        if (!device) return;
-        const curve = store.normalizeCurve(device.curve);
-        FP.api.preview(curve).then(function (result) {
-          if (seq !== previewSeq || selectedId !== id) return;
-          const samples = result && Array.isArray(result.samples) ? result.samples : null;
-          if (samples && samples.length) {
-            previewSamples = { key: curveKeyOf(curve), samples: samples };
-            previewNote = '';
-            const current = store.getDevice(id);
-            if (current) {
-              chart.setData(curveData(current.curve, samples));
-            }
-          }
-          updatePreviewStatus();
-        }).catch(function () {
-          if (seq !== previewSeq || selectedId !== id) return;
-          previewSamples = null;
-          previewNote = '后端预览不可用，已用本地公式绘制（保存仍由后端校验）。';
-          const current = store.getDevice(id);
-          if (current) chart.setData(curveData(current.curve, null));
-          updatePreviewStatus();
-        });
-      }, 220);
-    }
-
-    function updatePreviewStatus() {
-      u.setText(el('curve-preview-status'), previewNote);
-    }
-
-    function curveData(curve, samples) {
-      const normalized = store.normalizeCurve(curve);
-      return {
-        kind: normalized.kind,
-        points: normalized.points,
-        samples: samples || null,
-        editable: normalized.kind === 'custom'
-      };
-    }
-
-    function commitCurve(curve) {
-      if (!selectedId) return;
-      const normalized = store.normalizeCurve(curve);
-      store.setDeviceField(selectedId, 'curve', normalized);
-      previewSamples = null;
-      chartKey = '';
-      renderCurveControls();
-      renderDeviceList();
-    }
-
-    function setCurveKind(kind) {
-      const device = selectedId ? store.getDevice(selectedId) : null;
-      if (!device) return;
-      const current = store.normalizeCurve(device.curve);
-      let points = current.points;
-      if (kind === 'custom' && !points.length) points = FP.curve.neutralPoints();
-      commitCurve({ kind: kind, points: points });
-    }
-
-    function handleChartChange(points) {
-      if (!selectedId) return;
-      const device = store.getDevice(selectedId);
-      if (!device) return;
-      const normalized = store.normalizePoints(points);
-      store.setDeviceField(selectedId, 'curve', { kind: 'custom', points: normalized });
-      previewSamples = null;
-      const current = store.getDevice(selectedId);
-      const curve = store.normalizeCurve(current ? current.curve : { kind: 'custom', points: normalized });
-      chartKey = curveKeyOf(curve);
-      chart.setData(curveData(curve, null));
-      renderPointEditor(curve);
-      renderDeviceList();
-      schedulePreview();
-    }
-
-    function renderPointEditor(curve) {
-      const container = el('curve-points');
-      const points = curve.points || [];
-      const expected = points.length + 2;
-      if (container.children.length !== expected) {
-        u.clearNode(container);
-        container.appendChild(fixedPointRow('起点（固定）', '发送端 0% → 输出 0%'));
-        points.forEach(function (point, index) {
-          container.appendChild(controlPointRow(index, point));
-        });
-        container.appendChild(fixedPointRow('终点（固定）', '发送端 100% → 输出 100%'));
-      } else {
-        const rows = container.querySelectorAll('.point-row');
-        rows.forEach(function (row, index) {
-          const point = points[index];
-          if (!point) return;
-          const inputs = row.querySelectorAll('input');
-          if (document.activeElement !== inputs[0]) inputs[0].value = String(Math.round(point[0] * 100));
-          if (document.activeElement !== inputs[1]) inputs[1].value = String(Math.round(point[1] * 100));
-        });
-      }
-    }
-
-    function fixedPointRow(label, value) {
-      const row = u.create('div', 'point-fixed');
-      row.appendChild(u.create('span', null, label));
-      row.appendChild(u.create('b', null, value));
-      return row;
-    }
-
-    function controlPointRow(index, point) {
-      const row = u.create('div', 'point-row');
-      row.dataset.index = String(index);
-      row.appendChild(u.create('span', 'point-label', '控制点 ' + (index + 1)));
-      row.appendChild(pointInput(index, 0, 'X', Math.round(point[0] * 100), '控制点' + (index + 1) + '发送端音量百分比'));
-      row.appendChild(pointInput(index, 1, 'Y', Math.round(point[1] * 100), '控制点' + (index + 1) + '输出幅度百分比'));
-      const remove = u.create('button', 'icon-btn danger');
-      remove.type = 'button';
-      remove.setAttribute('aria-label', '删除控制点 ' + (index + 1));
-      remove.appendChild(u.svgIcon('trash'));
-      remove.dataset.removeIndex = String(index);
-      row.appendChild(remove);
-      return row;
-    }
-
-    function pointInput(index, axis, label, value, ariaLabel) {
-      const wrap = u.create('label', 'point-input');
-      wrap.appendChild(u.create('span', null, label));
-      const input = document.createElement('input');
-      input.type = 'number';
-      input.min = '0';
-      input.max = '100';
-      input.step = '1';
-      input.inputMode = 'numeric';
-      input.value = String(value);
-      input.dataset.index = String(index);
-      input.dataset.axis = String(axis);
-      input.setAttribute('aria-label', ariaLabel);
-      wrap.appendChild(input);
-      return wrap;
-    }
-
-    function updatePointValue(index, axis, raw) {
-      if (raw == null || String(raw).trim() === '') return;
-      const device = selectedId ? store.getDevice(selectedId) : null;
-      if (!device) return;
-      const curve = store.normalizeCurve(device.curve);
-      if (curve.kind !== 'custom') return;
-      const points = curve.points.map(function (point) { return point.slice(); });
-      if (!points[index]) return;
-      let value = Number(raw);
-      if (!Number.isFinite(value)) return;
-      value = Math.round(u.clamp(value, 0, 100)) / 100;
-      const prev = index > 0 ? points[index - 1] : [0, 0];
-      const next = index < points.length - 1 ? points[index + 1] : [1, 1];
-      if (axis === 0) value = u.clamp(value, prev[0], next[0]);
-      else value = u.clamp(value, prev[1], next[1]);
-      points[index][axis] = Math.round(value * 10000) / 10000;
-      commitCurve({ kind: 'custom', points: points });
-      const current = store.getDevice(selectedId);
-      if (!current) return;
-      const currentPoint = store.normalizeCurve(current.curve).points[index];
-      const row = el('curve-points').querySelector('.point-row[data-index="' + index + '"]');
-      if (!row || !currentPoint) return;
-      const inputs = row.querySelectorAll('input');
-      [0, 1].forEach(function (position) {
-        const expected = String(Math.round(currentPoint[position] * 100));
-        if (inputs[position].value !== expected) inputs[position].value = expected;
-      });
-    }
-
-    function removePointAt(index) {
-      const device = selectedId ? store.getDevice(selectedId) : null;
-      if (!device) return;
-      const curve = store.normalizeCurve(device.curve);
-      if (curve.kind !== 'custom') return;
-      const points = curve.points.slice();
-      if (index < 0 || index >= points.length) return;
-      points.splice(index, 1);
-      commitCurve({ kind: 'custom', points: points });
-    }
-
-    function renderCurveControls() {
-      const device = selectedId ? store.getDevice(selectedId) : null;
-      if (!device) return;
-      const curve = store.normalizeCurve(device.curve);
-      u.qsa('#curve-presets button').forEach(function (button) {
-        button.setAttribute('aria-pressed', button.dataset.curveKind === curve.kind ? 'true' : 'false');
-      });
-      u.show(el('curve-editor'), curve.kind === 'custom');
-      const canvas = el('curve-canvas');
-      if (canvas) {
-        canvas.setAttribute('aria-label', curve.kind === 'custom'
-          ? '独立音量曲线编辑器：自定义模式，选中控制点后可用方向键微调'
-          : '独立音量曲线图：' + u.curveKindLabel(curve.kind) + '预设');
-      }
-      const key = curveKeyOf(curve);
-      if (key !== chartKey) {
-        chartKey = key;
-        const samples = previewSamples && previewSamples.key === key ? previewSamples.samples : null;
-        chart.setData(curveData(curve, samples));
-        schedulePreview();
-      }
-      renderPointEditor(curve);
-      updatePreviewStatus();
-    }
-
-    // ------------------------------------------------------------ detail panel
     function renderRateOptions(device, info) {
       const rates = new Set([44100, 48000]);
       if (info && Array.isArray(info.sample_rates)) {
@@ -599,7 +340,18 @@ window.FP = window.FP || {};
 
       renderRateOptions(device, info);
       renderAdvanced(device, runtime, info);
-      renderCurveControls();
+      const room = assignedSpeaker(device.id);
+      const link = el('device-curve-link');
+      const saved = store.state.baseline?.audio;
+      // Only expose the editor for a binding already applied to the receiver.
+      const owner = saved?.instances?.find(s => s.device_id === device.id)?.id ||
+        (saved?.devices.some(d => d.id === device.id && d.enabled) ? 'default' : null);
+      link.hidden = !owner || (room ? room.id !== owner : !device.enabled);
+      if (!link.hidden) {
+        const url = new URL('speakers.html', document.baseURI);
+        url.search = new URLSearchParams({instance:owner, device:device.id});
+        url.hash = 'curve'; link.href = url.href;
+      }
     }
 
     let groupsSignature;
@@ -647,10 +399,6 @@ window.FP = window.FP || {};
 
     function render() {
       if (!active) return;
-      if (curveOnly) {
-        selectCurveTarget();
-        return;
-      }
       ensureSelection();
       renderDeviceList();
       renderGroups();
@@ -674,7 +422,6 @@ window.FP = window.FP || {};
     function selectDevice(id, openDetail) {
       if (!store.getDevice(id)) return;
       selectedId = id;
-      resetPreview();
       if (openDetail && isNarrow()) document.body.classList.add('audio-detail-open');
       render();
     }
@@ -705,7 +452,6 @@ window.FP = window.FP || {};
       store.removeDevice(id);
       if (selectedId === id) {
         selectedId = null;
-        resetPreview();
       }
       render();
       toast(wasAdded ? '已移除该音箱配置。' : '已标记移除该音箱，保存后生效。', 'info');
@@ -724,7 +470,6 @@ window.FP = window.FP || {};
         curve: { kind: 'balanced', points: [] }
       });
       selectedId = id;
-      resetPreview();
       if (isNarrow()) document.body.classList.add('audio-detail-open');
       render();
       toast('已添加音箱，保存并应用后开始输出。', 'ok');
@@ -773,16 +518,6 @@ window.FP = window.FP || {};
     function bind() {
       if (bound) return;
       bound = true;
-
-      chart = FP.createCurveChart(el('curve-canvas'), {
-        onCurveChange: function (points) { handleChartChange(points); }
-      }) || {
-        setData: function () {},
-        redraw: function () {},
-        addPoint: function () { return false; },
-        removeSelected: function () { return false; },
-        resetPoints: function () {}
-      };
 
       el('group-create').addEventListener('click', function () {
         const audio = (store.getDraft() || {}).audio;
@@ -886,60 +621,13 @@ window.FP = window.FP || {};
         store.setDeviceField(selectedId, 'sample_rate', Math.max(0, Math.round(u.finite(el('audio-rate').value, 0))));
       });
 
-      el('curve-device').addEventListener('change', event => {
-        selectedId = event.target.value || null;
-        resetPreview();
-        render();
-      });
-
-      el('curve-presets').addEventListener('click', function (event) {
-        const button = event.target.closest('button[data-curve-kind]');
-        if (button) setCurveKind(button.dataset.curveKind);
-      });
-      el('curve-add').addEventListener('click', function () {
-        if (!chart.addPoint()) toast('没有可插入控制点的区间。', 'info');
-      });
-      el('curve-remove').addEventListener('click', function () {
-        if (!chart.removeSelected()) toast('请先在曲线上选择一个控制点。', 'info');
-      });
-      el('curve-reset').addEventListener('click', function () {
-        chart.resetPoints();
-        toast('已重置为中性曲线。', 'info');
-      });
-
-      const points = el('curve-points');
-      points.addEventListener('input', function (event) {
-        const input = event.target;
-        if (!input.dataset || input.dataset.axis == null) return;
-        updatePointValue(Number(input.dataset.index), Number(input.dataset.axis), input.value);
-      });
-      points.addEventListener('click', function (event) {
-        const button = event.target.closest('[data-remove-index]');
-        if (button) removePointAt(Number(button.dataset.removeIndex));
-      });
-      points.addEventListener('focusout', function (event) {
-        const input = event.target;
-        if (!input.dataset || input.dataset.axis == null) return;
-        const device = selectedId ? store.getDevice(selectedId) : null;
-        if (!device) return;
-        renderPointEditor(store.normalizeCurve(device.curve));
-      });
-
       el('audio-test').addEventListener('click', testTone);
 
-      document.addEventListener('fp:theme', function () {
-        if (chart) chart.redraw();
-      });
     }
 
     return {
       enter: function () {
         active = true;
-        curveOnly = location.hash === '#/curve';
-        el('page-audio').classList.toggle('curve-only', curveOnly);
-        u.setText(el('audio-title'), curveOnly ? '音箱音量曲线' : '音频');
-        el('curve-target').hidden = true;
-        if (curveOnly) selectedId = null;
         bind();
         document.body.classList.remove('audio-detail-open');
         render();
@@ -948,14 +636,8 @@ window.FP = window.FP || {};
       leave: function () {
         active = false;
         document.body.classList.remove('audio-detail-open');
-        if (previewTimer) {
-          clearTimeout(previewTimer);
-          previewTimer = null;
-        }
-        previewSeq += 1;
       },
-      render: render,
-      onTheme: function () { if (chart) chart.redraw(); }
+      render: render
     };
   };
 })(window.FP);

@@ -48,9 +48,9 @@ window.FP.createSpeakerSettings = function (ctx, renderAudio) {
   }
 
   function open(instance) {
-    editing = instance ? instance.id : null;
+    editing = instance.id;
     optionsKey = undefined;
-    name.value = instance ? instance.name : '';
+    name.value = instance.name;
     device.replaceChildren();
     form.hidden = false;
     renderOptions(devices());
@@ -67,12 +67,6 @@ window.FP.createSpeakerSettings = function (ctx, renderAudio) {
     const draft = store.getDraft();
     if (!draft) return;
     byId('new-instance').disabled = false;
-    const url = new URL(location.href);
-    if (url.searchParams.get('action') === 'new-instance') {
-      url.searchParams.delete('action');
-      history.replaceState(history.state, '', url);
-      open(null);
-    }
     const outputs = devices();
     if (!form.hidden) renderOptions(outputs);
     const saved = (store.state.baseline.audio.instances || []).map(s => s.id);
@@ -124,7 +118,13 @@ window.FP.createSpeakerSettings = function (ctx, renderAudio) {
     });
   }
 
-  byId('new-instance').onclick = () => open(null);
+  byId('new-instance').onclick = () => {
+    if (store.hasDirty()) { toast('请先保存或撤销当前修改。','warn'); return; }
+    const target = new URL('speakers.html',document.baseURI);
+    target.search = location.search;
+    target.hash = 'new';
+    location.assign(target);
+  };
   byId('cancel-instance').onclick = close;
   device.onchange = updateHint;
   form.onsubmit = event => {
@@ -151,7 +151,7 @@ window.FP.createSpeakerSettings = function (ctx, renderAudio) {
       renderAudio();
       return;
     }
-    if (editing && !instances().some(s => s.id === editing)) {
+    if (!instances().some(s => s.id === editing)) {
       toast('此音箱已被移除，请重新选择。', 'warn');
       close();
       renderAudio();
@@ -159,10 +159,8 @@ window.FP.createSpeakerSettings = function (ctx, renderAudio) {
     }
     if (output && output.enabled) store.setDeviceField(output.id, 'enabled', false);
     if (!output) store.addDevice({id: device.value, name: devices().get(device.value), enabled: false});
-    const id = editing || 'speaker-' + Array.from(crypto.getRandomValues(new Uint8Array(10)),
-      b => b.toString(16).padStart(2, '0')).join('');
-    const next = {id, name: label, device_id: device.value};
-    store.setGlobal('instances', editing ? instances().map(s => s.id === id ? next : s) : [...instances(), next]);
+    const next = {id: editing, name: label, device_id: device.value};
+    store.setGlobal('instances', instances().map(s => s.id === editing ? next : s));
     close();
     renderAudio();
   };

@@ -1,4 +1,4 @@
-"""Test the fnOS curve editor with Chromium (pip install playwright)."""
+"""Exercise binding and per-output calibration in Chromium (pip install playwright)."""
 import json
 import os
 from functools import partial
@@ -11,56 +11,88 @@ from playwright.sync_api import expect, sync_playwright
 
 
 def main():
-    devices = [{"id": name, "name": name, "enabled": name != "Study",
-                "gain_db": 0, "delay_ms": 0, "sample_rate": 0,
-                "curve": {"kind": "balanced", "points": []}}
-               for name in ["Living room", "HDMI", "Study"]]
-    config = {"config_version": 2, "receiver": {"name": "Living room"},
-              "audio": {"devices": devices, "instances": [
-                  {"id": "room", "name": "Study", "device_id": "Study"}]},
-              "protocols": {}, "logging": {}}
-    frontend = Path(__file__).resolve().parents[1] / "frontend"
-    handler = partial(SimpleHTTPRequestHandler, directory=frontend)
+    devices = [
+        {"id": name, "name": name, "enabled": name in ("Living room", "HDMI"),
+         "curve": {"kind": "balanced", "points": []}}
+        for name in ("Living room", "HDMI", "Study", "USB")
+    ]
+    instances = [{"id": "room", "name": "Study", "device_id": "Study"}]
+    repo = Path(__file__).resolve().parents[2]
+    handler = partial(SimpleHTTPRequestHandler, directory=repo / "fnos/frontend")
     with ThreadingHTTPServer(("127.0.0.1", 0), handler) as server, sync_playwright() as playwright:
         Thread(target=server.serve_forever, daemon=True).start()
         browser = playwright.chromium.launch(executable_path=os.getenv("CHROMIUM"))
         page = browser.new_page(viewport={"width": 390, "height": 760})
 
         def api(route):
-            nonlocal config
-            path = urlparse(route.request.url).path
-            if path == "/api/config" and route.request.method == "PUT":
-                config = json.loads(route.request.post_data)
-                route.fulfill(json={"config": config})
+            request = route.request
+            path = urlparse(request.url).path
+            if path == "/api/instances/room/curve" and request.method == "PUT":
+                edit = json.loads(request.post_data)
+                assert edit["device_id"] == "Study"
+                devices[2]["curve"] = edit["curve"]
+                route.fulfill(json={"ok": True})
+            elif path == "/api/instances" and request.method == "POST":
+                binding = json.loads(request.post_data)
+                assert binding["device_id"] == "USB"
+                if binding["name"] == "Study":
+                    route.fulfill(status=409, json={"error": "投送名称重复"})
+                else:
+                    instances.append({"id": "desk", **binding})
+                    route.fulfill(json={"id": "desk"})
+            elif path == "/api/instances":
+                route.fulfill(json={"default": "default", "instances": [
+                    {"id": "default", "name": "Living room"}, *instances]})
             elif path == "/api/config":
-                route.fulfill(json=config)
+                route.fulfill(json={"audio": {"devices": devices, "instances": instances}})
             elif path == "/api/devices":
                 route.fulfill(json={"devices": []})
             else:
                 route.fulfill(json={})
 
         page.route("**/api/**", api)
-        page.route("**/healthz", lambda route: route.fulfill(json={"status": "ok"}))
-        base = f"http://127.0.0.1:{server.server_port}/index.html?instance="
-        page.goto(base + "room#/curve")
-        expect(page.locator("#audio-panel-name")).to_have_text("Study")
-        expect(page.locator("#curve-device")).to_be_hidden()
+        page.route("**/player/fnos-mark.png",
+                   lambda route: route.fulfill(path=repo / "flutter/web/fnos-mark.png"))
+        base = f"http://127.0.0.1:{server.server_port}/speakers.html?instance="
+        page.goto(base + "room#rooms")
+        expect(page.locator(".room")).to_have_count(2)
+        page.locator(".room").filter(has_text="Study").get_by_text("音量曲线").click()
+        expect(page.locator("#room-label")).to_have_text("Study")
+        expect(page.locator("#curve-device")).to_have_value("Study")
         page.get_by_role("button", name="柔和", exact=True).click()
-        page.locator("#savebar-save").click()
-        expect(page.locator("#savebar")).to_be_hidden()
-        edited = [d["id"] for d in config["audio"]["devices"] if d.get("curve", {}).get("kind") == "soft"]
+        page.locator("#save").click()
+        expect(page.locator("#save-state")).to_contain_text("已保存")
+        edited = [d["id"] for d in devices if d["curve"]["kind"] == "soft"]
         assert edited == ["Study"], edited
+        page.reload()
+        expect(page.get_by_role("button", name="柔和", exact=True)).to_have_attribute("aria-pressed", "true")
 
-        page.goto(base + "default#/curve")
-        expect(page.locator("#audio-device-panel")).to_be_hidden()
+        page.goto(base + "default#curve")
+        expect(page.locator("#editor")).to_be_hidden()
         expect(page.locator("#curve-device option")).to_have_count(3)
         page.locator("#curve-device").select_option("HDMI")
-        expect(page.locator("#audio-panel-name")).to_have_text("HDMI")
-        page.goto(base + "deleted#/curve")
-        expect(page.locator("#audio-empty-sub")).to_have_text("此播放器没有已分配的输出音箱。")
-        expect(page.locator("#audio-device-panel")).to_be_hidden()
+        expect(page.locator("#editor")).to_be_visible()
+        page.goto(base + "room&device=HDMI#curve")
+        expect(page.locator("#editor")).to_be_hidden()
+        page.goto(base + "deleted#curve")
+        expect(page.locator("#notice")).to_contain_text("此实例已移除")
+        expect(page.locator("#editor")).to_be_hidden()
+
+        page.goto(base + "room#new")
+        expect(page.locator("#bind")).to_be_disabled()
+        expect(page.locator("#bind-device option[value='Study']")).to_have_count(0)
+        page.locator("#room-name").fill("Study")
+        page.locator("#bind-device").select_option("USB")
+        page.locator("#bind").click()
+        expect(page.locator("#notice")).to_contain_text("投送名称重复")
+        expect(page.locator("#editor")).to_be_hidden()
+        page.locator("#room-name").fill("Desk")
+        page.locator("#bind").click()
+        expect(page.locator("#room-label")).to_have_text("Desk")
+        expect(page.locator("#curve-device")).to_have_value("USB")
+        expect(page.locator("#editor")).to_be_visible()
+        assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
         browser.close()
-        server.shutdown()
 
 
 if __name__ == "__main__":

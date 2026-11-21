@@ -42,12 +42,15 @@ class SpeakerPlayerLocation {
         fragment: '/settings',
       );
 
-  Uri get volumeCurve => settings.replace(fragment: '/curve');
+  Uri speakerPage(String section) => root
+      .resolve('speakers.html')
+      .replace(
+        queryParameters: pinned ? {'instance': id} : null,
+        fragment: section,
+      );
 
-  Uri get createInstance => settings.replace(
-    queryParameters: {...settings.queryParameters, 'action': 'new-instance'},
-    fragment: '/audio',
-  );
+  Uri get speakerPicker => speakerPage('rooms');
+  Uri get createInstance => speakerPage('new');
 
   Uri select(String nextId) => page.replace(
     queryParameters: {...page.queryParameters, 'instance': nextId},

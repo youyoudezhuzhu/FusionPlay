@@ -22,13 +22,13 @@ void main() {
         );
         expect(location.settings.queryParameters['instance'], id);
         expect(location.settings.fragment, '/settings');
-        expect(location.volumeCurve.fragment, '/curve');
-        expect(location.volumeCurve.queryParameters['instance'], id);
-        expect(location.createInstance.fragment, '/audio');
-        expect(location.createInstance.queryParameters, {
-          'action': 'new-instance',
-          'instance': id,
-        });
+        expect(
+          location.speakerPicker.path,
+          '/app/fusionplay-fnos/speakers.html',
+        );
+        expect(location.speakerPicker.fragment, 'rooms');
+        expect(location.createInstance.fragment, 'new');
+        expect(location.createInstance.queryParameters['instance'], id);
         expect(SpeakerPlayerLocation(location.select('kitchen')).id, 'kitchen');
         expect(location.id, id);
       },

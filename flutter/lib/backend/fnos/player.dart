@@ -181,8 +181,7 @@ class _ReceiverState extends State<_Receiver> {
   final speakerKey = GlobalKey();
   final speakerFocus = FocusNode();
   bool speakerMenu = false;
-  final pickerFocus = FocusNode();
-  final menuNodes = List.generate(3, (_) => FocusNode());
+  final menuNodes = List.generate(2, (_) => FocusNode());
   MorphStage? stage;
   Rect? anchor;
   Uri? destination;
@@ -313,13 +312,7 @@ class _ReceiverState extends State<_Receiver> {
                         FusionMenuItem(
                           icon: const Icon(Icons.speaker_group_rounded),
                           label: '切换音箱',
-                          onSelected: () =>
-                              setState(() => stage = MorphStage.settings),
-                        ),
-                        FusionMenuItem(
-                          icon: const Icon(Icons.tune_rounded),
-                          label: '音箱音量曲线',
-                          onSelected: () => closeMenu(location.volumeCurve),
+                          onSelected: () => closeMenu(location.speakerPicker),
                         ),
                         FusionMenuItem(
                           icon: const Icon(Icons.add_rounded),
@@ -337,48 +330,12 @@ class _ReceiverState extends State<_Receiver> {
                           onSelected: () => closeMenu(location.settings),
                         ),
                     ],
-                    settingsMinWidth: 300,
-                    settingsTitle: '选择播放音箱',
-                    settingsChild: Column(
-                      children: [
-                        if (speakers.isEmpty)
-                          TextButton(
-                            focusNode: pickerFocus,
-                            onPressed: refreshSpeakers,
-                            child: const Text('重新获取音箱'),
-                          ),
-                        for (final entry in speakers.entries)
-                          ListTile(
-                            focusNode:
-                                entry.key ==
-                                    (missing
-                                        ? speakers.keys.first
-                                        : location.id)
-                                ? pickerFocus
-                                : null,
-                            textColor: Colors.white,
-                            iconColor: Colors.white,
-                            title: Text(entry.value),
-                            leading: const Icon(Icons.speaker_rounded),
-                            selected: entry.key == location.id,
-                            selectedColor: Colors.white,
-                            trailing: entry.key == location.id
-                                ? const Icon(Icons.check_rounded)
-                                : null,
-                            onTap: () => closeMenu(
-                              entry.key == location.id
-                                  ? null
-                                  : location.select(entry.key),
-                            ),
-                          ),
-                      ],
-                    ),
+                    settingsTitle: '设置',
+                    settingsChild: const SizedBox.shrink(),
                     onDismiss: closeMenu,
-                    onSettingsClose: () =>
-                        setState(() => stage = MorphStage.menu),
+                    onSettingsClose: closeMenu,
                     onTransitionCompleted: (s) {
                       if (s == MorphStage.menu) menuNodes.first.requestFocus();
-                      if (s == MorphStage.settings) pickerFocus.requestFocus();
                     },
                     onClosed: menuClosed,
                   ),
@@ -403,7 +360,6 @@ class _ReceiverState extends State<_Receiver> {
     timer?.cancel();
     menuFocus.dispose();
     speakerFocus.dispose();
-    pickerFocus.dispose();
     for (final node in menuNodes) {
       node.dispose();
     }

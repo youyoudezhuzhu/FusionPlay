@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="zh-CN"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>音箱 · FusionPlay</title><link rel="stylesheet" href="speakers.css">
+</head><body>
+<div class="scene" aria-hidden="true"><img id="scene-art" alt="" hidden></div>
+<svg class="defs" aria-hidden="true"><defs id="glass-filters"></defs></svg>
+<header><div class="brand"><img src="player/fnos-mark.png" alt="">FusionPlay</div><a id="back" class="back" href="player/index.html">返回播放器 <span aria-hidden="true">↗</span></a></header>
+<main>
+<section id="rooms" hidden>
+<div class="heading"><h1>选择音箱</h1><a class="button" id="add-room">＋ 新建实例</a></div>
+<div class="room-grid" id="room-list"></div>
+</section>
+<section id="new" hidden>
+<h1>新建实例</h1>
+<form class="card bind" id="bind-form">
+<label for="room-name">投送名称</label>
+<input id="room-name" maxlength="64" required placeholder="例如：客厅">
+<label for="bind-device">输出音箱</label><select id="bind-device" required></select>
+<p id="bind-hint"></p>
+<div class="footer"><button id="bind" class="primary">保存绑定</button></div>
+</form></section>
+<section id="curve" hidden>
+<div class="heading"><div><p class="context" id="room-label"></p><h1>音量响应</h1></div><a id="all-rooms" class="back">所有音箱 ↗</a></div>
+<div id="curve-device-row" class="device-row"><label for="curve-device">输出音箱</label><select id="curve-device"></select></div>
+<div id="editor" class="card editor" hidden>
+<div class="controls"><div class="small">响应模式</div><div id="modes" class="modes" role="group" aria-label="响应模式"></div>
+<div class="response"><label for="probe">音量映射预览</label><output for="probe" id="readout"></output><input type="range" id="probe" aria-label="预览发送端音量" min="0" max="100" value="50"></div>
+</div>
+<div class="plot"><div class="axis">音箱输出幅度</div><canvas id="graph" tabindex="0" aria-label="音量响应曲线，自定义模式可拖动控制点"></canvas><div class="x-axis">发送端音量</div></div>
+<div id="custom" hidden><div class="toolbar"><strong>控制点</strong><button type="button" id="add">添加点</button><button type="button" id="reset">重置</button></div><div id="points"></div></div>
+<div class="footer editor-foot"><span id="save-state" role="status"></span><button id="save" class="primary" disabled>保存曲线</button></div>
+</div></section>
+<p id="notice" role="status"></p><button id="retry" hidden>重新加载</button>
+</main>
+<script src="js/core.js"></script><script src="js/glass.js"></script><script src="js/curve.js"></script><script src="js/speakers.js"></script>
+</body></html>

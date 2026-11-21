@@ -7,7 +7,10 @@
 <title>FusionPlay · 音频接收与输出管理</title>
 <link rel="icon" href="data:,">
 <script>
-if (!location.hash || location.hash === '#/player') location.replace('player/index.html' + location.search);
+if (location.hash === '#/curve') location.replace('speakers.html'+location.search+'#curve');
+else if (new URLSearchParams(location.search).get('action') === 'new-instance')
+  location.replace('speakers.html'+location.search+'#new');
+else if (!location.hash || location.hash === '#/player') location.replace('player/index.html' + location.search);
 /* Apply the persisted theme before first paint to avoid a flash. */
 try {
   var savedTheme = localStorage.getItem('fusionplay.theme');
@@ -271,10 +274,6 @@ try {
       <p class="page-sub">为音箱分配接收器，调整输出音量与播放同步。</p>
     </div>
 
-    <div id="curve-target" class="card" hidden>
-      <label for="curve-device">选择要调整的音箱</label>
-      <select id="curve-device"></select>
-    </div>
     <div class="audio-layout">
       <div class="audio-col audio-col-left">
         <article class="card" aria-labelledby="speaker-instances-title">
@@ -387,33 +386,7 @@ try {
               <p class="hint">用于多音箱播放对齐：数值越大，该音箱输出越晚（0–2000 ms）。</p>
             </div>
 
-            <div class="field curve-field">
-              <div class="field-head">
-                <span class="field-label" id="curve-label">独立音量曲线</span>
-                <span class="tag" id="curve-scope">当前音箱</span>
-              </div>
-              <div class="segmented" role="group" aria-labelledby="curve-label" id="curve-presets">
-                <button type="button" data-curve-kind="linear" aria-pressed="false">线性</button>
-                <button type="button" data-curve-kind="soft" aria-pressed="false">柔和</button>
-                <button type="button" data-curve-kind="balanced" aria-pressed="false">均衡</button>
-                <button type="button" data-curve-kind="custom" aria-pressed="false">自定义</button>
-              </div>
-              <div class="curve-chart">
-                <canvas id="curve-canvas" height="210" tabindex="0" role="img"
-                        aria-labelledby="curve-label" aria-describedby="curve-hint"></canvas>
-              </div>
-              <p class="hint" id="curve-hint">曲线为理论映射，不是声压测量。横轴为发送端音量（0–100%），纵轴为当前音箱输出幅度（0–100%）。</p>
-              <div class="curve-editor" id="curve-editor" hidden>
-                <div class="curve-toolbar">
-                  <button class="btn small" id="curve-add" type="button">添加控制点</button>
-                  <button class="btn small" id="curve-remove" type="button">删除中间点</button>
-                  <button class="btn small" id="curve-reset" type="button">重置</button>
-                </div>
-                <div class="curve-points" id="curve-points"></div>
-                <p class="hint">首尾固定为 0% / 0% 与 100% / 100%；控制点须单调不减。可拖动、用方向键微调或直接输入数值。</p>
-              </div>
-              <p class="hint subtle" id="curve-preview-status" aria-live="polite"></p>
-            </div>
+            <a id="device-curve-link" class="text-link" hidden>调整此音箱的音量曲线 ↗</a>
           </section>
 
           <section class="panel-section">

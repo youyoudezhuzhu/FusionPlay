@@ -13,7 +13,7 @@ window.FP = window.FP || {};
   // Gateway prefix: `/app/fusionplay-fnos` behind fnOS, '' when served at root.
   const GATEWAY_BASE = (function () {
     let path = location.pathname || '/';
-    path = path.replace(/\/index\.html$/i, '');
+    path = path.replace(/\/(?:index|speakers)\.html$/i, '');
     if (path.length > 1) {
       path = path.replace(/\/+$/, '');
     }
@@ -425,6 +425,9 @@ window.FP = window.FP || {};
   }
 
   const api = {
+    instances: () => request('GET', '/api/instances'),
+    createSpeaker: (name, device_id) => request('POST', '/api/instances', {name, device_id}, 45000),
+    saveSpeakerCurve: (id, edit) => request('PUT', '/api/instances/' + encodeURIComponent(id) + '/curve', edit, 45000),
     health: function () { return request('GET', '/healthz', undefined, 6000); },
     status: function (instance) {
       const path = instance ? '/api/instances/' + encodeURIComponent(instance) + '/status' : '/api/status';
