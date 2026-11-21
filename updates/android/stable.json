@@ -7,7 +7,7 @@
   "sha256": "e91e4ffd5017509bf91107cd9ac83fc1f6cfce5f9e89e03926e2101a0614ce60",
   "signer_sha256": "4836fb96c2ef76fd81ac385455f1b0154af77fadae1b45bbb752b192499dc12f",
   "apk_url": "https://youyoudezhuzhu.github.io/FusionPlay/update/android/dl/latest.apk?v=10709",
-  "apk_url_alt": "https://github.com/youyoudezhuzhu/FusionPlay/releases/download/android-v1.7.9/FusionPlay-Android-1.7.9.apk",
+  "apk_url_alt": "https://github.com/youyoudezhuzhu/FusionPlay/releases/download/v1.7.9/FusionPlay-Android-1.7.9.apk",
   "apk_size": 12721264,
   "source_commit": "8308975bc45888f29f8bfc79b86e05bbce95d517",
   "notes": "## FusionPlay Android 1.7.9\n\n- Android、Windows 与飞牛使用统一的产品版本号及共享播放器。\n- 改进接收器、播放器和更新过程的错误日志，限制日志占用，并清理过期导出。\n- Android 安装包使用原有发布签名，支持从上一正式版覆盖更新。",
