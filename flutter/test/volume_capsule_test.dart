@@ -10,6 +10,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:fusionplay_android_flutter/models/app_state.dart';
 import 'package:fusionplay_android_flutter/ui/glass_backdrop.dart';
 import 'package:fusionplay_android_flutter/ui/player_view.dart';
+import 'package:fusionplay_android_flutter/ui/liquid_glass.dart';
 
 class _Stripes extends CustomPainter {
   @override
@@ -37,7 +38,7 @@ void main() {
   });
   for (final stripes in [true, false]) {
     final scene = stripes ? 'stripes' : 'cover';
-    testWidgets('volume lens tracks a drag on $scene and commits once', (
+    testWidgets('solid volume thumb tracks a drag on $scene and commits once', (
       tester,
     ) async {
       final key = GlobalKey();
@@ -94,7 +95,7 @@ void main() {
         ),
       );
       final slider = find.byKey(const ValueKey('volume-slider'));
-      final lens = find.byKey(const ValueKey('volume-droplet'));
+      final capsule = find.byKey(const ValueKey('player-volume-capsule'));
       for (int i = 0; i < 5; i++) {
         await tester.pump(const Duration(milliseconds: 100));
         await tester.runAsync(
@@ -102,12 +103,15 @@ void main() {
         );
       }
       expect(
-        find.descendant(of: lens, matching: find.byType(BackdropFilter)),
+        find.descendant(of: capsule, matching: find.byType(LiquidGlass)),
+        findsOneWidget,
+      );
+      expect(
+        find.descendant(of: slider, matching: find.byType(LiquidGlass)),
         findsNothing,
-        reason: 'Wait for the droplet shader before measuring its image',
       );
       final bounds = tester.getRect(slider);
-      final dir = Platform.environment['FUSIONPLAY_LENS_PREVIEW'];
+      final dir = Platform.environment['FUSIONPLAY_CAPSULE_PREVIEW'];
       Future<Uint8List> capture(int frame) async {
         await tester.pump(const Duration(milliseconds: 120));
         final boundary =
@@ -140,47 +144,24 @@ void main() {
       }
 
       Offset point(double t) =>
-          Offset(bounds.left + 14 + (bounds.width - 28) * t, bounds.center.dy);
-      final gesture = await tester.startGesture(tester.getCenter(lens));
-      await gesture.moveTo(point(.36));
-      await tester.pump();
-      final first = await capture(0);
-      final firstCenter = tester.getCenter(lens);
-      final steps = dir == null ? 10 : 24;
-      for (int i = 1; i <= steps; i++) {
-        await gesture.moveTo(point(.36 + .36 * i / steps));
+          Offset(bounds.left + 10 + (bounds.width - 20) * t, bounds.center.dy);
+      final gesture = await tester.startGesture(point(.25));
+      for (final value in [.36, .72]) {
+        await gesture.moveTo(point(value));
         await tester.pump();
-        if (dir != null && i < steps) await capture(i);
-      }
-      final last = await capture(steps);
-      final lastCenter = tester.getCenter(lens);
-      expect(lastCenter.dx - firstCenter.dx, greaterThan(60));
-      expect((lastCenter - point(.72)).distance, lessThan(1));
-      // Count bright-to-dark reversals through the dome, above and below the rail.
-      // Adding white tint or a moving highlight cannot turn a bright stripe dark.
-      int displaced(Uint8List throughLens, Uint8List clear, Offset center) {
-        var count = 0;
-        for (var y = -10; y <= 10; y++) {
-          if (y.abs() < 5) continue;
-          for (var x = -13; x <= 13; x++) {
-            if (x * x / (14 * 14) + y * y / (11 * 11) >= 1) continue;
-            final idx =
-                ((center.dy.round() + y) * width + center.dx.round() + x) * 4;
-            if (clear[idx] - throughLens[idx] > 45) count++;
-          }
+        final pixels = await capture((value * 100).round());
+        final center = point(value);
+        // Probe both sides of the track centreline inside the solid thumb.
+        for (final offset in [const Offset(-3, -4), const Offset(3, 4)]) {
+          final sample = center + offset;
+          final index = (sample.dy.round() * width + sample.dx.round()) * 4;
+          expect(pixels.sublist(index, index + 4), [255, 255, 255, 255]);
         }
-        return count;
-      }
-
-      if (stripes) {
-        expect(displaced(first, last, firstCenter), greaterThan(5));
-        expect(displaced(last, first, lastCenter), greaterThan(5));
       }
       expect(commits, isEmpty);
       await gesture.up();
       await tester.pump(const Duration(milliseconds: 200));
       expect(commits, [72]);
-      if (dir != null) await capture(steps + 1);
       await tester.pumpWidget(const SizedBox());
       await tester.pump();
     });

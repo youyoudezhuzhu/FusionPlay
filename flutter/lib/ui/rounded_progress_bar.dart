@@ -4,8 +4,6 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import 'g2_shape.dart';
-import 'glass_backdrop.dart';
-import 'liquid_glass.dart';
 import 'remote_focus.dart';
 
 class RoundedProgressBar extends StatefulWidget {
@@ -20,7 +18,6 @@ class RoundedProgressBar extends StatefulWidget {
     required this.onChanged,
     this.seekEnabled,
     this.showThumb = true,
-    this.refractiveThumb = true,
     this.onChangeCancel,
     this.focusBorderColor = Colors.black,
     this.focusNode,
@@ -36,7 +33,6 @@ class RoundedProgressBar extends StatefulWidget {
   final ValueChanged<double> onChanged;
   final bool? seekEnabled;
   final bool showThumb;
-  final bool refractiveThumb;
   final VoidCallback? onChangeCancel;
   final Color focusBorderColor;
   final FocusNode? focusNode;
@@ -94,12 +90,10 @@ class _RoundedProgressBarState extends State<RoundedProgressBar> {
     builder: (context, constraints) {
       final value = (dragging ?? widget.value).clamp(0.0, 1.0);
       final highlighted = focused || touching;
-      final glassThumb =
-          widget.showThumb &&
-          widget.refractiveThumb &&
-          GlassAppearance.enabledOf(context) &&
-          GlassBackdropScope.of(context) != null;
-      final inset = math.min(glassThumb ? 14.0 : 8.0, constraints.maxWidth / 2);
+      final inset = math.min(
+        widget.showThumb ? 10.0 : 8.0,
+        constraints.maxWidth / 2,
+      );
       final active = widget.enabled
           ? widget.activeColor
           : widget.activeColor.withValues(alpha: widget.activeColor.a * .38);
@@ -193,59 +187,22 @@ class _RoundedProgressBarState extends State<RoundedProgressBar> {
                   : null,
               child: SizedBox(
                 height: RoundedProgressBar.hitHeight,
-                child: LayoutBuilder(
-                  builder: (context, bounds) {
-                    final span = bounds.maxWidth - 2 * inset;
-                    final travel = span * value;
-                    final width = math.min(
-                      bounds.maxWidth,
-                      20 + 8 * focusProgress,
-                    );
-                    final height = math.min(
-                      bounds.maxHeight,
-                      17 + 5 * focusProgress,
-                    );
-                    final trackHeight = 6 + 2 * focusProgress;
-                    final trackColor = Color.lerp(
+                child: CustomPaint(
+                  painter: _ProgressPainter(
+                    value: value,
+                    active: active,
+                    inactive: Color.lerp(
                       inactive,
                       active,
                       .24 * focusProgress,
-                    )!;
-                    return Stack(
-                      fit: StackFit.expand,
-                      children: [
-                        CustomPaint(
-                          painter: _ProgressPainter(
-                            value: value,
-                            active: active,
-                            inactive: trackColor,
-                            showThumb: widget.showThumb && !glassThumb,
-                            inset: inset,
-                            focusProgress: focusProgress,
-                          ),
-                        ),
-                        if (glassThumb)
-                          Positioned(
-                            left: inset + travel - width / 2,
-                            top: (bounds.maxHeight - height) / 2,
-                            width: width,
-                            height: height,
-                            child: IgnorePointer(
-                              child: LiquidGlass.droplet(
-                                key: const ValueKey('volume-droplet'),
-                                rail: (
-                                  start: -travel,
-                                  end: span - travel,
-                                  height: trackHeight,
-                                  active: active,
-                                  inactive: trackColor,
-                                ),
-                              ),
-                            ),
-                          ),
-                      ],
-                    );
-                  },
+                    )!,
+                    thumb: widget.enabled
+                        ? active.withValues(alpha: 1)
+                        : active,
+                    showThumb: widget.showThumb,
+                    inset: inset,
+                    focusProgress: focusProgress,
+                  ),
                 ),
               ),
             ),
@@ -261,6 +218,7 @@ class _ProgressPainter extends CustomPainter {
     required this.value,
     required this.active,
     required this.inactive,
+    required this.thumb,
     required this.showThumb,
     required this.focusProgress,
     required this.inset,
@@ -268,6 +226,7 @@ class _ProgressPainter extends CustomPainter {
   final double value;
   final Color active;
   final Color inactive;
+  final Color thumb;
   final bool showThumb;
   final double focusProgress;
   final double inset;
@@ -300,7 +259,7 @@ class _ProgressPainter extends CustomPainter {
       canvas.drawCircle(
         Offset(trackStart + activeWidth, y),
         thumbRadius,
-        Paint()..color = active,
+        Paint()..color = thumb,
       );
     }
   }
@@ -312,5 +271,6 @@ class _ProgressPainter extends CustomPainter {
       old.active != active ||
       old.inactive != inactive ||
       old.showThumb != showThumb ||
+      old.thumb != thumb ||
       old.focusProgress != focusProgress;
 }

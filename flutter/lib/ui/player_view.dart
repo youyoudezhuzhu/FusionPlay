@@ -913,7 +913,6 @@ class _PlayerViewState extends State<PlayerView> {
         key: const ValueKey('player-volume-capsule'),
         height: height,
         child: LiquidGlass(
-          interactive: true,
           forceFallback: widget.forceGlassFallback,
           borderRadius: 999,
           padding: EdgeInsets.symmetric(horizontal: compact ? 7 : 10),
@@ -937,7 +936,6 @@ class _PlayerViewState extends State<PlayerView> {
                   enabled: widget.volumeEnabled,
                   seekEnabled: widget.volumeEnabled,
                   showThumb: true,
-                  refractiveThumb: !widget.forceGlassFallback,
                   onChangeCancel: () => setState(() => _volumeDrag = null),
                   focusNode: _volumeFocus,
                   upFocusNode: _playEnabled ? _playPauseFocus : null,

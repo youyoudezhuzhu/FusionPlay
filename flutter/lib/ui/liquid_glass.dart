@@ -112,15 +112,6 @@ class GlassSpec {
   };
 }
 
-/// Track segment in the moving lens's local coordinates, relative to its centre.
-typedef GlassLensRail = ({
-  double start,
-  double end,
-  double height,
-  Color active,
-  Color inactive,
-});
-
 /// Liquid-glass surface with real screen-space refraction.
 ///
 /// When a [GlassBackdropScope] is available, the surface samples its captured,
@@ -150,28 +141,23 @@ class LiquidGlass extends StatefulWidget {
     this.thickness,
     this.absorption = 0.35,
     this.lensPower = 0,
-    this.rail,
     this.animate = false,
     this.forceFallback = false,
     this.padding,
     this.clipBehavior = Clip.antiAlias,
   });
 
-  const LiquidGlass.droplet({
-    Key? key,
-    GlassLensRail? rail,
-    Color tint = const Color(0x45FFFFFF),
-  }) : this(
-         key: key,
-         borderRadius: 999,
-         refraction: .78,
-         thickness: 4,
-         specular: .42,
-         lensPower: .57,
-         tint: tint,
-         rail: rail,
-         child: const SizedBox.expand(),
-       );
+  const LiquidGlass.droplet({Key? key, Color tint = const Color(0x45FFFFFF)})
+    : this(
+        key: key,
+        borderRadius: 999,
+        refraction: .78,
+        thickness: 4,
+        specular: .42,
+        lensPower: .57,
+        tint: tint,
+        child: const SizedBox.expand(),
+      );
 
   final Widget child;
 
@@ -208,7 +194,6 @@ class LiquidGlass extends StatefulWidget {
 
   /// Fraction of the distance toward the lens centre sampled through its dome.
   final double lensPower;
-  final GlassLensRail? rail;
 
   /// Reserved for future animated caustics; the current material is static.
   final bool animate;
@@ -298,7 +283,6 @@ class _LiquidGlassState extends State<LiquidGlass>
         blur: blur,
         frostLiveFace: spec == GlassSpec.panel,
         lensPower: widget.lensPower,
-        rail: widget.rail,
         contact: _sheen,
       );
     } else {
@@ -388,7 +372,6 @@ class _RefractiveSurface extends StatefulWidget {
     required this.blur,
     required this.frostLiveFace,
     required this.lensPower,
-    required this.rail,
     required this.contact,
   });
 
@@ -401,7 +384,6 @@ class _RefractiveSurface extends StatefulWidget {
   final double blur;
   final bool frostLiveFace;
   final double lensPower;
-  final GlassLensRail? rail;
   final ValueListenable<_Sheen> contact;
 
   @override
@@ -468,7 +450,6 @@ class _RefractiveSurfaceState extends State<_RefractiveSurface> {
               backdrop: widget.backdrop,
               surfaceKey: _key,
               lensPower: widget.lensPower,
-              rail: widget.rail,
               contact: widget.contact,
               borderRadius: widget.borderRadius,
               refraction: widget.refraction,
@@ -488,7 +469,6 @@ class _RefractionPainter extends CustomPainter {
     required this.backdrop,
     required this.surfaceKey,
     required this.lensPower,
-    required this.rail,
     required this.contact,
     required this.borderRadius,
     required this.refraction,
@@ -501,7 +481,6 @@ class _RefractionPainter extends CustomPainter {
   final GlassBackdropTexture backdrop;
   final GlobalKey surfaceKey;
   final double lensPower;
-  final GlassLensRail? rail;
   final ValueListenable<_Sheen> contact;
   final double borderRadius;
   final double refraction;
@@ -520,7 +499,6 @@ class _RefractionPainter extends CustomPainter {
     final texture = backdrop;
     final state = contact.value;
     final pointer = state.pointer ?? Offset.zero;
-    final track = rail;
     shader
       ..setFloat(0, size.width)
       ..setFloat(1, size.height)
@@ -538,24 +516,11 @@ class _RefractionPainter extends CustomPainter {
       ..setFloat(13, axisX.dy)
       ..setFloat(14, axisY.dx)
       ..setFloat(15, axisY.dy)
-      ..setFloat(16, kIsWeb && track == null ? 1 : 0)
+      ..setFloat(16, kIsWeb ? 1 : 0)
       ..setFloat(17, pointer.dx)
       ..setFloat(18, pointer.dy)
       ..setFloat(19, state.pressure)
-      ..setFloat(20, lensPower)
-      ..setFloat(21, track?.start ?? 0)
-      ..setFloat(22, track?.end ?? 0)
-      ..setFloat(23, track?.height ?? 0);
-    void setColor(int index, Color color) {
-      shader
-        ..setFloat(index, color.r)
-        ..setFloat(index + 1, color.g)
-        ..setFloat(index + 2, color.b)
-        ..setFloat(index + 3, color.a);
-    }
-
-    setColor(24, track?.active ?? Colors.transparent);
-    setColor(28, track?.inactive ?? Colors.transparent);
+      ..setFloat(20, lensPower);
     shader.setImageSampler(0, texture.image);
     canvas.drawRect(Offset.zero & size, Paint()..shader = shader);
   }
@@ -563,7 +528,6 @@ class _RefractionPainter extends CustomPainter {
   @override
   bool shouldRepaint(_RefractionPainter oldDelegate) =>
       oldDelegate.lensPower != lensPower ||
-      oldDelegate.rail != rail ||
       oldDelegate.shader != shader ||
       oldDelegate.backdrop != backdrop ||
       oldDelegate.surfaceKey != surfaceKey ||

@@ -23,10 +23,6 @@ uniform float uLiveFace;
 uniform vec2 uContact;
 uniform float uPressure;
 uniform float uLensPower;
-uniform vec3 uRail; // start X, end X relative to lens centre, drawn height
-uniform vec4 uActive;
-uniform vec4 uInactive;
-
 uniform sampler2D uBackdrop;
 
 out vec4 fragColor;
@@ -97,21 +93,6 @@ void main() {
         max(imagePx, vec2(1.0));
     color.r = texture(uBackdrop, clamp(uv + caOffset, vec2(0.001), vec2(0.999))).r;
     color.b = texture(uBackdrop, clamp(uv - caOffset, vec2(0.001), vec2(0.999))).b;
-  }
-
-  // The rail is drawn above the captured scene. Reconstruct its two round
-  // strokes at the same bent sample point so the lens magnifies both layers.
-  if (uRail.z > 0.0) {
-    vec2 samplePoint = displacedLocal - halfSize;
-    float inactiveX = clamp(samplePoint.x, uRail.x, uRail.y);
-    float activeX = clamp(samplePoint.x, uRail.x, 0.0);
-    float radius = uRail.z * 0.5;
-    float a = 1.0 - smoothstep(radius - 0.5, radius + 0.5,
-        length(samplePoint - vec2(inactiveX, 0.0)));
-    float b = 1.0 - smoothstep(radius - 0.5, radius + 0.5,
-        length(samplePoint - vec2(activeX, 0.0)));
-    color = mix(color, uInactive.rgb, a * uInactive.a);
-    if (uRail.x < 0.0) color = mix(color, uActive.rgb, b * uActive.a);
   }
 
   // Light traverses a thicker section in the body of the lens.

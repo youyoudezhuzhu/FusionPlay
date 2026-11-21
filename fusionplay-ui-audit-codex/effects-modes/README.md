@@ -24,12 +24,10 @@ flutter test test/glass_optics_test.dart test/app_menu_test.dart
 本次截图与高对比网格检测使用软件渲染。Android Impeller 真机表现及 GPU 帧耗时仍需设备复测。
 
 
-## 跟手音量透镜
+## 播放器音量胶囊
 
-![播放器实际拖动同一段音量，依次显示封面与条纹背景](moving-volume.webp)
+播放器使用折射背景的胶囊底板，音量轨道上方为实心白色圆点。拖动圆点会更新读数，松手时发送一次音量指令。遥控器左右键每次调整 2%。
 
-上行来自播放器的雪山封面背景，下行使用固定条纹检查采样位移。两行都在 900 × 400 的实际 PlayerView 中拖动音量，从 36% 移至 72% 后松手。图中裁出音量胶囊并放大两倍。[查看拖动中的播放器全图](volume-player.webp)
+![实际播放器拖到 72% 的音量胶囊，局部放大两倍](solid-volume.webp)
 
-滑块在自己的坐标中用凸面计算背景采样位置，并在同一坐标重建轨道的圆端和宽度。这样可以同时放大轨道和背景，无需重新捕获含有滑块本身的画面。播放按钮、菜单和弹窗的玻璃共用局部按压折射，松开后在 150 毫秒内恢复。设置开关使用同款透镜，高级效果关闭时使用实色控件。飞牛网页音量曲线预览保留原生范围输入，移动的玻璃层通过浏览器位移滤镜采样下方轨道。
-
-从 `flutter/` 执行 `FUSIONPLAY_LENS_PREVIEW=/tmp/volume-lens flutter test test/volume_droplet_test.dart test/glass_optics_test.dart` 生成两组 PNG。测试检查拖动前后两个位置的条纹位移、按压范围、释放还原和音量提交次数。独立网页的测试在 Chromium 中固定条纹、滑块着色和几何位置，仅切换位移滤镜对照像素。这里记录的是软件测试与浏览器结果，实体设备的帧时间和与 iOS 实物的对照仍待测。
+从 `flutter/` 运行 `FUSIONPLAY_CAPSULE_PREVIEW=/tmp/volume-capsule flutter test test/volume_capsule_test.dart` 可导出封面和条纹背景下的原始截图。测试在拖动过程中的两个位置读取圆点内部像素，同时检查胶囊的玻璃层和音量提交次数。[旧版移动透镜对照](moving-volume.webp)
