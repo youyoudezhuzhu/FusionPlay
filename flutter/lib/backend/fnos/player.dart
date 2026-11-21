@@ -3,24 +3,37 @@ import 'dart:convert';
 import 'dart:js_interop';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import '../../models/app_state.dart';
 import '../../theme/fusion_theme.dart';
-import '../../ui/artwork.dart';
 import '../../ui/app_menu.dart';
-import 'lyrics.dart';
+import '../../ui/artwork.dart';
 import '../../ui/glass_backdrop.dart';
 import '../../ui/player_view.dart';
+import '../../ui/vector_icon.dart';
+import 'lyrics.dart';
+import 'player_location.dart';
 
-@JS('fpStatus')
-external JSPromise<JSString> _readStatus();
+@JS('fpRead')
+external JSPromise<JSString> _read(JSString url);
 @JS('fpControl')
 external JSPromise<JSAny?> _control(
+  JSString url,
   JSString source,
   JSString command,
   JSNumber value,
 );
-@JS('fpManage')
-external void _manage(JSString route);
+@JS('fpNavigate')
+external void _navigate(JSString url);
+@JS('fpPin')
+external void _pin(JSString url);
+@JS('fpSpeakerName')
+external void _setTabName(JSString name);
+
+Future<Map<String, dynamic>> _readMap(Uri url) async {
+  final result = await _read(url.toString().toJS).toDart;
+  return jsonDecode(result.toDart) as Map<String, dynamic>;
+}
 
 void main() => runApp(
   MaterialApp(
@@ -37,6 +50,11 @@ class _Receiver extends StatefulWidget {
 }
 
 class _ReceiverState extends State<_Receiver> {
+  var location = SpeakerPlayerLocation(Uri.base);
+  Map<String, String> speakers = const {};
+  bool loadingSpeakers = false;
+  bool get missing => speakers.isNotEmpty && !speakers.containsKey(location.id);
+
   final backdrop = ValueNotifier<GlassBackdropTexture?>(null);
   AppState state = const AppState(controls: PlaybackControls.none);
   Timer? timer;
@@ -46,21 +64,51 @@ class _ReceiverState extends State<_Receiver> {
   @override
   void initState() {
     super.initState();
+    if (location.pinned) refreshSpeakers();
     refresh();
+  }
+
+  Future<void> refreshSpeakers() async {
+    if (loadingSpeakers) return;
+    loadingSpeakers = true;
+    try {
+      final catalog = await _readMap(location.catalog);
+      final next = {
+        for (final item in catalog['instances'] as List)
+          item['id'] as String: item['name'] as String,
+      };
+      if (!mounted) return;
+      final resolved = location.resolveDefault(
+        catalog['default'] as String?,
+        next.keys,
+      );
+      if (!location.pinned && resolved.pinned) {
+        _pin(resolved.page.toString().toJS);
+      }
+      setState(() {
+        location = resolved;
+        speakers = next;
+      });
+      _setTabName((speakers[location.id] ?? '音箱不可用').toJS);
+    } catch (_) {
+      // Opening the menu retries discovery. The pinned receiver can still play.
+    } finally {
+      loadingSpeakers = false;
+    }
   }
 
   Future<void> refresh() async {
     try {
-      final json = jsonDecode((await _readStatus().toDart).toDart) as Map;
+      if (!location.pinned) await refreshSpeakers();
+      if (!mounted) return;
+      final json = await _readMap(location.api('status'));
       if (!mounted) return;
       final source = json['current_source'] as String?;
       final media = source == null ? const {} : json['media'] as Map;
       final protocol = json['protocols'][source];
       final art = media['cover_url'] as String?;
       final caps = (json['player_commands'] as List?) ?? const [];
-      final uri = art == null || art.isEmpty
-          ? null
-          : Uri.base.resolve('../').resolve(art);
+      final uri = location.artwork(art);
       final next = AppState.fromMap({
         'initialized': true,
         'receiverReady': true,
@@ -95,7 +143,14 @@ class _ReceiverState extends State<_Receiver> {
         });
       }
     } catch (_) {
-      if (mounted && !offline) setState(() => offline = true);
+      if (mounted && !offline) {
+        setState(() {
+          offline = true;
+          volume = false;
+          state = const AppState(controls: PlaybackControls.none);
+        });
+        refreshSpeakers();
+      }
     } finally {
       if (mounted) timer = Timer(const Duration(seconds: 1), refresh);
     }
@@ -105,7 +160,12 @@ class _ReceiverState extends State<_Receiver> {
     final source = state.activeMediaSource;
     if (source == null || offline) return;
     try {
-      await _control(source.toJS, command.toJS, value.toJS).toDart;
+      await _control(
+        location.api('player').toString().toJS,
+        source.toJS,
+        command.toJS,
+        value.toJS,
+      ).toDart;
     } catch (_) {
       if (mounted) {
         ScaffoldMessenger.of(
@@ -117,14 +177,16 @@ class _ReceiverState extends State<_Receiver> {
 
   final menuKey = GlobalKey();
   final menuFocus = FocusNode();
-  final menuNodes = List.generate(4, (_) => FocusNode());
+  final pickerFocus = FocusNode();
+  final menuNodes = List.generate(2, (_) => FocusNode());
   MorphStage? stage;
   Rect? anchor;
-  String? destination;
+  Uri? destination;
 
   void menu() {
     final box = menuKey.currentContext?.findRenderObject();
     if (box is! RenderBox || stage != null) return;
+    refreshSpeakers();
     setState(() {
       anchor = box.localToGlobal(Offset.zero) & box.size;
       stage = MorphStage.menu;
@@ -134,15 +196,16 @@ class _ReceiverState extends State<_Receiver> {
     });
   }
 
-  void closeMenu([String? route]) {
+  void closeMenu([Uri? route]) {
+    if (stage == MorphStage.closing) return;
     destination = route;
     setState(() => stage = MorphStage.closing);
   }
 
   void menuClosed() {
     setState(() => stage = null);
-    if (destination case final String route) {
-      _manage(route.toJS);
+    if (destination case final Uri route) {
+      _navigate(route.toString().toJS);
     } else {
       menuFocus.requestFocus();
     }
@@ -164,56 +227,107 @@ class _ReceiverState extends State<_Receiver> {
           child: Stack(
             fit: StackFit.expand,
             children: [
-              PlayerView(
-                state: state,
-                artworkSource: art,
-                artworkIdentity: art,
-                onOpenMenu: menu,
-                menuButtonKey: menuKey,
-                menuFocusNode: menuFocus,
-                menuOpen: stage == MorphStage.menu,
-                overlayOpen: stage != null,
-                volumeEnabled: volume && !offline,
-                onPlayback: (action) => send(
-                  const {
-                    PlaybackCommand.previous: 'previous_track',
-                    PlaybackCommand.playPause: 'play_pause',
-                    PlaybackCommand.next: 'next_track',
-                  }[action]!,
+              ExcludeFocus(
+                excluding: stage != null,
+                child: PlayerView(
+                  state: state,
+                  artworkSource: art,
+                  artworkIdentity: art,
+                  onOpenMenu: menu,
+                  menuButtonKey: menuKey,
+                  menuFocusNode: menuFocus,
+                  menuOpen: stage == MorphStage.menu,
+                  overlayOpen: stage != null,
+                  volumeEnabled: volume && !offline,
+                  onPlayback: (action) => send(
+                    const {
+                      PlaybackCommand.previous: 'previous_track',
+                      PlaybackCommand.playPause: 'play_pause',
+                      PlaybackCommand.next: 'next_track',
+                    }[action]!,
+                  ),
+                  onSeek: (ms) => send('seek', ms),
+                  onVolume: (percent) => send('set_volume', percent),
                 ),
-                onSeek: (ms) => send('seek', ms),
-                onVolume: (percent) => send('set_volume', percent),
               ),
               if (stage != null)
-                FusionMorphOverlay(
-                  stage: stage!,
-                  anchorRect: anchor!,
-                  menuFocusNodes: menuNodes,
-                  menuItems: [
-                    for (final item in const [
-                      ('audio', '音箱与输出方案', Icons.speaker_group),
-                      ('receive', '接收设置', Icons.settings),
-                      ('overview', '服务概览', Icons.monitor_heart),
-                      ('settings', '维护与诊断', Icons.info_outline),
-                    ])
+                CallbackShortcuts(
+                  bindings: {
+                    const SingleActivator(LogicalKeyboardKey.escape): () {
+                      if (stage == MorphStage.settings) {
+                        setState(() => stage = MorphStage.menu);
+                      } else {
+                        closeMenu();
+                      }
+                    },
+                  },
+                  child: FusionMorphOverlay(
+                    stage: stage!,
+                    anchorRect: anchor!,
+                    menuFocusNodes: menuNodes,
+                    menuItems: [
                       FusionMenuItem(
-                        icon: Icon(item.$3),
-                        label: item.$2,
-                        onSelected: () => closeMenu(item.$1),
+                        icon: const FusionVectorIcon(
+                          FusionIcons.settings,
+                          size: 19,
+                          color: Colors.white,
+                        ),
+                        label: '设置',
+                        onSelected: () => closeMenu(location.settings),
                       ),
-                  ],
-                  settingsTitle: '',
-                  settingsChild: const SizedBox.shrink(),
-                  onDismiss: closeMenu,
-                  onSettingsClose: closeMenu,
-                  onClosed: menuClosed,
+                      if (speakers.length > 1 || missing)
+                        FusionMenuItem(
+                          icon: const Icon(Icons.speaker_group_rounded),
+                          label: '切换音箱',
+                          onSelected: () =>
+                              setState(() => stage = MorphStage.settings),
+                        ),
+                    ],
+                    settingsTitle: '选择播放音箱',
+                    settingsChild: Column(
+                      children: [
+                        for (final entry in speakers.entries)
+                          ListTile(
+                            focusNode:
+                                entry.key ==
+                                    (missing
+                                        ? speakers.keys.first
+                                        : location.id)
+                                ? pickerFocus
+                                : null,
+                            textColor: Colors.white,
+                            iconColor: Colors.white,
+                            title: Text(entry.value),
+                            leading: const Icon(Icons.speaker_rounded),
+                            selected: entry.key == location.id,
+                            selectedColor: Colors.white,
+                            trailing: entry.key == location.id
+                                ? const Icon(Icons.check_rounded)
+                                : null,
+                            onTap: () => closeMenu(
+                              entry.key == location.id
+                                  ? null
+                                  : location.select(entry.key),
+                            ),
+                          ),
+                      ],
+                    ),
+                    onDismiss: closeMenu,
+                    onSettingsClose: () =>
+                        setState(() => stage = MorphStage.menu),
+                    onTransitionCompleted: (s) {
+                      if (s == MorphStage.menu) menuNodes.first.requestFocus();
+                      if (s == MorphStage.settings) pickerFocus.requestFocus();
+                    },
+                    onClosed: menuClosed,
+                  ),
                 ),
               if (offline)
-                const Align(
+                Align(
                   alignment: Alignment.bottomCenter,
                   child: Text(
-                    '接收器连接中断，正在重连',
-                    style: TextStyle(color: Colors.white),
+                    missing ? '此音箱已移除，可从菜单切换音箱' : '接收器连接中断，正在重连',
+                    style: const TextStyle(color: Colors.white),
                   ),
                 ),
             ],
@@ -227,6 +341,7 @@ class _ReceiverState extends State<_Receiver> {
   void dispose() {
     timer?.cancel();
     menuFocus.dispose();
+    pickerFocus.dispose();
     for (final node in menuNodes) {
       node.dispose();
     }
