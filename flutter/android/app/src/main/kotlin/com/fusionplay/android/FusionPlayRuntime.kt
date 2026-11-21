@@ -42,6 +42,7 @@ import java.io.Closeable
 import java.net.URI
 import java.nio.file.Paths
 import java.util.concurrent.atomic.AtomicBoolean
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -93,7 +94,7 @@ class FusionPlayRuntime(
     private val mediaSourceArbiter = MediaSourceArbiter()
     private val coreLifecycleMutex = Mutex()
     private val miPlayLifecycleMutex = Mutex()
-    private val networkPlayer = NativeNetworkPlayer(context, diagnosticLogger) { message ->
+    private val networkPlayer = NativeNetworkPlayer(context, diagnosticLogger, onDlnaStateChanged = ::onDlnaStateChanged) { message ->
         viewModel.reportExternalLog("网络媒体播放失败：$message", isError = true)
     }
     private val closed = AtomicBoolean(false)
@@ -148,37 +149,7 @@ class FusionPlayRuntime(
                 val elapsedMs = ((nowNanos - lastTickNanos) / 1_000_000L).coerceAtLeast(0L)
                 lastTickNanos = nowNanos
 
-                val networkSource = networkPlayer.source
-                if (networkSource != null) {
-                    val networkPlayback = viewModel.playbackForSource(networkSource)
-                    if (networkPlayback.mediaUrl != null) {
-                        val position = networkPlayer.positionMs
-                        val playing = networkPlayer.playing
-                        val duration = networkPlayer.durationMs.takeIf { it > 0 }
-                            ?: networkPlayback.durationMs
-                            ?: 0L
-                        viewModel.updateNetworkMediaState(
-                            positionMs = position,
-                            durationMs = duration,
-                            playing = playing,
-                            source = networkSource,
-                            sourceEpoch = networkPlayer.sourceEpoch,
-                        )
-                        runCatching {
-                            viewModel.sendVideoState(
-                                positionMs = position,
-                                durationMs = duration,
-                                rate = if (playing) networkPlayer.rate else 0.0,
-                                ready = networkPlayer.ready,
-                                source = when (networkSource) {
-                                    MediaSource.AIRPLAY -> "AirPlay"
-                                    MediaSource.DLNA -> "DLNA"
-                                    MediaSource.XIAOMI_MIPLAY -> null
-                                },
-                            )
-                        }
-                    }
-                }
+                syncNetworkPlayback()
 
                 val playback = viewModel.state.value.playback
                 if (
@@ -190,6 +161,43 @@ class FusionPlayRuntime(
                 }
             }
         }
+    }
+
+    private var lastDlnaArtwork: String? = null
+
+    private fun onDlnaStateChanged() {
+        scope.launch { syncNetworkPlayback() }
+        val artwork = networkPlayer.embeddedArtworkPath
+        if (artwork != lastDlnaArtwork) {
+            lastDlnaArtwork = artwork
+            publishState(viewModel.state.value)
+        }
+    }
+
+    private suspend fun syncNetworkPlayback() {
+        val source = networkPlayer.source ?: return
+        val playback = viewModel.playbackForSource(source)
+        if (playback.mediaUrl != networkPlayer.url ||
+            playback.sourceEpoch != networkPlayer.sourceEpoch
+        ) return
+        val position = networkPlayer.positionMs
+        val duration = networkPlayer.durationMs.takeIf { it > 0 } ?: playback.durationMs ?: 0L
+        val playing = networkPlayer.playing
+        viewModel.updateNetworkMediaState(position, duration, playing, source, networkPlayer.sourceEpoch)
+        runCatching {
+            viewModel.sendVideoState(
+                positionMs = position,
+                durationMs = duration,
+                rate = if (playing) networkPlayer.rate else 0.0,
+                ready = networkPlayer.ready,
+                source = when (source) {
+                    MediaSource.AIRPLAY -> "AirPlay"
+                    MediaSource.DLNA -> "DLNA"
+                    MediaSource.XIAOMI_MIPLAY -> null
+                },
+                sourceEpoch = networkPlayer.sourceEpoch.takeIf { source == MediaSource.DLNA },
+            )
+        }.onFailure { if (it is CancellationException) throw it }
     }
 
     fun attach(messenger: BinaryMessenger) {
@@ -1141,7 +1149,11 @@ class FusionPlayRuntime(
                                 bridge.setArtwork(URI.create(artwork))
                             else -> bridge.setArtwork(Paths.get(artwork))
                         }
-                    }.onFailure { reportError("媒体封面更新失败", it) }
+                    }.onFailure {
+                        if (it is CancellationException) throw it
+                        diagnosticLogger.write("media", "artwork_request_failed", "failure",
+                            mapOf("error_type" to it.javaClass.simpleName))
+                    }
                 }
             }
         }
@@ -1216,6 +1228,12 @@ class FusionPlayRuntime(
             "artist" to state.playback.artist,
             "album" to state.playback.album,
             "coverArt" to state.playback.coverArt,
+            "embeddedArtwork" to networkPlayer.embeddedArtworkPath.takeIf {
+                state.activeMediaSource == MediaSource.DLNA &&
+                    networkPlayer.source == MediaSource.DLNA &&
+                    state.playback.mediaUrl == networkPlayer.url &&
+                    state.playback.sourceEpoch == networkPlayer.sourceEpoch
+            },
             "mediaUrl" to state.playback.mediaUrl,
             "mediaKind" to state.playback.mediaKind,
             "protocol" to state.playback.protocol,

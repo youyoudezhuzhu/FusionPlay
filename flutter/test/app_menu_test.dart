@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -8,6 +10,7 @@ import 'package:fusionplay_android_flutter/models/app_state.dart';
 import 'package:fusionplay_android_flutter/theme/fusion_theme.dart';
 import 'package:fusionplay_android_flutter/ui/liquid_glass.dart';
 import 'package:fusionplay_android_flutter/ui/app_menu.dart';
+import 'package:fusionplay_android_flutter/ui/artwork.dart';
 import 'package:fusionplay_android_flutter/ui/settings_view.dart';
 
 const _runtimeChannel = MethodChannel('com.fusionplay.android/runtime');
@@ -92,6 +95,62 @@ void main() {
   tearDown(() {
     controller.dispose();
     _clearChannels();
+  });
+
+  testWidgets('DLNA uses embedded artwork when the remote cover fails', (
+    tester,
+  ) async {
+    const fallback =
+        'data:image/png;base64,'
+        'iVBORw0KGgoAAAANSUhEUgAAAAMAAAADCAIAAADZSiLoAAAAF0lEQVR4nGO8wyXHwMDAwMDAxAADCBYAHaYBCsbf1p8AAAAASUVORK5CYII=';
+    await tester.pumpWidget(
+      MaterialApp(
+        home: FusionPlayHome(
+          controller: controller,
+          state: const AppState(
+            initialized: true,
+            activeMediaSource: 'dlna',
+            playback: PlaybackSnapshot(
+              title: 'DLNA track',
+              protocol: 'dlna',
+              sourceEpoch: 1,
+              coverArt: 'https://example.test/rejected.jpg',
+              embeddedArtwork: fallback,
+              streamActive: true,
+            ),
+          ),
+          forceGlassFallback: true,
+        ),
+      ),
+    );
+    // Flutter's test HttpClient rejects remote requests. Decode the fallback
+    // on the real image IO thread, then render the requested widget update.
+    await tester.runAsync(() async {
+      final stream = artworkProvider(
+        fallback,
+      )!.resolve(ImageConfiguration.empty);
+      final decoded = Completer<void>();
+      final listener = ImageStreamListener(
+        (image, _) {
+          image.dispose();
+          if (!decoded.isCompleted) decoded.complete();
+        },
+        onError: (error, stack) {
+          if (!decoded.isCompleted) decoded.completeError(error, stack);
+        },
+      );
+      stream.addListener(listener);
+      try {
+        await decoded.future.timeout(const Duration(seconds: 3));
+      } finally {
+        stream.removeListener(listener);
+      }
+    });
+    await tester.pump();
+    expect(
+      tester.widget<ArtworkCard>(find.byType(ArtworkCard)).source,
+      fallback,
+    );
   });
 
   testWidgets('speaker discovery can add a visible action to an open menu', (

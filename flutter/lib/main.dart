@@ -180,7 +180,7 @@ class _FusionPlayHomeState extends State<FusionPlayHome> {
   void initState() {
     super.initState();
     _requestedArtworkSource = _normalizedArtworkSource(
-      widget.state.playback.coverArt,
+      widget.state.playback.coverArt ?? widget.state.playback.embeddedArtwork,
     );
     _requestedArtworkIdentity = widget.state.playback.artworkTransitionIdentity;
     _navigationKeyChannel.setMethodCallHandler((call) async {
@@ -242,7 +242,7 @@ class _FusionPlayHomeState extends State<FusionPlayHome> {
     super.didUpdateWidget(oldWidget);
     _syncErrorToast(widget.state.lastError);
     final nextArtwork = _normalizedArtworkSource(
-      widget.state.playback.coverArt,
+      widget.state.playback.coverArt ?? widget.state.playback.embeddedArtwork,
     );
     final nextIdentity = widget.state.playback.artworkTransitionIdentity;
     final ownerChanged =
@@ -251,7 +251,10 @@ class _FusionPlayHomeState extends State<FusionPlayHome> {
       _displayedArtworkSource = null;
       _displayedArtworkIdentity = null;
     }
-    if (!ownerChanged && nextArtwork == _requestedArtworkSource) {
+    if (!ownerChanged &&
+        oldWidget.state.playback.embeddedArtwork ==
+            widget.state.playback.embeddedArtwork &&
+        nextArtwork == _requestedArtworkSource) {
       // Same (or still absent) cover image: now-playing metadata/track identity
       // churn must not restart the artwork flip. Keep the displayed identity
       // until the actual image source changes.
@@ -307,16 +310,16 @@ class _FusionPlayHomeState extends State<FusionPlayHome> {
       }
     }
 
-    final provider = artworkProvider(source);
-    if (provider == null) {
-      report('invalid_image_source');
-      return;
-    }
-    try {
-      // A renderer may get the same /cover.jpg address for successive songs.
-      // Invalidate it on an actual media/art request, never on position ticks.
+    final fallback = dlna ? widget.state.playback.embeddedArtwork : null;
+    Future<void> load(String candidate) async {
+      final provider = artworkProvider(candidate);
+      if (provider == null) {
+        throw const FormatException('Invalid artwork source');
+      }
+      // The same live cover URL may refer to successive DLNA tracks.
       if (dlna &&
-          (source.startsWith('http://') || source.startsWith('https://'))) {
+          (candidate.startsWith('http://') ||
+              candidate.startsWith('https://'))) {
         await provider.evict();
         if (!mounted || request != _artworkRequest) return;
       }
@@ -326,18 +329,36 @@ class _FusionPlayHomeState extends State<FusionPlayHome> {
         context,
         onError: (error, _) => failure = error,
       );
-      if (!mounted || request != _artworkRequest) return;
       if (failure case final Object error) throw error;
+    }
+
+    var displayed = source;
+    try {
+      try {
+        await load(source);
+      } catch (error) {
+        if (!mounted ||
+            request != _artworkRequest ||
+            fallback == null ||
+            fallback == source) {
+          rethrow;
+        }
+        await load(fallback);
+        displayed = fallback;
+      }
+      if (!mounted || request != _artworkRequest) return;
       setState(() {
-        _displayedArtworkIdentity = _displayedArtworkSource == source
+        _displayedArtworkIdentity = _displayedArtworkSource == displayed
             ? _displayedArtworkIdentity
             : identity;
-        _displayedArtworkSource = source;
+        _displayedArtworkSource = displayed;
       });
-      report('decoded');
+      report(displayed == fallback ? 'decoded_embedded' : 'decoded');
     } catch (error) {
       if (!mounted || request != _artworkRequest) return;
-      _artworkRetryAfter = DateTime.now().add(const Duration(seconds: 5));
+      if (error is! NetworkImageLoadException || error.statusCode != 403) {
+        _artworkRetryAfter = DateTime.now().add(const Duration(seconds: 5));
+      }
       report(
         error is NetworkImageLoadException
             ? 'http_${error.statusCode}'

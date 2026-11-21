@@ -6,6 +6,7 @@ import android.os.Looper
 import androidx.media3.common.AudioAttributes
 import androidx.media3.common.C
 import androidx.media3.common.MediaItem
+import androidx.media3.common.MediaMetadata
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.PlaybackParameters
 import androidx.media3.common.Tracks
@@ -15,10 +16,12 @@ import androidx.media3.exoplayer.ExoPlayer
 import com.airplayreceiver.desktop.backend.FusionPlayDiagnosticLogger
 import com.airplayreceiver.desktop.backend.MediaSource
 import java.io.Closeable
+import java.io.File
 
 internal class NativeNetworkPlayer(
     context: Context,
     private val diagnostics: FusionPlayDiagnosticLogger,
+    private val onDlnaStateChanged: () -> Unit = {},
     private val onError: (String) -> Unit = {},
 ) : Closeable {
     private companion object {
@@ -28,6 +31,9 @@ internal class NativeNetworkPlayer(
     private val applicationContext = context.applicationContext
     private val mainHandler = Handler(Looper.getMainLooper())
     private var player: ExoPlayer? = null
+    private val publishDlnaState = Runnable(onDlnaStateChanged)
+    private var embeddedCover: File? = null
+    val embeddedArtworkPath: String? get() = embeddedCover?.absolutePath
 
     private fun createPlayer(): ExoPlayer = ExoPlayer.Builder(applicationContext).build().apply {
         setAudioAttributes(
@@ -79,6 +85,35 @@ internal class NativeNetworkPlayer(
                 }))
             }
 
+            override fun onMediaMetadataChanged(mediaMetadata: MediaMetadata) {
+                if (source != MediaSource.DLNA || embeddedCover != null) return
+                val bytes = mediaMetadata.artworkData ?: return
+                if (bytes.isEmpty() || bytes.size > 1024 * 1024) return
+                runCatching {
+                    val file = File.createTempFile("dlna-cover-", ".img", applicationContext.cacheDir)
+                    try {
+                        file.writeBytes(bytes)
+                        embeddedCover = file
+                    } finally {
+                        if (embeddedCover != file) file.delete()
+                    }
+                }.onFailure { recordPlayback("decoder_embedded_cover", mapOf("available" to false)) }
+            }
+
+            override fun onEvents(player: Player, events: Player.Events) {
+                if (source == MediaSource.DLNA && events.containsAny(
+                        Player.EVENT_PLAYBACK_STATE_CHANGED,
+                        Player.EVENT_PLAY_WHEN_READY_CHANGED,
+                        Player.EVENT_IS_PLAYING_CHANGED,
+                        Player.EVENT_POSITION_DISCONTINUITY,
+                        Player.EVENT_MEDIA_METADATA_CHANGED,
+                    )
+                ) {
+                    mainHandler.removeCallbacks(publishDlnaState)
+                    mainHandler.post(publishDlnaState)
+                }
+            }
+
             override fun onPlayerError(error: PlaybackException) {
                 recordPlayback("decoder_error", mapOf("code" to error.errorCodeName))
                 onError("${error.errorCodeName}：${error.message ?: "未知播放器错误"}")
@@ -116,6 +151,7 @@ internal class NativeNetworkPlayer(
 
     fun open(source: MediaSource, url: String, epoch: Long?, positionMs: Long, autoPlay: Boolean) = onMain {
         val activePlayer = player ?: createPlayer().also { player = it }
+        clearEmbeddedCover()
         this.source = source
         this.url = url
         sourceEpoch = epoch
@@ -145,7 +181,14 @@ internal class NativeNetworkPlayer(
         this.muted = muted
         player?.volume = if (muted) 0f else unmutedVolume
     }
+    private fun clearEmbeddedCover() {
+        embeddedCover?.delete()
+        embeddedCover = null
+    }
+
     fun stop() = onMain {
+        mainHandler.removeCallbacks(publishDlnaState)
+        clearEmbeddedCover()
         player?.release()
         player = null
         source = null
@@ -155,10 +198,7 @@ internal class NativeNetworkPlayer(
         ready = false
     }
 
-    override fun close() = onMain {
-        player?.release()
-        player = null
-    }
+    override fun close() { stop() }
 
     private fun onMain(block: () -> Unit) {
         if (Looper.myLooper() == Looper.getMainLooper()) block() else mainHandler.post(block)

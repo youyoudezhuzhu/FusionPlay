@@ -485,6 +485,7 @@ class AppViewModel(
         rate: Double,
         ready: Boolean,
         source: String? = null,
+        sourceEpoch: Long? = null,
     ) {
         awaitInitialized()
         coreProcessService.sendVideoState(
@@ -493,6 +494,7 @@ class AppViewModel(
             rate = rate,
             ready = ready,
             source = source,
+            sourceEpoch = sourceEpoch,
         )
     }
 

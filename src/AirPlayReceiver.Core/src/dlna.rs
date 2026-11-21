@@ -333,12 +333,24 @@ impl DmrController {
         }
     }
 
-    pub fn update_playback_state(
+    #[cfg(test)]
+    fn update_playback_state(
         &self,
         position_ms: Option<u64>,
         duration_ms: Option<u64>,
         rate: Option<f32>,
         ready: Option<bool>,
+    ) {
+        self.update_renderer_state(position_ms, duration_ms, rate, ready, None);
+    }
+
+    pub(crate) fn update_renderer_state(
+        &self,
+        position_ms: Option<u64>,
+        duration_ms: Option<u64>,
+        rate: Option<f32>,
+        ready: Option<bool>,
+        epoch: Option<u64>,
     ) {
         let should_notify = {
             let Ok(mut state) = self.state.lock() else {
@@ -347,7 +359,10 @@ impl DmrController {
             if !state.renderer_active
                 || !state
                     .lease
-                    .is_some_and(|lease| self.arbiter.is_current(lease))
+                    .is_some_and(|lease| {
+                        self.arbiter.is_current(lease)
+                            && epoch.is_none_or(|epoch| lease.epoch() == epoch)
+                    })
             {
                 return;
             }
@@ -364,9 +379,15 @@ impl DmrController {
             if let Some(ready) = ready {
                 state.ready = ready;
             }
-            if let Some(rate) = rate.filter(|value| value.is_finite()) {
+            // Tagged Android feedback describes the decoder. Buffering must
+            // not reset the transport's last explicit Play or Pause command.
+            if let Some(rate) = rate.filter(|value| value.is_finite() && epoch.is_none()) {
                 state.rate = rate.max(0.0);
-                state.transport_state = if !state.ready {
+            }
+            if ready.is_some() || rate.is_some_and(|value| value.is_finite()) {
+                state.transport_state = if epoch.is_some() && state.rate == 0.0 {
+                    TransportState::PausedPlayback
+                } else if !state.ready {
                     TransportState::Transitioning
                 } else if state.rate > 0.0 {
                     TransportState::Playing
@@ -2530,6 +2551,21 @@ async fn handle_http_connection(
         }
     };
     let response = route_http_request(&request, peer, &context);
+    if request.path == "/upnp/control/avtransport"
+        && let Some(action) = request.headers.get("soapaction").and_then(|value| parse_soap_action(value))
+        && matches!(action.as_str(), "Play" | "Pause" | "Seek" | "Stop" | "SetAVTransportURI")
+    {
+        let mut message = format!("DLNA AVTransport {action}: HTTP {}", response.status);
+        if response.status >= 400
+            && let Some(code) = std::str::from_utf8(&response.body).ok()
+                .and_then(|body| extract_xml_text(body, "errorCode"))
+                .and_then(|code| code.parse::<u16>().ok())
+        {
+            use std::fmt::Write;
+            let _ = write!(message, " UPnP {code}");
+        }
+        context.controller.events.emit(CoreEvent::Log { level: "info", message: &message });
+    }
     write_http_response(&mut stream, response).await
 }
 
@@ -4473,6 +4509,22 @@ mod tests {
         assert_eq!(refreshed_media["channels"], 2);
         assert!(refreshed_media["start_position_ms"].as_u64().unwrap() >= 51_250);
         assert!(controller.snapshot().unwrap().position_ms >= 51_250);
+    }
+
+    #[test]
+    fn android_buffering_feedback_keeps_transport_intent_and_ignores_old_epochs() {
+        let (controller, _) = controller_with_events();
+        controller.set_transport_uri("https://example.test/music.mp3", "").unwrap();
+        controller.play().unwrap();
+        let epoch = controller.state.lock().unwrap().lease.unwrap().epoch();
+        controller.update_renderer_state(Some(90_000), None, Some(0.0), Some(false), Some(epoch + 1));
+        assert_eq!(controller.snapshot().unwrap().position_ms, 0);
+        controller.update_renderer_state(Some(0), None, Some(0.0), Some(false), Some(epoch));
+        controller.update_renderer_state(Some(0), None, Some(0.0), Some(true), Some(epoch));
+        assert_eq!(controller.snapshot().unwrap().transport_state, TransportState::Playing);
+        controller.pause().unwrap();
+        controller.update_renderer_state(Some(100), None, Some(1.0), Some(false), Some(epoch));
+        assert_eq!(controller.snapshot().unwrap().transport_state, TransportState::PausedPlayback);
     }
 
     #[test]

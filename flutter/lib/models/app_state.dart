@@ -140,6 +140,7 @@ class PlaybackSnapshot {
     this.artist,
     this.album,
     this.coverArt,
+    this.embeddedArtwork,
     this.mediaUrl,
     this.mediaKind,
     this.protocol,
@@ -160,6 +161,7 @@ class PlaybackSnapshot {
   final String? artist;
   final String? album;
   final String? coverArt;
+  final String? embeddedArtwork;
   final String? mediaUrl;
   final String? mediaKind;
   final String? protocol;
@@ -211,6 +213,7 @@ class PlaybackSnapshot {
         artist: _string(map['artist']),
         album: _string(map['album']),
         coverArt: _string(map['coverArt']),
+        embeddedArtwork: _string(map['embeddedArtwork']),
         mediaUrl: _string(map['mediaUrl']),
         mediaKind: _string(map['mediaKind']),
         protocol: _string(map['protocol']),
@@ -237,6 +240,7 @@ class PlaybackSnapshot {
           artist == other.artist &&
           album == other.album &&
           coverArt == other.coverArt &&
+          embeddedArtwork == other.embeddedArtwork &&
           mediaUrl == other.mediaUrl &&
           mediaKind == other.mediaKind &&
           protocol == other.protocol &&
@@ -258,6 +262,7 @@ class PlaybackSnapshot {
     artist,
     album,
     coverArt,
+    embeddedArtwork,
     mediaUrl,
     mediaKind,
     protocol,

@@ -231,6 +231,7 @@ class CoreProcessService(
         rate: Double,
         ready: Boolean,
         source: String? = null,
+        sourceEpoch: Long? = null,
     ) {
         require(positionMs >= 0) { "positionMs must not be negative." }
         require(durationMs >= 0) { "durationMs must not be negative." }
@@ -241,6 +242,7 @@ class CoreProcessService(
             put("duration_ms", durationMs)
             put("rate", rate)
             put("ready", ready)
+            sourceEpoch?.let { put("epoch", it) }
             source?.trim()?.takeIf(String::isNotEmpty)?.let { put("source", it) }
         }
         writeNdjson(payload.toString(), targetForSource(source))

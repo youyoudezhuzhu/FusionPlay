@@ -481,11 +481,12 @@ async fn wait_for_ui_commands(
                 );
             }
             if update_dlna && let Some(controller) = &dlna_controller {
-                controller.update_playback_state(
+                controller.update_renderer_state(
                     command.position_ms,
                     command.duration_ms,
                     command.rate,
                     command.ready,
+                    command.epoch,
                 );
             }
             continue;
