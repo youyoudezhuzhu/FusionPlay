@@ -113,6 +113,19 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.byType(GlassDialog), findsOneWidget);
     expect(find.byKey(const ValueKey('test-glass-dialog')), findsOneWidget);
+    final dialog = find.byType(GlassDialog);
+    final glass = tester.widget<LiquidGlass>(
+      find.descendant(of: dialog, matching: find.byType(LiquidGlass)),
+    );
+    // Even with a captured player backdrop, dialogs must read the live
+    // composited scene, including the contents of the lower route.
+    expect(glass.forceFallback, isTrue);
+    expect(
+      find.descendant(of: dialog, matching: find.byType(BackdropFilter)),
+      findsOneWidget,
+    );
+    final route = ModalRoute.of(tester.element(dialog))!;
+    expect(route.barrierColor!.a, lessThan(.2));
     expect(find.text('glass dialog content'), findsOneWidget);
     expect(tester.binding.transientCallbackCount, 0);
   });
