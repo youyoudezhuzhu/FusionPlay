@@ -12,11 +12,11 @@ import 'backend/windows/player_log.dart';
 import 'models/app_state.dart';
 import 'theme/fusion_theme.dart';
 import 'ui/app_menu.dart';
-import 'ui/glass_backdrop.dart';
+import 'ui/glass_appearance.dart';
 import 'ui/artwork.dart';
 import 'ui/player_view.dart';
 import 'ui/remote_focus.dart';
-import 'ui/liquid_glass.dart';
+import 'ui/frosted_glass.dart';
 import 'ui/settings_view.dart';
 import 'ui/update_dialogs.dart';
 import 'ui/vector_icon.dart';
@@ -63,7 +63,6 @@ class FusionPlayApplication extends StatefulWidget {
 }
 
 class _FusionPlayApplicationState extends State<FusionPlayApplication> {
-  final backdrop = ValueNotifier<GlassBackdropTexture?>(null);
   late final FusionPlayController controller = _createController();
 
   /// Android keeps the Kotlin backend; every other desktop target uses the
@@ -80,7 +79,6 @@ class _FusionPlayApplicationState extends State<FusionPlayApplication> {
   @override
   void dispose() {
     controller.dispose();
-    backdrop.dispose();
     super.dispose();
   }
 
@@ -89,17 +87,12 @@ class _FusionPlayApplicationState extends State<FusionPlayApplication> {
     debugShowCheckedModeBanner: false,
     title: 'FusionPlay',
     theme: fusionTheme(),
-    builder: (context, child) => GlassBackdropProvider(
-      notifier: backdrop,
-      child: FusionTypographyScope(child: child ?? const SizedBox.shrink()),
-    ),
+    builder: (context, child) =>
+        FusionTypographyScope(child: child ?? const SizedBox.shrink()),
     home: ListenableBuilder(
       listenable: controller,
-      builder: (context, _) => FusionPlayHome(
-        controller: controller,
-        state: controller.state,
-        backdrop: backdrop,
-      ),
+      builder: (context, _) =>
+          FusionPlayHome(controller: controller, state: controller.state),
     ),
   );
 }
@@ -110,19 +103,13 @@ class FusionPlayHome extends StatefulWidget {
     required this.controller,
     required this.state,
     this.isAndroid,
-    this.backdrop,
-    this.forceGlassFallback = false,
   });
 
-  final ValueNotifier<GlassBackdropTexture?>? backdrop;
   final FusionPlayController controller;
   final AppState state;
 
   /// Overrides platform update availability (tests).
   final bool? isAndroid;
-
-  /// Test hook: render LiquidGlass surfaces as the frosted fallback.
-  final bool forceGlassFallback;
 
   @override
   State<FusionPlayHome> createState() => _FusionPlayHomeState();
@@ -350,7 +337,10 @@ class _FusionPlayHomeState extends State<FusionPlayHome> {
         await load(source);
       } catch (error) {
         if (mounted && request == _artworkRequest) {
-          report(source == fallback ? 'embedded' : 'primary', failureCode(error));
+          report(
+            source == fallback ? 'embedded' : 'primary',
+            failureCode(error),
+          );
         }
         if (!mounted ||
             request != _artworkRequest ||
@@ -705,7 +695,6 @@ class _FusionPlayHomeState extends State<FusionPlayHome> {
                       onOpenMenu: _openMenu,
                       menuOpen: menuOpen,
                       overlayOpen: _morphOpen,
-                      forceGlassFallback: widget.forceGlassFallback,
                       onPlayback: widget.controller.playback,
                       onSeek: widget.controller.seek,
                       onVolume: widget.controller.volume,
@@ -758,7 +747,6 @@ class _FusionPlayHomeState extends State<FusionPlayHome> {
                         onClosed: _finishMorphClose,
                         onTransitionCompleted: _handleMorphTransitionCompleted,
                         settingsMaxWidth: isTelevision ? 720 : 560,
-                        forceFallback: widget.forceGlassFallback,
                       ),
                     ),
                   ),
@@ -768,14 +756,13 @@ class _FusionPlayHomeState extends State<FusionPlayHome> {
                       alignment: Alignment.topCenter,
                       child: Padding(
                         padding: const EdgeInsets.all(16),
-                        child: LiquidGlass(
+                        child: FrostedGlass(
                           key: const ValueKey('error-toast'),
                           level: GlassLevel.panel,
                           blurSigma: 9,
-                          interactive: true,
                           borderRadius: 22,
                           padding: const EdgeInsets.fromLTRB(18, 8, 6, 8),
-                          forceFallback: widget.forceGlassFallback,
+
                           child: DefaultTextStyle.merge(
                             style: const TextStyle(
                               color: Color(0xEBFFFFFF),
@@ -844,14 +831,7 @@ class _FusionPlayHomeState extends State<FusionPlayHome> {
     );
     return GlassAppearance(
       enabled: state.settings.advancedEffectsEnabled,
-      child: GlassBackdropScope(
-        onTextureChanged: widget.backdrop == null
-            ? null
-            : (value) => widget.backdrop!.value = value,
-        enabled:
-            state.settings.advancedEffectsEnabled && !widget.forceGlassFallback,
-        revision:
-            '${artwork ?? ''}|${hasPlayback ? 1 : 0}|${state.playback.trackIdentity ?? ''}',
+      child: FrostedScene(
         background: playerBackdrop,
         child: MediaQuery(
           data: mediaQuery.copyWith(

@@ -4,8 +4,8 @@ import 'package:flutter/material.dart';
 
 import '../theme/fusion_theme.dart';
 import 'g2_shape.dart';
-import 'glass_backdrop.dart';
-import 'liquid_glass.dart';
+import 'glass_appearance.dart';
+import 'frosted_glass.dart';
 import 'remote_focus.dart';
 import 'vector_icon.dart';
 
@@ -298,7 +298,6 @@ class FusionMorphOverlay extends StatefulWidget {
     this.onTransitionCompleted,
     this.settingsMaxWidth = 560,
     this.settingsMinWidth = SettingsStyle.panelWidth,
-    this.forceFallback = false,
   });
 
   final MorphStage stage;
@@ -317,7 +316,6 @@ class FusionMorphOverlay extends StatefulWidget {
   /// Preferred panel width bounds, limited by the available screen width.
   final double settingsMaxWidth;
   final double settingsMinWidth;
-  final bool forceFallback;
 
   @override
   State<FusionMorphOverlay> createState() => _FusionMorphOverlayState();
@@ -528,16 +526,12 @@ class _FusionMorphOverlayState extends State<FusionMorphOverlay>
           final settingsSize = _settingsRect(_size).size;
           final tint = Color.lerp(menuTint, settingsTint, settingsAmount)!;
           final glass = RepaintBoundary(
-            child: LiquidGlass(
+            child: FrostedGlass(
               key: const ValueKey('morph-container'),
               level: GlassLevel.panel,
-              interactive: true,
               borderRadius: radius,
-              blurSigma:
-                  10 + 4 * settingsAmount,
+              blurSigma: 10 + 4 * settingsAmount,
               tint: tint,
-              forceFallback: widget.forceFallback,
-              animate: false,
               child: ClipRect(
                 child: Stack(
                   children: [

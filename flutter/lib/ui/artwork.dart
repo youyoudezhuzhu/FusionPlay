@@ -188,7 +188,7 @@ class _ArtworkBackgroundLayer extends StatelessWidget {
         ? null
         : Image(
             image: provider!,
-            fit: advancedEffectsEnabled ? BoxFit.fill : BoxFit.cover,
+            fit: BoxFit.cover,
             errorBuilder: kIsWeb ? (_, _, _) => const SizedBox.expand() : null,
             gaplessPlayback: true,
           );
@@ -220,16 +220,13 @@ class _ArtworkBackgroundLayer extends StatelessWidget {
                       final blur = (shortSide * .061)
                           .clamp(16.0, 65.0)
                           .toDouble();
-                      // Spread the whole artwork palette across the viewport.
-                      // Reflect only the backdrop so its brightest features
-                      // need not sit directly behind their sharp equivalents.
                       return ImageFiltered(
                         imageFilter: ImageFilter.blur(
-                          sigmaX: blur * 1.45,
+                          sigmaX: blur,
                           sigmaY: blur,
                           tileMode: TileMode.clamp,
                         ),
-                        child: Transform.flip(flipX: true, child: artworkImage),
+                        child: artworkImage,
                       );
                     },
                   )

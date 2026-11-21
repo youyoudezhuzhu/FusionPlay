@@ -13,8 +13,8 @@ import 'package:fusionplay_android_flutter/backend/update_service.dart';
 import 'package:fusionplay_android_flutter/theme/fusion_theme.dart';
 import 'package:fusionplay_android_flutter/ui/app_menu.dart';
 import 'package:fusionplay_android_flutter/ui/artwork.dart';
-import 'package:fusionplay_android_flutter/ui/glass_backdrop.dart';
-import 'package:fusionplay_android_flutter/ui/liquid_glass.dart';
+import 'package:fusionplay_android_flutter/ui/glass_appearance.dart';
+import 'package:fusionplay_android_flutter/ui/frosted_glass.dart';
 import 'package:fusionplay_android_flutter/ui/player_view.dart';
 import 'package:fusionplay_android_flutter/ui/settings_view.dart';
 
@@ -72,8 +72,7 @@ Widget _background() => Stack(
 Widget _playerHost(AppState state, {String? artwork, Widget? backdrop}) =>
     RepaintBoundary(
       key: const ValueKey('review-boundary'),
-      child: GlassBackdropScope(
-        revision: 'review2',
+      child: FrostedScene(
         background: backdrop ?? _background(),
         child: Scaffold(
           backgroundColor: Colors.transparent,
@@ -235,8 +234,7 @@ Widget _overlayHost({
   Widget? settingsChild,
 }) => RepaintBoundary(
   key: const ValueKey('review-boundary'),
-  child: GlassBackdropScope(
-    revision: 'review2-overlay',
+  child: FrostedScene(
     background: _background(),
     child: MaterialApp(
       debugShowCheckedModeBanner: false,
@@ -597,8 +595,7 @@ void main() {
       tester,
       RepaintBoundary(
         key: const ValueKey('review-boundary'),
-        child: GlassBackdropScope(
-          revision: 'toast',
+        child: FrostedScene(
           background: _background(),
           child: MaterialApp(
             debugShowCheckedModeBanner: false,
@@ -610,9 +607,9 @@ void main() {
                   alignment: Alignment.topCenter,
                   child: Padding(
                     padding: const EdgeInsets.all(16),
-                    child: LiquidGlass(
+                    child: FrostedGlass(
                       level: GlassLevel.panel,
-                      interactive: true,
+
                       borderRadius: 22,
                       padding: const EdgeInsets.fromLTRB(18, 8, 6, 8),
                       child: const Text(
@@ -635,8 +632,7 @@ void main() {
       tester,
       RepaintBoundary(
         key: const ValueKey('review-boundary'),
-        child: GlassBackdropScope(
-          revision: 'dialog',
+        child: FrostedScene(
           background: _background(),
           child: MaterialApp(
             debugShowCheckedModeBanner: false,
@@ -677,8 +673,7 @@ void main() {
       tester,
       RepaintBoundary(
         key: const ValueKey('review-boundary'),
-        child: GlassBackdropScope(
-          revision: 'grid',
+        child: FrostedScene(
           background: const _GridBackdrop(),
           child: Scaffold(
             backgroundColor: Colors.transparent,
@@ -727,7 +722,7 @@ void main() {
       tester,
       RepaintBoundary(
         key: const ValueKey('review-boundary'),
-        child: GlassBackdropScope(
+        child: FrostedScene(
           background: _background(),
           child: MaterialApp(
             theme: fusionTheme(),

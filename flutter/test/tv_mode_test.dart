@@ -45,7 +45,6 @@ Future<void> _pumpHome(
         controller: controller,
         state: state,
         isAndroid: false,
-        forceGlassFallback: true,
       ),
     ),
   );
@@ -121,7 +120,6 @@ void main() {
           controller: controller,
           state: _state(),
           isAndroid: false,
-          forceGlassFallback: true,
         ),
       ),
     );
@@ -149,7 +147,6 @@ void main() {
           controller: controller,
           state: _state(),
           isAndroid: false,
-          forceGlassFallback: true,
         ),
       ),
     );
@@ -175,7 +172,6 @@ void main() {
           controller: controller,
           state: _state(),
           isAndroid: false,
-          forceGlassFallback: true,
         ),
       ),
     );
@@ -266,7 +262,6 @@ void main() {
           controller: controller,
           state: _state(),
           isAndroid: false,
-          forceGlassFallback: true,
         ),
       ),
     );

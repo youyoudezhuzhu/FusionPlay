@@ -31,6 +31,28 @@ void main() {
     expect(find.byKey(artworkKey), findsOneWidget);
   });
 
+  testWidgets('宽屏和竖屏背景均按原图比例裁切', (tester) async {
+    final artwork = File('test/fixtures/FusionPlay-Mark.png').absolute.path;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    tester.view.devicePixelRatio = 1;
+
+    for (final size in [const Size(900, 400), const Size(360, 800)]) {
+      tester.view.physicalSize = size;
+      await tester.pumpWidget(
+        MaterialApp(
+          home: ArtworkBackground(source: artwork, hasPlayback: true),
+        ),
+      );
+      final image = find.descendant(
+        of: find.byType(ImageFiltered),
+        matching: find.byType(Image),
+      );
+      expect(tester.widget<Image>(image).fit, BoxFit.cover);
+      expect(tester.getSize(image), size);
+    }
+  });
+
   testWidgets('关闭高级效果后封面背景不使用模糊', (tester) async {
     final artwork = File('test/fixtures/FusionPlay-Mark.png').absolute.path;
     await tester.pumpWidget(
@@ -43,7 +65,7 @@ void main() {
     );
 
     expect(find.byType(ImageFiltered), findsNothing);
-    expect(find.byType(Image), findsOneWidget);
+    expect(tester.widget<Image>(find.byType(Image)).fit, BoxFit.cover);
   });
 
   test('封面翻转帧和时序参数与文档一致', () {

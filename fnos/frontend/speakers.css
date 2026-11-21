@@ -14,10 +14,9 @@
 [hidden]{display:none!important}
 body {margin:0; min-height:100vh; isolation:isolate}
 .scene {isolation:isolate;position:fixed;inset:0;z-index:-1;overflow:hidden;background:linear-gradient(130deg,#373a41,#202227 68%,#191b20)}
-.scene img {width:100%;height:100%;object-fit:fill;filter:blur(clamp(16px,6.1vmin,65px));transform:scale(-1.14,1.14)}
+.scene img {width:100%;height:100%;object-fit:cover;filter:blur(clamp(16px,6.1vmin,65px))}
 .scene:has(img:not([hidden]))::before {content:"";position:absolute;inset:0;z-index:1;background:var(--fusion-backdrop-highlight-limit);mix-blend-mode:darken}
 .scene::after {content:"";position:absolute;inset:0;background:radial-gradient(ellipse at 56% 47%,#12172866,transparent 84%),linear-gradient(#10172550,#10172575)}
-.defs {position:absolute;width:0;height:0;pointer-events:none}
 header,main {width:min(100% - 48px,984px); margin-inline:auto}
 header,.heading,.footer,.toolbar,.device-row,.room-top,.room-actions {display:flex;align-items:center;gap:14px;flex-wrap:wrap}
 header,.heading,.room-top,.room-actions {justify-content:space-between}
@@ -32,7 +31,7 @@ button:disabled {cursor:default;opacity:.48}
 button:hover:not(:disabled),a.button:hover {background:#ffffff24}
 :focus-visible{outline:2px solid white;outline-offset:3px}
 .back,.room-actions a {font-size:14px;color:#f7edf7}.back:hover,.room-actions a:hover{text-decoration:underline}
-.card {border:1px solid #ffffff1a;border-radius:var(--fusion-card-radius);background:linear-gradient(140deg,#ffffff09,transparent 54%),var(--fusion-settings-tint);backdrop-filter:blur(var(--fusion-panel-blur)) var(--surface-lens,brightness(1));box-shadow:inset 0 1px 0 #ffffff0b}
+.card {border:1px solid #ffffff1a;border-radius:var(--fusion-card-radius);background:linear-gradient(140deg,#ffffff09,transparent 54%),var(--fusion-settings-tint);backdrop-filter:blur(var(--fusion-panel-blur));box-shadow:inset 0 1px 0 #ffffff0b}
 .room-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(280px,100%),1fr));gap:18px}
 .room {position:relative;min-width:0;padding:24px;display:flex;flex-direction:column;gap:22px}
 .room h2{font-size:clamp(24px,3vw,36px);line-height:1.15;overflow-wrap:anywhere}
@@ -53,36 +52,15 @@ button:hover:not(:disabled),a.button:hover {background:#ffffff24}
 .controls{display:flex;flex-direction:column;gap:14px}.modes{display:grid;grid-template-columns:1fr 1fr;gap:7px}.modes button{border-radius:12px}.modes button[aria-pressed=true],.modes button[aria-pressed=true]:hover{color:#17191d;background:#f2f2f5}
 .response{margin-top:auto}.response output{display:block;font-size:clamp(22px,2.6vw,32px);font-variant-numeric:tabular-nums}
 input[type=range]{width:100%;accent-color:var(--accent);cursor:pointer}
-/* Keep the native input for hit testing, keyboard and accessibility. The
-   sibling lens samples the track underneath it in the browser compositor. */
-.probe-slider{position:relative;--fraction:.5;min-height:40px;display:grid;align-items:center}
+.probe-slider{min-height:40px;display:grid;align-items:center}
 .probe-slider input{margin:0;min-height:40px}
-.probe-track,.probe-lens{display:none;pointer-events:none}
-@supports (backdrop-filter:url(#lens)){
-  @media not (prefers-reduced-transparency:reduce){
-    html:not(.solid-surfaces) .probe-slider:has(.probe-lens[style]) input{opacity:0}
-    html:not(.solid-surfaces) .probe-slider:has(.probe-lens[style]) .probe-track{
-      display:block;position:absolute;inset-inline:10px;height:6px;border-radius:3px;
-      background:linear-gradient(to right,#ffffffce calc(var(--fraction)*100%),var(--fusion-inactive-rail) 0)}
-    html:not(.solid-surfaces) .probe-lens{display:block;visibility:hidden;position:absolute;top:50%;
-      left:calc(10px + (100% - 20px)*var(--fraction));width:20px;height:17px;
-      transform:translate(-50%,-50%);border-radius:999px;border:1px solid #ffffff65;
-      background:#ffffff38;backdrop-filter:var(--surface-lens);transition:width 100ms,height 100ms}
-    html:not(.solid-surfaces) .probe-lens[style]{visibility:visible}
-    html:not(.solid-surfaces) .probe-slider:active .probe-lens,
-    html:not(.solid-surfaces) .probe-slider:focus-within .probe-lens{width:26px;height:21px}
-    .probe-slider:has(input:focus-visible){outline:2px solid white;outline-offset:2px;border-radius:12px}
-  }
-}
-@media(prefers-reduced-motion:reduce){.probe-slider .probe-lens[style]{transition:none!important}}
-@media(forced-colors:active){.probe-slider input{opacity:1!important}.probe-slider span{display:none!important}}
 .plot{align-self:center;min-width:0}.axis{margin-left:8px}.x-axis{text-align:right}
 canvas{display:block;width:100%;height:clamp(170px,30vh,310px);touch-action:none}
 .editor-foot,#custom{grid-column:1/-1}.editor-foot{border-top:1px solid var(--border);padding-top:16px;justify-content:space-between}
 #points{display:flex;gap:10px;flex-wrap:wrap;margin-top:10px}.point{display:flex;align-items:center;gap:5px}.point input{width:66px;padding:6px}.point button{padding:4px 7px}
 #notice:not(:empty){padding:14px 0}
 @media(max-width:620px){header,main{width:calc(100% - 32px)}header{padding:17px 0}main{padding-top:14px}.editor{grid-template-columns:1fr;gap:18px}.controls{display:contents}.small{display:none}.modes{grid-template-columns:repeat(4,1fr)}.modes button{padding:9px 2px}.plot{grid-row:2}.response{grid-row:3}.heading{gap:8px}.room{gap:16px}}
-@media(prefers-reduced-transparency:reduce),(forced-colors:active){.scene,.defs{display:none}.card{background:var(--fusion-solid-panel);backdrop-filter:none}}
+@media(prefers-reduced-transparency:reduce),(forced-colors:active){.scene{display:none}.card{background:var(--fusion-solid-panel);backdrop-filter:none}}
 
 /* Keep the first eight rooms close together on desktop. More rows and narrow
    screens use the document's normal scroll and keyboard focus order. */
@@ -114,7 +92,7 @@ select option:disabled { color: #aaa3b6; }
 #output-groups .toolbar {margin:8px 0}
 
 .solid-surfaces .card, .solid-surfaces dialog.card {background:var(--fusion-solid-panel);backdrop-filter:none;box-shadow:none}
-dialog.card {width:min(400px,calc(100% - 32px));color:white;padding:24px;background:var(--fusion-popup-tint);backdrop-filter:blur(9px) var(--surface-lens,brightness(1))}
+dialog.card {width:min(400px,calc(100% - 32px));color:white;padding:24px;background:var(--fusion-popup-tint);backdrop-filter:blur(20px)}
 dialog::backdrop {background:rgb(0 0 0 / .16)}
 .solid-surfaces dialog::backdrop {background:rgb(0 0 0 / .42)}
 dialog h2 {font-size:20px;line-height:1.35}

@@ -10,8 +10,8 @@ import 'package:fusionplay_android_flutter/main.dart';
 import 'package:fusionplay_android_flutter/models/app_state.dart';
 import 'package:fusionplay_android_flutter/theme/fusion_theme.dart';
 import 'package:fusionplay_android_flutter/ui/artwork.dart';
-import 'package:fusionplay_android_flutter/ui/glass_backdrop.dart';
-import 'package:fusionplay_android_flutter/ui/liquid_glass.dart';
+import 'package:fusionplay_android_flutter/ui/glass_appearance.dart';
+import 'package:fusionplay_android_flutter/ui/frosted_glass.dart';
 
 class _PreviewController extends NativeAppController {
   final effects = ValueNotifier(true);
@@ -123,7 +123,7 @@ void main() {
     final sheet = find.byKey(const ValueKey('settings-sheet'));
     final panel = find.byKey(const ValueKey('morph-container'));
     final sheetElement = tester.element(sheet);
-    expect(GlassBackdropScope.of(sheetElement), isNotNull);
+    expect(GlassAppearance.enabledOf(sheetElement), isTrue);
     final toggle = find.text('高级效果');
     await tester.ensureVisible(toggle);
     await tester.pumpAndSettle();
@@ -136,8 +136,11 @@ void main() {
     scroll.jumpTo(0);
     await capture('settings-off');
     expect(tester.element(sheet), same(sheetElement));
-    expect(GlassBackdropScope.of(sheetElement), isNull);
-    expect(find.byType(BackdropFilter), findsNothing);
+    expect(GlassAppearance.enabledOf(sheetElement), isFalse);
+    expect(
+      find.byWidgetPredicate((w) => w is BackdropFilter && w.enabled),
+      findsNothing,
+    );
     expect(
       find.descendant(
         of: panel,

@@ -89,7 +89,6 @@ Widget _playerHost(
           onOpenMenu: onOpenMenu,
           progressFocusNode: progressFocusNode,
           volumeFocusNode: volumeFocusNode,
-          forceGlassFallback: true,
         ),
       ),
     ),

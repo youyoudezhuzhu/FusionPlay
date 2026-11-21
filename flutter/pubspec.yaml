@@ -14,8 +14,6 @@ dependencies:
   flutter:
     sdk: flutter
   flutter_svg: 2.2.3
-  liquid_glass_widgets:
-    path: third_party/liquid_glass_widgets
 
 dependency_overrides:
   vector_math: 2.3.0
@@ -27,8 +25,6 @@ dev_dependencies:
 
 flutter:
   uses-material-design: true
-  shaders:
-    - shaders/liquid_glass_refraction.frag
   assets:
     - assets/DLNA.svg
     - assets/airplay-broadcast.svg
