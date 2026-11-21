@@ -213,7 +213,10 @@ class _ReceiverState extends State<_Receiver> {
     if (destination case final Uri route) {
       _navigate(route.toString().toJS);
     } else {
-      (speakerMenu ? speakerFocus : menuFocus).requestFocus();
+      final trigger = speakerMenu ? speakerFocus : menuFocus;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted && stage == null) trigger.requestFocus();
+      });
     }
   }
 
