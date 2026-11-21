@@ -5,7 +5,7 @@
 #   - source 第三方固定 thirdparty
 # 打包时按原生后台的架构写入 platform，x86_64 取 x86，AArch64 取 arm。
 appname               = fusionplay-fnos
-version               = 1.7.11
+version               = 1.7.12
 display_name          = "FusionPlay"
 desc                  = "把 AirPlay 2 / DLNA / 小米妙播音频接到飞牛 NAS 的音频输出设备（多声卡、发送端主音量、校准）"
 source                = thirdparty
