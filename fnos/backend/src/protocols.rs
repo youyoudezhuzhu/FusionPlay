@@ -765,11 +765,11 @@ fn handle_core_event(json: String, state: SharedState, dlna: Arc<DlnaPlayer>) {
                 dlna.worker_failed(&active, &track, &error);
             }
         }
-        "dlna_volume" => {
-            let mut runtime = state.state.write().unwrap();
-            runtime.sender_volume.dlna_percent =
-                value.get("percent").and_then(Value::as_u64).map(|v| v as u8);
-        }
+        "dlna_volume" => dlna.volume_event(
+            value["epoch"].as_u64(),
+            value["percent"].as_u64().map(|percent| percent.min(100) as u8),
+            value["muted"].as_bool(),
+        ),
         "dlna_stop" => {
             dlna.stop();
             let mut runtime = state.state.write().unwrap();

@@ -63,6 +63,7 @@ pub struct SenderVolume {
     pub airplay_db: Option<f32>,
     pub airplay_percent: Option<u8>,
     pub dlna_percent: Option<u8>,
+    pub dlna_muted: bool,
     pub miplay_percent: Option<u8>,
 }
 
@@ -100,6 +101,7 @@ impl RuntimeState {
         }
         if source != Some(Source::Dlna) {
             self.sender_volume.dlna_percent = None;
+            self.sender_volume.dlna_muted = false;
         }
         if source != Some(Source::MiPlay) {
             self.sender_volume.miplay_percent = None;

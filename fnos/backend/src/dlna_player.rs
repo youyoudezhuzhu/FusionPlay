@@ -283,6 +283,21 @@ impl DlnaPlayer {
         self.rate_event(None, paused);
     }
 
+    pub(crate) fn volume_event(&self, epoch: Option<u64>, percent: Option<u8>, muted: Option<bool>) {
+        let slot = self.current.lock().unwrap();
+        let Some(active) = slot.as_ref() else { return };
+        let mut runtime = self.state.state.write().unwrap();
+        if active.abort.aborted() || epoch.is_some() && epoch != active.core_epoch {
+            return;
+        }
+        if let Some(percent) = percent {
+            runtime.sender_volume.dlna_percent = Some(percent);
+        }
+        if let Some(muted) = muted {
+            runtime.sender_volume.dlna_muted = muted;
+        }
+    }
+
     pub(crate) fn rate_event(&self, epoch: Option<u64>, paused: bool) {
         let playback = self.current.lock().unwrap();
         let Some(active) = playback.as_ref() else { return };
@@ -1358,7 +1373,7 @@ impl<'a> PcmClock<'a> {
             // Rebase after a stalled read instead of dumping overdue audio
             // into the device queue to catch up.
             let next = self.next.unwrap_or(now).max(now);
-            summary.push_frames(&self.player.engine, epoch, chunk);
+            summary.push_frames(self.player, epoch, chunk);
             let frames = chunk.len() / TARGET_CHANNELS;
             self.next = Some(next + Duration::from_secs_f64(frames as f64 / TARGET_RATE as f64));
         }
@@ -1404,15 +1419,23 @@ struct PlaySummary {
 }
 
 impl PlaySummary {
-    fn push_frames(&mut self, engine: &AudioEngine, epoch: u64, pcm: &[f32]) {
+    fn push_frames(&mut self, player: &DlnaPlayer, epoch: u64, pcm: &[f32]) {
         if pcm.len() < TARGET_CHANNELS {
             return;
         }
         self.output_frames += (pcm.len() / TARGET_CHANNELS) as u64;
-        engine.push_pcm(
+        let sender_gain = {
+            let runtime = player.state.state.read().unwrap();
+            if runtime.sender_volume.dlna_muted {
+                0.0
+            } else {
+                f32::from(runtime.sender_volume.dlna_percent.unwrap_or(100)) / 100.0
+            }
+        };
+        player.engine.push_pcm(
             Source::Dlna,
             epoch,
-            1.0,
+            sender_gain,
             TARGET_RATE,
             TARGET_CHANNELS as u16,
             pcm,
