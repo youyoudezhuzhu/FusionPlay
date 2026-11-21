@@ -182,6 +182,12 @@ fn main() {
                         let name = command.command.clone();
                         let is_shutdown = name == "shutdown";
                         let outcome = runtime.handle_command(command);
+                        if !outcome.ok {
+                            logging::append_line(&format!(
+                                "ERROR command={name} {}",
+                                outcome.message.as_deref().unwrap_or("unknown error"),
+                            ));
+                        }
                         if let Some(request_id) = request_id {
                             ui.response(
                                 Some(request_id.as_str()),
@@ -198,7 +204,7 @@ fn main() {
                         ui.log(
                             LogLevel::Warning,
                             "host",
-                            &format!("无法解析 UI 命令：{error}（{trimmed}）"),
+                            &format!("无法解析 UI 命令（{} 字节）：{error}", trimmed.len()),
                         );
                     }
                 }

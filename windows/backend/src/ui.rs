@@ -198,9 +198,6 @@ impl UiSink for StdioUiSink {
     }
 
     fn response(&self, request_id: Option<&str>, command: &str, ok: bool, message: Option<&str>) {
-        if !ok {
-            crate::logging::append_line(&format!("ERROR command={command} {}", message.unwrap_or("unknown error")));
-        }
         self.send_event(&UiEvent::Response {
             request_id: request_id.map(str::to_owned),
             command: command.to_owned(),

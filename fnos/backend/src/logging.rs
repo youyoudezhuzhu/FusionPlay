@@ -13,7 +13,6 @@ use std::sync::atomic::{AtomicU8, Ordering};
 use std::sync::OnceLock;
 use tracing_subscriber::layer::Context as LayerContext;
 use tracing_subscriber::prelude::*;
-use tracing_subscriber::Layer as _;
 use tracing_subscriber::Registry;
 
 static LOG_PATH: OnceLock<PathBuf> = OnceLock::new();
