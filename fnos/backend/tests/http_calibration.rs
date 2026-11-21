@@ -68,6 +68,11 @@ fn device(id: &str, curve: VolumeCurve) -> DeviceSetting {
 }
 
 fn start_app(dir: &Path, devices: Vec<DeviceSetting>) -> (Arc<HttpApp>, Http) {
+    start_app_with_supervisor(dir, devices, None)
+}
+
+fn start_app_with_supervisor(dir: &Path, devices: Vec<DeviceSetting>,
+    instances: Option<Arc<fusionplay_fnos::instances::SpeakerSupervisor>>) -> (Arc<HttpApp>, Http) {
     let config_path = dir.join("config.json");
     let mut config = Config::default();
     config.audio.devices = devices;
@@ -75,7 +80,7 @@ fn start_app(dir: &Path, devices: Vec<DeviceSetting>) -> (Arc<HttpApp>, Http) {
     let config = Config::load(&config_path).expect("load initial config");
     let engine = AudioEngine::new(config.audio.clone(), NullBackend::new()).expect("engine");
     let app = Arc::new(HttpApp {
-        instances: None,
+        instances,
         config_path,
         config: RwLock::new(config),
         state: AppState::new(),
@@ -281,4 +286,25 @@ fn catalog_scopes_commands_and_never_falls_back_to_default_for_missing_speakers(
     assert_eq!(catalog["default"], "kitchen");
     assert_eq!(catalog["instances"].as_array().unwrap().len(), 1);
     assert_eq!(http.request("GET", "/api/instances/default/status", None).0, 404);
+}
+
+#[test]
+fn failed_worker_creation_restores_persisted_and_live_device_ownership() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    // A regular file blocks only the new room's private state directory.
+    std::fs::create_dir(root.join("instances")).unwrap();
+    std::fs::write(root.join("instances/office"), "unavailable").unwrap();
+    let supervisor = Arc::new(fusionplay_fnos::instances::SpeakerSupervisor::new(root, root.join("www")));
+    let (app, http) = start_app_with_supervisor(root, vec![device("usb", VolumeCurve::default())], Some(supervisor));
+    let before = serde_json::to_value(app.snapshot()).unwrap();
+    let mut next = before.clone();
+    next["audio"]["devices"][0]["enabled"] = false.into();
+    next["audio"]["instances"] = serde_json::json!([{"id":"office","name":"Office","device_id":"usb"}]);
+    let (status, error) = http.request("PUT", "/api/config", Some(&next.to_string()));
+    assert_eq!(status, 400, "{error}");
+    assert_eq!(serde_json::to_value(app.snapshot()).unwrap(), before);
+    assert_eq!(serde_json::to_value(Config::load(&app.config_path).unwrap()).unwrap(), before);
+    assert!(app.engine.settings().devices[0].enabled);
+    assert_eq!(http.request("GET", "/api/instances/office/status", None).0, 404);
 }

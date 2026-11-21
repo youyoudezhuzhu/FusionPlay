@@ -177,7 +177,7 @@ fn main() -> Result<()> {
     // Expose gateway health first. Startup time grows with attached hardware;
     // fnOS must be able to check the gateway while room workers initialize.
     if let Some(supervisor) = &instances {
-        if let Err(error) = supervisor.apply(&config) {
+        if let Err(error) = supervisor.apply(&app.config.read().unwrap()) {
             state.record_error(format!("独立音箱启动失败：{error:#}"));
         }
     }
