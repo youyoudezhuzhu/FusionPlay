@@ -409,3 +409,38 @@ python3 fnos/tools/test-speaker-discovery.py <local-interface-ip> "客厅" "书�
 ```
 
 [音箱选择截图](../docs/platform-previews/fnos-speaker-picker.png) · [音箱设置截图](../docs/platform-previews/fnos-speaker-assignments.png)
+
+## 绑定后调节音量曲线与玻璃边缘（2026-11-21）
+
+验证版本为 `30a1165`。在 Linux x86_64 浏览器中打开 Flutter Web 发布构建，从右下角的飞牛菜单进入音箱选择。测试后端执行实际配置读写并启动接收器子进程，音频输出使用 null。截图中的专辑封面、曲名和进度使用固定媒体数据，以便复核同一背景下的渲染。
+
+| 场景 | 观察结果 |
+|---|---|
+| 新建「桌面」实例 | 选定设备前无法保存。点击「保存绑定」后，配置文件记录了「桌面」与其 USB 输出的对应关系，新接收器报告三个协议均已启用。成功页自动选中刚绑定的设备。 |
+| 已有「书房」实例 | 从卡片再次打开曲线，保存柔和预设，刷新仍选中柔和。切至自定义，新增控制点后保存成功。 |
+| 多输出与过期页面 | 同时启用 USB 和 HDMI 的主接收器需要先选音箱。已删除的实例无法打开编辑器。后端测试覆盖重复绑定、跨实例写入和另一标签页先保存后的冲突。 |
+| 跨房间播放 | 另行以两个实际 DLNA 接收器同时解码测试音频。暂停一间后另一间仍播放，状态和封面保持独立。 |
+| 窄屏与安装包 | 在 390 × 760 浏览器中完成设备选择，页面无横向溢出。x86_64 FPK 构建、解包与版本检查通过，独立音箱网页资源逐项与源码一致。 |
+
+### 外圈对照
+
+下面的上、下两行分别来自 `c2fd275` 和 `30a1165` 的播放器截图。视口均为 1100 × 525，裁切区域为左上角 (524, 360)，宽 478、高 64 像素。相同位置的音量胶囊下缘由灰暗变为透出封面色的细边。
+
+![修改前后音量胶囊，原尺寸裁切](../docs/platform-previews/fnos-glass-rim-comparison.png)
+
+以截图左上角为原点，取半开像素区间，计算 8 位 RGB 的加权平均值 `0.2126R + 0.7152G + 0.0722B`。胶囊下缘 `x=[630,691), y=[407,411)` 从 64.1 升至 86.5。紧邻背景 `x=[630,691), y=[414,417)` 从 41.7 变为 42.7。该读数仅对应本组 CanvasKit 截图。实体 NAS 外接声卡、实际扬声器响度以及 Android Impeller 的显示效果仍需真机验证。
+
+[播放器](../docs/platform-previews/fnos-player-corner.png) · [音箱选择](../docs/platform-previews/fnos-speaker-picker.png) · [新建绑定](../docs/platform-previews/fnos-speaker-create.png) · [曲线编辑器](../docs/platform-previews/fnos-room-curve.png)
+
+### 回归命令
+
+以下命令从仓库根目录运行。浏览器测试需要 Python Playwright 及 Chromium。未设置 `CHROMIUM` 时使用 Playwright 已安装的 Chromium。
+
+```sh
+(cd flutter && flutter pub get && flutter analyze && flutter test)
+cargo test --manifest-path fnos/backend/Cargo.toml --all-targets
+CHROMIUM=/usr/bin/chromium python3 fnos/tools/test-curve-page.py
+bash fnos/tools/build-fpk.sh
+bash fnos/tools/check-fpk.sh fnos/dist/fusionplay-fnos.fpk
+python3 fnos/tools/test-speaker-instances.py fnos/backend/target/release/fusionplay-fnos
+```

@@ -10,6 +10,8 @@
 
 - `GET /api/instances` 返回可用播放器标识、显示名、设备和默认目标。网页将选定目标写入地址栏。
 - `GET /api/instances/<id>/status`、`POST /api/instances/<id>/player` 和 `GET /api/instances/<id>/artwork/<filename>` 共用同一实例标识。父进程通过私有 Unix socket 转发独立音箱请求。
+- `POST /api/instances` 接收 `{name,device_id}`，保存绑定并启动接收器后返回其 ID。将主接收器的一只音箱转为独立输出时保留设备校准。
+- `PUT /api/instances/<id>/curve` 接收 `{device_id,original,curve}`。在同一次配置写入中核对设备归属与原曲线。过期请求返回 409，保留已有设置。
 - `audio.instances` 保存稳定 ID、投送名称和声卡分配。配置校验拒绝同一设备重复分配；工作进程重启后从各自的数据目录恢复身份。额外音箱使用独立妙播控制与媒体发现端口，AirPlay 使用本地时钟回退，跨音箱播放进度可以独立变化。
 
 ## 1. 进程与数据流
