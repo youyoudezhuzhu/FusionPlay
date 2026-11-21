@@ -34,8 +34,8 @@ button:hover:not(:disabled),a.button:hover {background:#ffffff24}
 .speaker-symbol::after{content:"";width:13px;height:24px;border:1.5px solid white;border-radius:6px;background:radial-gradient(circle at 50% 70%,white 0 3px,transparent 4px),radial-gradient(circle at 50% 24%,white 0 1px,transparent 2px)}
 .current{font-size:12px;color:#ffe6cf}.room-actions{border-top:1px solid #ffffff20;padding-top:14px;margin-top:auto}
 .room-actions a{display:inline-flex;align-items:center;min-height:44px}
-.room-actions a:first-child::after{content:"";position:absolute;inset:0;border-radius:26px}
-.room-actions a + a{position:relative}
+.room-open::after{content:"";position:absolute;inset:0;border-radius:26px}
+.room-actions a:not(.room-open){position:relative}
 #binding-result:not(:empty){margin-bottom:16px;color:#f5e6d8}
 .bind{max-width:560px;padding:28px;display:grid;gap:10px}.bind label:not(:first-child){margin-top:12px}
 .bind p,.small,.axis,.x-axis,.response label,#save-state{font-size:13px;color:#ddd4e2}
@@ -52,3 +52,28 @@ canvas{display:block;width:100%;height:clamp(170px,30vh,310px);touch-action:none
 #notice:not(:empty){padding:14px 0}
 @media(max-width:620px){header,main{width:calc(100% - 32px)}header{padding:17px 0}main{padding-top:14px}.editor{grid-template-columns:1fr;gap:18px}.controls{display:contents}.small{display:none}.modes{grid-template-columns:repeat(4,1fr)}.modes button{padding:9px 2px}.plot{grid-row:2}.response{grid-row:3}.heading{gap:8px}.room{gap:16px}}
 @media(prefers-reduced-transparency:reduce),(forced-colors:active){.scene,.defs{display:none}.card{background:#2e293a;backdrop-filter:none}}
+
+/* Keep the first eight rooms close together on desktop. More rows and narrow
+   screens use the document's normal scroll and keyboard focus order. */
+.room-grid.many {
+  grid-template-columns: repeat(auto-fit, minmax(min(220px, 100%), 1fr));
+  gap: 12px;
+}
+.many .room { padding: 16px; gap: 12px; }
+.many .room-top { min-height: 34px; }
+.many .cover, .many .speaker-symbol { width: 34px; height: 34px; border-radius: 10px; }
+.many .room h2 { font-size: 21px; }
+.many .media { overflow-wrap: anywhere; }
+.many .room-actions { gap: 4px 10px; padding-top: 6px; }
+.many .room-actions a { font-size: 13px; }
+select option:disabled { color: #aaa3b6; }
+.many .room {
+  display: grid;
+  grid-template-columns: 34px minmax(0, 1fr);
+  align-content: start;
+  align-items: center;
+}
+.many .room-top { display: contents; }
+.many .room-info { grid-column: 2; grid-row: 1; }
+.many .current { position: absolute; top: 0; right: 12px; font-size: 10px; }
+.many .room-actions { grid-column: 1 / -1; margin-top: 0; }

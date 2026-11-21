@@ -325,3 +325,30 @@ fn speaker_curve_writes_follow_persisted_binding() {
     assert_eq!(http.request("PUT", &route, Some(&edit)).0, 409);
     assert_eq!(http.request("POST", "/api/instances", Some(&create)).0, 409);
 }
+
+#[test]
+fn editing_a_room_preserves_identity_calibration_and_other_owners() {
+    let dir = tempfile::tempdir().unwrap();
+    let soft = VolumeCurve {kind: CurveKind::Soft, points: vec![]};
+    let (app, http) = start_app(dir.path(), vec![device("a", VolumeCurve::default()), device("b", soft.clone())]);
+    let add = |name, output| {
+        let body = serde_json::json!({"name":name, "device_id":output}).to_string();
+        let (code, result) = http.request("POST", "/api/instances", Some(&body));
+        assert_eq!(code, 200, "{result}");
+        serde_json::from_str::<serde_json::Value>(&result).unwrap()["id"].as_str().unwrap().to_owned()
+    };
+    let id = add("Study", "a");
+    let path = format!("/api/instances/{id}/binding");
+    let edit = serde_json::json!({"name":"Desk", "device_id":"b", "original":{"name":"Study","device_id":"a"}}).to_string();
+    assert_eq!(http.request("PUT", &path, Some(&edit)).0, 200);
+    assert_eq!(http.request("PUT", &path, Some(&edit)).0, 409);
+    let other = add("Kitchen", "a");
+    let conflict = serde_json::json!({"name":"Desk", "device_id":"a", "original":{"name":"Desk","device_id":"b"}}).to_string();
+    let (code, message) = http.request("PUT", &path, Some(&conflict));
+    assert_eq!(code, 409);
+    assert!(message.contains("Kitchen"));
+    let cfg = Config::load(&app.config_path).unwrap();
+    assert!(cfg.audio.instances.iter().any(|s| s.id == id && s.name == "Desk" && s.device_id == "b"));
+    assert!(cfg.audio.instances.iter().any(|s| s.id == other && s.device_id == "a"));
+    assert_eq!(cfg.audio.devices.iter().find(|d| d.id == "b").unwrap().curve, soft);
+}

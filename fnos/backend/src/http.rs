@@ -62,6 +62,24 @@ impl HttpApp {
         Ok(next)
     }
 
+    fn assign_output(&self, cfg: &mut Config, device_id: &str, owner: Option<&str>) -> Result<()> {
+        if let Some(other) = cfg.audio.instances.iter()
+            .find(|s| s.device_id == device_id && Some(s.id.as_str()) != owner)
+        {
+            anyhow::bail!("这只音箱已绑定「{}」", other.name);
+        }
+        if let Some(device) = cfg.audio.devices.iter_mut().find(|d| d.id == device_id) {
+            device.enabled = false;
+        } else {
+            let device = self.engine.devices().into_iter().find(|d| d.id == device_id)
+                .context("未找到此输出设备，请刷新设备列表")?;
+            cfg.audio.devices.push(crate::config::DeviceSetting {
+                id: device.id, name: device.name, enabled: false, ..Default::default()
+            });
+        }
+        Ok(())
+    }
+
     pub fn snapshot(&self) -> Config {
         self.config.read().unwrap().clone()
     }
@@ -344,6 +362,29 @@ fn handle(
         let Some((id, target)) = scoped.split_once('/') else {
             return respond_error(respond, 404, "未知实例接口");
         };
+        if method == "PUT" && target == "binding" {
+            #[derive(serde::Deserialize)]
+            struct Binding { name: String, device_id: String }
+            #[derive(serde::Deserialize)]
+            struct Edit { name: String, device_id: String, original: Binding }
+            let result = serde_json::from_slice::<Edit>(&request.body).map_err(anyhow::Error::from)
+                .and_then(|edit| app.update_config(|cfg| {
+                    let index = cfg.audio.instances.iter().position(|room| room.id == id)
+                        .context("独立实例已移除，请刷新音箱列表")?;
+                    let room = &cfg.audio.instances[index];
+                    anyhow::ensure!(room.name == edit.original.name && room.device_id == edit.original.device_id,
+                        "此实例的名称或输出已改变，请重新加载");
+                    app.assign_output(cfg, &edit.device_id, Some(id))?;
+                    let room = &mut cfg.audio.instances[index];
+                    room.name = edit.name.trim().to_owned();
+                    room.device_id = edit.device_id;
+                    Ok(())
+                }));
+            return match result {
+                Ok(_) => respond_json(respond, json!({"id":id})),
+                Err(error) => respond_error(respond, 409, &error.to_string()),
+            };
+        }
         if method == "PUT" && target == "curve" {
             #[derive(serde::Deserialize)]
             struct Edit { device_id: String, curve: VolumeCurve, original: VolumeCurve }
@@ -391,17 +432,7 @@ fn handle(
                 .duration_since(std::time::UNIX_EPOCH)?.as_nanos());
             let result = serde_json::from_slice::<Create>(&request.body).map_err(anyhow::Error::from)
                 .and_then(|create| app.update_config(|cfg| {
-                    anyhow::ensure!(!cfg.audio.instances.iter().any(|s| s.device_id == create.device_id),
-                        "这只音箱已绑定其他实例");
-                    if let Some(device) = cfg.audio.devices.iter_mut().find(|d| d.id == create.device_id) {
-                        device.enabled = false;
-                    } else {
-                        let device = app.engine.devices().into_iter().find(|d| d.id == create.device_id)
-                            .context("未找到此输出设备，请刷新设备列表")?;
-                        cfg.audio.devices.push(crate::config::DeviceSetting {
-                            id: device.id, name: device.name, enabled: false, ..Default::default()
-                        });
-                    }
+                    app.assign_output(cfg, &create.device_id, None)?;
                     cfg.audio.instances.push(crate::config::SpeakerInstance {
                         id: id.clone(), name: create.name.trim().to_owned(), device_id: create.device_id
                     });

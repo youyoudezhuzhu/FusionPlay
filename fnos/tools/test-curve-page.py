@@ -78,9 +78,14 @@ def main():
         expect(page.locator("#notice")).to_contain_text("此实例已移除")
         expect(page.locator("#editor")).to_be_hidden()
 
+        page.goto(base + "room#edit")
+        expect(page.locator("#room-name")).to_have_value("Study")
+        expect(page.locator("#bind-device")).to_have_value("Study")
         page.goto(base + "room#new")
         expect(page.locator("#bind")).to_be_disabled()
-        expect(page.locator("#bind-device option[value='Study']")).to_have_count(0)
+        occupied = page.locator("#bind-device option[value='Study']")
+        expect(occupied).to_be_disabled()
+        expect(occupied).to_contain_text("已绑定「Study」")
         page.locator("#room-name").fill("Study")
         page.locator("#bind-device").select_option("USB")
         page.locator("#bind").click()
@@ -93,6 +98,24 @@ def main():
         expect(page.locator("#binding-result")).to_contain_text("已绑定USB")
         expect(page.locator("#editor")).to_be_visible()
         assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
+        for n in range(1, 17):
+            device_id = f"speaker-{n}"
+            devices.append({"id": device_id, "name": device_id, "enabled": False})
+            instances.append({"id": device_id, "name": f"Room {n}", "device_id": device_id})
+        page.goto(base + "room#rooms")
+        cards = page.locator(".room")
+        expect(cards).to_have_count(19)
+        for width, height in [(1280, 720), (390, 760)]:
+            page.set_viewport_size({"width": width, "height": height})
+            page.evaluate("window.scrollTo(0, 0)")
+            if width == 1280:
+                expect(cards.nth(7)).to_be_in_viewport(ratio=1)
+            expect(cards.last).not_to_be_in_viewport(ratio=1)
+            cards.last.scroll_into_view_if_needed()
+            expect(cards.last).to_be_in_viewport(ratio=1)
+            assert page.evaluate("scrollY > 0 && document.documentElement.scrollWidth <= innerWidth")
+        cards.last.get_by_text("编辑实例").click()
+        expect(page.locator("#room-name")).to_have_value("Room 16")
         browser.close()
 
 

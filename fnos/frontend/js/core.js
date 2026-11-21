@@ -427,6 +427,7 @@ window.FP = window.FP || {};
   const api = {
     instances: () => request('GET', '/api/instances'),
     createSpeaker: (name, device_id) => request('POST', '/api/instances', {name, device_id}, 45000),
+    editSpeaker: (id, binding) => request('PUT', '/api/instances/' + encodeURIComponent(id) + '/binding', binding, 45000),
     saveSpeakerCurve: (id, edit) => request('PUT', '/api/instances/' + encodeURIComponent(id) + '/curve', edit, 45000),
     health: function () { return request('GET', '/healthz', undefined, 6000); },
     status: function (instance) {

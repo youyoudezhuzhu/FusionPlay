@@ -3,7 +3,7 @@
 (async function () {
   const $ = id => document.getElementById(id);
   const url = new URL(location.href);
-  const section = ['curve','new'].includes(location.hash.slice(1)) ? location.hash.slice(1) : 'rooms';
+  const section = ['curve','new','edit'].includes(location.hash.slice(1)) ? location.hash.slice(1) : 'rooms';
   const api = FP.api;
   let roomId = url.searchParams.get('instance');
   let dirty = false;
@@ -42,7 +42,7 @@
   window.addEventListener('beforeunload', event => {
     if (dirty) { event.preventDefault(); event.returnValue = ''; }
   });
-  $(section).hidden = false;
+  $(section === 'edit' ? 'new' : section).hidden = false;
   $('back').href = player(roomId);
 
   try {
@@ -58,6 +58,8 @@
     const room = catalog.instances.find(s => s.id === roomId);
     const cards = new Map();
     if (section === 'rooms') {
+      const many = catalog.instances.length > 2;
+      $('room-list').classList.toggle('many', many);
       for (const s of catalog.instances) {
         const item = node('article','card room');
         const top = node('div','room-top');
@@ -69,10 +71,26 @@
         if (s.id === roomId) top.append(node('span','current','当前界面'));
         const title = node('div');
         const media = node('p','media','正在读取播放状态…');
-        title.append(node('h2','',s.name),media);
+        const heading = node('h2','',s.name);
+        title.className = 'room-info';
+        title.append(heading, media);
         const actions = node('div','room-actions');
-        actions.append(link('打开播放器 ↗',player(s.id)));
+        if (many) {
+          const open = link(s.name, player(s.id), 'room-open');
+          open.setAttribute('aria-label', '打开' + s.name + '播放器');
+          heading.replaceChildren(open);
+        } else {
+          actions.append(link('打开播放器 ↗',player(s.id),'room-open'));
+        }
         if (outputs(s.id).length) actions.append(link('音量曲线',page(s.id,'curve')));
+        if (s.id === 'default') {
+          const settings = new URL('index.html', document.baseURI);
+          settings.searchParams.set('instance', s.id);
+          settings.hash = '/audio';
+          actions.append(link('管理输出', settings));
+        } else {
+          actions.append(link('编辑实例', page(s.id, 'edit')));
+        }
         item.append(top,title,actions); $('room-list').append(item);
         cards.set(s.id,{cover,symbol,media});
       }
@@ -109,27 +127,54 @@
     refreshMedia();
     window.setInterval(refreshMedia, 4000);
     document.addEventListener('visibilitychange',refreshMedia);
-    if (section === 'new') {
+    if (section === 'new' || section === 'edit') {
+      const editing = section === 'edit';
+      const original = instances.find(s => s.id === roomId);
+      if (editing && !original) {
+        $('bind-form').hidden = true;
+        $('bind-title').textContent = '编辑实例';
+        throw new Error('此独立实例已移除。');
+      }
       const discovered = (await api.devices()).devices;
       const available = new Map([...devices,...discovered].map(d => [d.id,d.name || d.id]));
-      for (const s of instances) available.delete(s.device_id);
       const select = $('bind-device');
-      select.replaceChildren(new Option('选择输出设备',''), ...Array.from(available, ([id,name]) => new Option(name,id)));
+      select.replaceChildren(new Option('选择输出设备',''));
+      for (const [id, name] of available) {
+        const owner = instances.find(s => s.device_id === id);
+        const occupied = owner && !(editing && owner.id === roomId);
+        const primary = devices.some(d => d.id === id && d.enabled);
+        const label = occupied ? name + ' · 已绑定「' + owner.name + '」' :
+          primary ? name + ' · 主接收器使用中' : name;
+        const option = new Option(label, id);
+        option.disabled = Boolean(occupied);
+        select.add(option);
+      }
+      if (editing) {
+        $('bind-title').textContent = '编辑实例';
+        $('room-name').value = original.name;
+        select.value = original.device_id;
+      }
+      const hasOutput = [...select.options].some(o => o.value && !o.disabled);
       function hint() {
-        $('bind-hint').textContent = !available.size ? '没有可分配的输出设备。连接音箱后请重新加载。' :
-          devices.some(d => d.enabled && d.id === select.value) ? '绑定后，这只音箱将从主接收器转为独立接收。' :
+        $('bind-hint').textContent = !hasOutput ? '暂无可分配的输出。已有绑定显示在列表中，连接新音箱后可重新加载。' :
+          devices.some(d => d.enabled && d.id === select.value) ? '保存后，这只音箱将从主接收器转为独立接收。' :
+          editing ? '实例的播放地址保持不变。更换输出后，使用新音箱已保存的音量曲线。' :
           '绑定成功后即可设置这只音箱的音量曲线。';
         $('bind').disabled = !select.value;
       }
       hint(); select.onchange = hint;
-      if (!available.size) $('retry').hidden = false;
+      if (!hasOutput) $('retry').hidden = false;
       $('bind-form').onsubmit = async event => {
         event.preventDefault();
         const name = $('room-name');
         const deviceId = select.value;
         name.disabled = select.disabled = $('bind').disabled = true;
         try {
-          const result = await api.createSpeaker(name.value.trim(), deviceId);
+          const label = name.value.trim();
+          const result = editing
+            ? await api.editSpeaker(roomId, {name: label, device_id: deviceId,
+                original: {name: original.name, device_id: original.device_id}})
+            : await api.createSpeaker(label, deviceId);
           const next = new URL(page(result.id, 'curve', deviceId));
           next.searchParams.set('created', '1');
           location.assign(next);
