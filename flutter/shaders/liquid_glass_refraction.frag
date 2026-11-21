@@ -61,6 +61,11 @@ void main() {
   float edge = 1.0 - clamp(-sdf / thickness, 0.0, 1.0);
   float bevel = edge * edge * (3.0 - 2.0 * edge);
 
+  if (uLiveFace > 0.5 && bevel == 0.0) {
+    fragColor = vec4(0.0);
+    return;
+  }
+
   // Displace the actual captured backdrop toward the rim. The further inside
   // the bevel, the larger the physical path length through the glass.
   float bendPx = thickness * 0.85 * uRefraction * bevel;
@@ -81,9 +86,8 @@ void main() {
     color.b = texture(uBackdrop, clamp(uv - caOffset, vec2(0.001), vec2(0.999))).b;
   }
 
-  // Beer-Lambert rim absorption and a subtle body tint. Keep the backdrop
-  // readable: the glass is a lens, not a painted card.
-  color *= 1.0 - uAbsorption * bevel * bevel * 0.65;
+  // Light traverses a thicker section in the body of the lens.
+  color *= 1.0 - uAbsorption * 0.06 * (1.0 - bevel);
   color = mix(color, uTint.rgb, clamp(uTint.a, 0.0, 1.0) * 0.55);
 
   // Directional specular and grazing-angle Fresnel along the real normal.
@@ -95,8 +99,18 @@ void main() {
   float glint = clamp((specular * 0.38 + fresnel * 0.65) * uSpecular, 0.0, 1.0);
   color = mix(color, min(vec3(1.0), color * 1.15 + vec3(0.32)), glint);
 
-  // CanvasKit already composited the live backdrop underneath the surface.
-  // The face has zero displacement. Only the bevel needs resampled pixels.
-  float opacity = mix(1.0, bevel, uLiveFace);
-  fragColor = vec4(clamp(color, 0.0, 1.0) * opacity, opacity);
+  if (uLiveFace > 0.5) {
+    // Transfer the displacement relative to the unbent sample. Compositing
+    // an opaque snapshot at the rim replaces the live scene with its often
+    // darker capture, even where the two optical samples are identical.
+    vec2 straight = (uOrigin + uAxisX * local.x + uAxisY * local.y) * dpr / max(imagePx, vec2(1.0));
+    vec3 base = texture(uBackdrop, clamp(straight, vec2(0.001), vec2(0.999))).rgb;
+    vec3 delta = (color - base) * bevel;
+    vec3 coverage = max(delta / max(vec3(0.001), 1.0 - base),
+                       -delta / max(vec3(0.001), base));
+    float alpha = clamp(max(coverage.r, max(coverage.g, coverage.b)), 0.0, 1.0);
+    fragColor = vec4(clamp(delta + base * alpha, vec3(0.0), vec3(alpha)), alpha);
+  } else {
+    fragColor = vec4(clamp(color, 0.0, 1.0), 1.0);
+  }
 }

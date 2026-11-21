@@ -27,7 +27,6 @@ class GlassSpec {
     required this.radius,
     required this.borderAlpha,
     required this.rimAlpha,
-    required this.edgeAlpha,
     required this.sheenAlpha,
     required this.shadowAlpha,
     required this.shadowBlur,
@@ -49,9 +48,6 @@ class GlassSpec {
   /// Strength of the inner rim highlight along the top/left edge.
   final double rimAlpha;
 
-  /// Strength of the inner dark edge along the bottom/right edge.
-  final double edgeAlpha;
-
   /// Dynamic pointer/press sheen strength.
   final double sheenAlpha;
   final double shadowAlpha;
@@ -65,7 +61,6 @@ class GlassSpec {
     radius: 22,
     borderAlpha: .14,
     rimAlpha: .34,
-    edgeAlpha: .10,
     sheenAlpha: .30,
     shadowAlpha: .16,
     shadowBlur: 20,
@@ -78,10 +73,9 @@ class GlassSpec {
     radius: 22,
     borderAlpha: .22,
     rimAlpha: .52,
-    edgeAlpha: .14,
     sheenAlpha: .42,
     // Soft ambient diffusion only: no hard dark plinth under round controls.
-    shadowAlpha: .07,
+    shadowAlpha: .025,
     shadowBlur: 22,
     shadowOffsetY: 3,
   );
@@ -94,9 +88,8 @@ class GlassSpec {
     radius: 22,
     borderAlpha: .08,
     rimAlpha: .10,
-    edgeAlpha: .10,
     sheenAlpha: .12,
-    shadowAlpha: .22,
+    shadowAlpha: .06,
     shadowBlur: 26,
     shadowOffsetY: 10,
     gradient: LinearGradient(
@@ -282,7 +275,6 @@ class _LiquidGlassState extends State<LiquidGlass> {
                             gradient: widget.tintGradient ?? spec.gradient,
                             borderRadius: widget.borderRadius,
                             specular: widget.specular ?? spec.specular,
-                            absorption: widget.absorption,
                             focused: focused,
                           ),
                         ),
@@ -421,7 +413,6 @@ class _RefractiveSurfaceState extends State<_RefractiveSurface> {
                   gradient: kIsWeb ? widget.spec.gradient : null,
                   borderRadius: widget.borderRadius,
                   specular: widget.specular,
-                  absorption: widget.absorption,
                   focused: widget.focused,
                 ),
               ),
@@ -513,7 +504,6 @@ class _GlassPaint extends CustomPainter {
     required this.gradient,
     required this.borderRadius,
     required this.specular,
-    required this.absorption,
     required this.focused,
   }) : super(repaint: sheen);
 
@@ -523,7 +513,6 @@ class _GlassPaint extends CustomPainter {
   final Gradient? gradient;
   final double borderRadius;
   final double specular;
-  final double absorption;
   final bool focused;
 
   @override
@@ -567,30 +556,13 @@ class _GlassPaint extends CustomPainter {
         begin: Alignment.topLeft,
         end: Alignment.bottomRight,
         colors: [
-          Colors.white.withValues(alpha: .24 * strength),
+          Colors.white.withValues(alpha: .10 + .18 * strength),
           Colors.white.withValues(alpha: .10 * strength),
-          Colors.white.withValues(alpha: .14 * strength),
+          Colors.white.withValues(alpha: .08 + .12 * strength),
         ],
         stops: const [0.0, .55, 1.0],
       ).createShader(rect);
     canvas.drawRRect(rrect.deflate(.4), rimPaint);
-
-    // 4. Subtle bottom/right inner dark edge (depth without a plastic shadow).
-    final edgeAlpha = (spec.edgeAlpha * absorption).clamp(0.0, .5);
-    final edgePaint = Paint()
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = 1.4
-      ..shader = LinearGradient(
-        begin: Alignment.topLeft,
-        end: Alignment.bottomRight,
-        colors: [
-          Colors.transparent,
-          Colors.transparent,
-          Colors.black.withValues(alpha: edgeAlpha),
-        ],
-        stops: const [0.0, .55, 1.0],
-      ).createShader(rect);
-    canvas.drawRRect(rrect.deflate(0.9), edgePaint);
   }
 
   @override
@@ -600,7 +572,6 @@ class _GlassPaint extends CustomPainter {
       oldDelegate.gradient != gradient ||
       oldDelegate.borderRadius != borderRadius ||
       oldDelegate.specular != specular ||
-      oldDelegate.absorption != absorption ||
       oldDelegate.focused != focused;
 }
 
