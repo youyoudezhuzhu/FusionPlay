@@ -1,6 +1,7 @@
 <!doctype html>
 <html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>播放器 · FusionPlay</title>
-<style>body{margin:0;background:#181821;color:white;font:16px system-ui}main{padding:24px}a{color:inherit}</style></head>
+<style>body{margin:0;background:#181821;color:white;font:16px system-ui}main{padding:24px}a{color:inherit}</style><script src="../js/browser-diagnostics.js"></script>
+</head>
 <body><main id="loading">正在打开播放器… <a id="settings" href="../index.html#/settings">设置</a></main>
 <script>
 const settings = new URL('../index.html', location.href);
@@ -9,12 +10,18 @@ settings.hash = '/settings';
 document.getElementById('settings').href = settings.href;
 window.fpRead = async url => {
   const response = await fetch(url, {cache: 'no-store'});
-  if (!response.ok) throw new Error('接收器暂时不可用');
+  if (!response.ok) {
+    window.fpRecordBrowserError?.('读取接收器状态失败 HTTP ' + response.status);
+    throw new Error('接收器暂时不可用');
+  }
   return response.text();
 };
 window.fpControl = async (url, source, command, value) => {
   const response = await fetch(url, {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({source,command,value})});
-  if (!response.ok) throw new Error('操作未完成，请检查发送端连接');
+  if (!response.ok) {
+    window.fpRecordBrowserError?.('播放操作 ' + command + ' 失败 HTTP ' + response.status);
+    throw new Error('操作未完成，请检查发送端连接');
+  }
 };
 window.fpPin = url => history.replaceState(history.state, '', url);
 window.fpNavigate = url => location.assign(url);

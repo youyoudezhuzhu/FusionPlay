@@ -265,6 +265,9 @@ fn respond_error(
     status: u16,
     message: &str,
 ) -> Result<()> {
+    if status >= 500 {
+        tracing::error!(status, %message, "HTTP 请求失败");
+    }
     let body = serde_json::to_vec(&json!({"ok": false, "error": message}))?;
     respond(status, "application/json; charset=utf-8", &body, &[])
 }
@@ -663,6 +666,11 @@ fn handle(
             }
             Err(error) => respond_error(&mut *respond, 400, &format!("{error:#}")),
         },
+        ("GET", "/api/logs/export") => {
+            let file = logging::path().context("日志未初始化")?;
+            let report = logging::export_report(file.parent().context("日志目录无效")?, &app.snapshot().audio.instances);
+            respond_json(respond, json!({"report": report}))
+        }
         ("GET", "/api/logs") => {
             let requested = request
                 .path

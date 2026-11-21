@@ -46,6 +46,7 @@ window.FP = window.FP || {};
 
   // ------------------------------------------------------------------- toast
   function toast(message, type) {
+    if (type === 'error' && window.fpRecordBrowserError) window.fpRecordBrowserError(message);
     const node = el('toast');
     if (!node) return;
     node.textContent = message;

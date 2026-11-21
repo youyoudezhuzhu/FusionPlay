@@ -7,6 +7,8 @@ import 'package:flutter/services.dart';
 import 'backend/app_controller.dart';
 import 'backend/android/native_app_controller.dart';
 import 'backend/windows/windows_app_controller.dart';
+import 'backend/ui_diagnostics.dart';
+import 'backend/windows/player_log.dart';
 import 'models/app_state.dart';
 import 'theme/fusion_theme.dart';
 import 'ui/app_menu.dart';
@@ -21,6 +23,15 @@ import 'ui/vector_icon.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  if (Platform.isWindows) {
+    installUiDiagnostics(recordWindowsPlayerError);
+  } else if (Platform.isAndroid) {
+    installUiDiagnostics(
+      (message) => const MethodChannel(
+        'com.fusionplay.android/runtime',
+      ).invokeMethod<void>('reportPlayerError', {'value': message}),
+    );
+  }
   final imageCache = PaintingBinding.instance.imageCache;
   imageCache.maximumSize = 8;
   imageCache.maximumSizeBytes = 32 * 1024 * 1024;

@@ -126,13 +126,14 @@ fn main() {
         eprintln!("无法创建状态目录 {}：{error}", data_dir.display());
     }
     let log_file = data_dir.join("logs").join("fusionplay.log");
-    let _logging_guard = match logging::init(&args.log_level, &log_file) {
-        Ok(guard) => guard,
-        Err(error) => {
-            eprintln!("无法初始化日志：{error:#}");
-            None
-        }
-    };
+    if let Err(error) = logging::init(&args.log_level, &log_file) {
+        eprintln!("无法初始化日志：{error:#}");
+    }
+    let previous = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |panic| {
+        logging::append_line(&format!("PANIC {panic}"));
+        previous(panic);
+    }));
 
     let ui = StdioUiSink::new();
     let interactive = std::io::stdin().is_terminal();

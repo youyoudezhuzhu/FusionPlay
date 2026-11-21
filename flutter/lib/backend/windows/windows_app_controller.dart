@@ -4,6 +4,7 @@ import 'dart:io';
 
 import '../../models/app_state.dart';
 import '../app_controller.dart';
+import 'player_log.dart';
 
 /// Thrown when the sidecar executable is missing or cannot be spawned.
 class SidecarLaunchException implements Exception {
@@ -580,6 +581,7 @@ class WindowsAppController extends FusionPlayController {
   }
 
   void _setError(String message) {
+    recordWindowsPlayerError(message);
     final next = _copyState(lastError: message);
     if (next == state) return;
     state = next;

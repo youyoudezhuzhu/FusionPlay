@@ -85,12 +85,24 @@ impl SpeakerSupervisor {
     pub fn apply(&self, config: &Config) -> Result<()> {
         config.validate()?;
         let mut workers = self.workers.lock().unwrap();
-        workers.retain(|id, w| config.audio.instances.iter().any(|s| &s.id == id)
-            && matches!(w.child.try_wait(), Ok(None)));
+        workers.retain(|id, w| {
+            if !config.audio.instances.iter().any(|s| &s.id == id) { return false; }
+            match w.child.try_wait() {
+                Ok(None) => true,
+                Ok(Some(status)) => {
+                    tracing::error!(instance = %id, pid = w.child.id(), %status, "音箱接收器意外退出，正在恢复");
+                    false
+                }
+                Err(error) => {
+                    tracing::warn!(instance = %id, %error, "无法查询音箱进程状态");
+                    true
+                }
+            }
+        });
         let mut failures = Vec::new();
         for speaker in &config.audio.instances {
             if let Err(err) = self.reconcile(&mut workers, config, speaker) {
-                failures.push(format!("{}: {err:#}", speaker.name));
+                failures.push(format!("{} ({}): {err:#}", speaker.name, speaker.id));
             }
         }
         anyhow::ensure!(failures.is_empty(), "{}", failures.join(" / "));

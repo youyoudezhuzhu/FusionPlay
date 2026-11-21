@@ -13,6 +13,10 @@ import '../../ui/liquid_glass.dart';
 import '../../ui/player_view.dart';
 import '../../ui/vector_icon.dart';
 import 'player_location.dart';
+import '../ui_diagnostics.dart';
+
+@JS('fpRecordBrowserError')
+external void _recordError(JSString message);
 
 @JS('fpRead')
 external JSPromise<JSString> _read(JSString url);
@@ -35,13 +39,17 @@ Future<Map<String, dynamic>> _readMap(Uri url) async {
   return jsonDecode(result.toDart) as Map<String, dynamic>;
 }
 
-void main() => runApp(
-  MaterialApp(
-    debugShowCheckedModeBanner: false,
-    theme: fusionTheme(),
-    home: const _Receiver(),
-  ),
-);
+void main() {
+  WidgetsFlutterBinding.ensureInitialized();
+  installUiDiagnostics((message) => _recordError(message.toJS));
+  runApp(
+    MaterialApp(
+      debugShowCheckedModeBanner: false,
+      theme: fusionTheme(),
+      home: const _Receiver(),
+    ),
+  );
+}
 
 class _Receiver extends StatefulWidget {
   const _Receiver();

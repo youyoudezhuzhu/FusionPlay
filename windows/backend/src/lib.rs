@@ -9,6 +9,8 @@
 pub mod app;
 pub mod audio;
 pub mod dlna_player;
+#[path = "../../../src/shared_logging/mod.rs"]
+mod shared_logging;
 pub mod logging;
 pub mod protocols;
 pub mod session;

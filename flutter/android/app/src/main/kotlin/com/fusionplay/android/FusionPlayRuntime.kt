@@ -209,6 +209,15 @@ class FusionPlayRuntime(
     }
 
     private fun onMethodCall(call: MethodCall, result: MethodChannel.Result) {
+        if (call.method == "reportPlayerError") {
+            val text = call.string("value")
+            diagnosticLogger.write("flutter", "player_exception", "failure", mapOf(
+                "message" to text.substringBefore('\n'),
+                "stack_trace" to text.substringAfter('\n', ""),
+            ))
+            result.success(null)
+            return
+        }
         if (call.method == "state") {
             result.success(stateMap(viewModel.state.value))
             return
@@ -267,7 +276,7 @@ class FusionPlayRuntime(
             }.fold(
                 onSuccess = result::success,
                 onFailure = { error ->
-                    reportError("前后端调用失败", error)
+                    reportError("前后端调用失败（${call.method}）", error)
                     result.error("fusionplay_runtime", error.message, null)
                 },
             )

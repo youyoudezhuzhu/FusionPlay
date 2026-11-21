@@ -369,14 +369,12 @@ window.FP = window.FP || {};
     }
 
     function downloadLogs() {
-      const lines = filteredLines();
-      if (!lines.length) {
-        ctx.toast('没有可下载的日志行。', 'info');
-        return;
-      }
-      u.downloadText('fusionplay-logs-' + u.timestampForFile() + '.txt',
-        lines.join('\n') + '\n', 'text/plain;charset=utf-8');
-      ctx.toast('已下载 ' + lines.length + ' 行日志。', 'ok');
+      FP.api.logReport().then(function (report) {
+        const browser = window.fpBrowserErrors ? window.fpBrowserErrors() : '';
+        const text = report.report + (browser ? '\n--- 当前浏览器播放器与管理页 ---\n' + browser + '\n' : '');
+        u.downloadText('fusionplay-logs-' + u.timestampForFile() + '.txt', text, 'text/plain;charset=utf-8');
+        ctx.toast('已下载主接收器、服务和各音箱的诊断日志。', 'ok');
+      }).catch(function (error) { ctx.toast('日志导出失败：' + error.message, 'error'); });
     }
 
     function render() {

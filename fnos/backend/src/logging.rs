@@ -4,20 +4,20 @@
 //! `$TRIM_PKGVAR/fusionplay.log`. Rotation rewrites the same inode (tail-trim),
 //! so a long-running daemon never needs a restart and keeps its fd.
 
+use crate::config::SpeakerInstance;
+use crate::shared_logging::{self, DiagnosticFiles, MIB};
 use anyhow::{Context, Result};
-use std::fs::{File, OpenOptions};
-use std::io::{Read, Seek, SeekFrom, Write};
+use std::fs::OpenOptions;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU8, Ordering};
-use std::sync::{Mutex, OnceLock};
-use tracing_subscriber::fmt::MakeWriter;
+use std::sync::OnceLock;
 use tracing_subscriber::layer::Context as LayerContext;
 use tracing_subscriber::prelude::*;
 use tracing_subscriber::Layer as _;
 use tracing_subscriber::Registry;
 
 static LOG_PATH: OnceLock<PathBuf> = OnceLock::new();
-static LIMITS: OnceLock<(u64, u64)> = OnceLock::new();
+
 static LEVEL: AtomicU8 = AtomicU8::new(2); // 0=error 1=warn 2=info 3=debug 4=trace
 
 /// Runtime-adjustable global level filter (the Web UI can change it without a
@@ -25,6 +25,13 @@ static LEVEL: AtomicU8 = AtomicU8::new(2); // 0=error 1=warn 2=info 3=debug 4=tr
 struct DynamicLevel;
 
 impl<S: tracing::Subscriber> tracing_subscriber::Layer<S> for DynamicLevel {
+    fn register_callsite(
+        &self,
+        _: &'static tracing::Metadata<'static>,
+    ) -> tracing::subscriber::Interest {
+        tracing::subscriber::Interest::sometimes()
+    }
+
     fn enabled(&self, metadata: &tracing::Metadata<'_>, _context: LayerContext<'_, S>) -> bool {
         let max = LEVEL.load(Ordering::Relaxed);
         let needed = match *metadata.level() {
@@ -55,33 +62,35 @@ fn level_from_str(level: &str) -> (u8, &'static str) {
 pub fn init(dir: &Path, level: &str, max_bytes: u64, keep_bytes: u64) -> Result<()> {
     std::fs::create_dir_all(dir).with_context(|| format!("无法创建日志目录 {}", dir.display()))?;
     let log_file = dir.join("fusionplay.log");
-    let _ = std::fs::OpenOptions::new().create(true).append(true).open(&log_file);
-    LOG_PATH.set(log_file.clone()).ok();
-    let max = max_bytes.max(1024 * 1024);
+    let worker = std::env::var_os("FUSIONPLAY_PARENT_PID").is_some();
+    let max = max_bytes.clamp(MIB, if worker { MIB } else { 5 * MIB });
     let keep = keep_bytes.clamp(64 * 1024, max / 2);
-    LIMITS.set((max, keep)).ok();
-    let (numeric, _name) = level_from_str(level);
+    let sink = DiagnosticFiles::open(&log_file, max, keep, false)
+        .with_context(|| format!("无法打开日志 {}", log_file.display()))?;
+    let (numeric, _) = level_from_str(level);
     LEVEL.store(numeric, Ordering::Relaxed);
     let file_layer = tracing_subscriber::fmt::layer()
         .with_ansi(false)
         .with_target(true)
-        .with_writer(RotatingWriter);
+        .with_writer(sink.clone());
     Registry::default()
         .with(DynamicLevel)
         .with(file_layer)
-        .try_init()
-        .ok(); // a second init (tests) is harmless
-    // Background size guard: tail-trim in place, never rename.
-    let limits = (max, keep);
+        .try_init()?;
+    LOG_PATH.set(log_file).ok();
+    let lifecycle = dir.join("app.log");
     std::thread::Builder::new()
-        .name("log-rotate".into())
+        .name("log-housekeeping".into())
         .spawn(move || loop {
-            std::thread::sleep(std::time::Duration::from_secs(30));
-            if let Some(path) = path() {
-                rotate_if_needed(&path, limits.0, limits.1);
+            let _ = sink.maintain();
+            if !worker {
+                // fnOS and startup stderr keep the original inode open for append.
+                if let Ok(mut file) = OpenOptions::new().read(true).write(true).open(&lifecycle) {
+                    let _ = shared_logging::trim(&mut file, 5 * MIB, MIB);
+                }
             }
-        })
-        .ok();
+            std::thread::sleep(std::time::Duration::from_secs(30));
+        })?;
     Ok(())
 }
 
@@ -101,103 +110,142 @@ pub fn level_name() -> &'static str {
     }
 }
 
-fn rotate_if_needed(path: &Path, max: u64, keep: u64) {
-    let Ok(meta) = std::fs::metadata(path) else { return };
-    if meta.len() <= max {
-        return;
-    }
-    let Ok(mut file) = OpenOptions::new().read(true).write(true).open(path) else { return };
-    let len = file.metadata().map(|m| m.len()).unwrap_or(0);
-    let start = len.saturating_sub(keep);
-    if file.seek(SeekFrom::Start(start)).is_err() {
-        return;
-    }
-    let mut tail = Vec::new();
-    if file.read_to_end(&mut tail).is_err() {
-        return;
-    }
-    if file.seek(SeekFrom::Start(0)).is_err() {
-        return;
-    }
-    if file.set_len(0).is_err() {
-        return;
-    }
-    let _ = file.write_all(&tail);
-    let _ = file.flush();
-}
-
 pub fn recent_lines(lines: usize) -> Vec<String> {
-    let Some(path) = path() else { return Vec::new() };
-    let Ok(meta) = std::fs::metadata(&path) else { return Vec::new() };
-    let read_len = (meta.len() as usize).min(256 * 1024);
-    let Ok(mut file) = File::open(&path) else { return Vec::new() };
-    let _ = file.seek(SeekFrom::End(-(read_len as i64)));
-    let mut text = String::new();
-    let _ = file.read_to_string(&mut text);
-    let mut rows: Vec<&str> = text.lines().collect();
-    if rows.len() > lines {
-        rows = rows.split_off(rows.len() - lines);
-    }
-    rows.into_iter().map(|line| line.to_string()).collect()
+    let Some(path) = path() else {
+        return Vec::new();
+    };
+    let Ok(bytes) = shared_logging::read_tail(&path, 256 * 1024) else {
+        return Vec::new();
+    };
+    let text = String::from_utf8_lossy(&bytes);
+    let mut rows: Vec<_> = text.lines().rev().take(lines).map(str::to_owned).collect();
+    rows.reverse();
+    rows
 }
 
-struct RotatingWriter;
-
-struct Guard(Mutex<Option<File>>);
-
-impl<'a> MakeWriter<'a> for RotatingWriter {
-    type Writer = Guard;
-
-    fn make_writer(&'a self) -> Self::Writer {
-        let file = path().and_then(|path| OpenOptions::new().create(true).append(true).open(path).ok());
-        Guard(Mutex::new(file))
-    }
-}
-
-impl Write for Guard {
-    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
-        match self.0.get_mut() {
-            Ok(guard) => match guard.as_mut() {
-                Some(file) => file.write(buf),
-                None => Ok(buf.len()),
-            },
-            Err(_) => Ok(buf.len()),
+/// config.validate restricts instance IDs to single path components.
+pub fn export_report(dir: &Path, speakers: &[SpeakerInstance]) -> String {
+    let budget = (2 * MIB / (2 * speakers.len() as u64 + 3)).min(256 * 1024);
+    let mut report = format!(
+        "FusionPlay fnOS {} ({})\n",
+        crate::VERSION,
+        std::env::consts::ARCH
+    );
+    let mut section = |label: &str, file: PathBuf| {
+        report.push_str(&format!("\n--- {label} ---\n"));
+        match shared_logging::read_tail(&file, budget) {
+            Ok(data) => report.push_str(&String::from_utf8_lossy(&data)),
+            Err(e) => report.push_str(&format!("无法读取日志 ({})", e.kind())),
         }
+        report.push('\n');
+    };
+    section("服务启停 / stderr", dir.join("app.log"));
+    section("主接收器 WARN / ERROR", dir.join("errors.log"));
+    section("主接收器", dir.join("fusionplay.log"));
+    for speaker in speakers {
+        section(
+            &format!("音箱 {} ({}) WARN / ERROR", speaker.name, speaker.id),
+            dir.join("instances").join(&speaker.id).join("errors.log"),
+        );
+        section(
+            &format!("音箱 {} ({})", speaker.name, speaker.id),
+            dir.join("instances")
+                .join(&speaker.id)
+                .join("fusionplay.log"),
+        );
     }
+    report
+}
 
-    fn flush(&mut self) -> std::io::Result<()> {
-        if let Ok(guard) = self.0.get_mut() {
-            if let Some(file) = guard.as_mut() {
-                let _ = file.flush();
+pub fn clean_retired_logs(dir: &Path, speakers: &[SpeakerInstance]) {
+    let Ok(entries) = dir.join("instances").read_dir() else {
+        return;
+    };
+    let mut retired = Vec::new();
+    for entry in entries.flatten() {
+        if !entry.file_type().is_ok_and(|ty| ty.is_dir())
+            || speakers.iter().any(|s| entry.file_name() == s.id.as_str())
+        {
+            continue;
+        }
+        for name in ["fusionplay.log", "errors.log"] {
+            let log = entry.path().join(name);
+            if let Ok(meta) = log.symlink_metadata() {
+                if meta.is_file() {
+                    if let Ok(time) = meta.modified() {
+                        retired.push((time, log, meta.len()));
+                    }
+                }
             }
         }
-        Ok(())
+    }
+    retired.sort_unstable_by(|a, b| b.cmp(a));
+    let mut used = 0;
+    for (time, path, size) in retired {
+        if time
+            .elapsed()
+            .is_ok_and(|age| age >= shared_logging::IDLE_RETENTION)
+            || used + size > 4 * MIB
+        {
+            let _ = std::fs::remove_file(path);
+        } else {
+            used += size;
+        }
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::{fs, time::SystemTime};
+    #[test]
+    fn export_includes_room_and_startup_errors_even_after_a_long_utf8_log() {
+        let root = tempfile::tempdir().unwrap();
+        let room = root.path().join("instances/kitchen");
+        fs::create_dir_all(&room).unwrap();
+        fs::write(root.path().join("app.log"), "startup failure").unwrap();
+        fs::write(
+            root.path().join("fusionplay.log"),
+            "曲".repeat(140000) + "新事件",
+        )
+        .unwrap();
+        fs::write(room.join("errors.log"), "ALSA open failed").unwrap();
+        let speaker = SpeakerInstance {
+            id: "kitchen".into(),
+            name: "厨房".into(),
+            device_id: "usb".into(),
+        };
+        let report = export_report(root.path(), &[speaker]);
+        for expected in [
+            "startup failure",
+            "新事件",
+            "厨房 (kitchen)",
+            "ALSA open failed",
+        ] {
+            assert!(report.contains(expected), "{expected}");
+        }
+        assert!(report.len() < 300 * 1024);
+    }
 
     #[test]
-    fn rotation_keeps_inode_and_tail() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("test.log");
-        let mut file = OpenOptions::new().create(true).write(true).open(&path).unwrap();
-        let inode_before = {
-            use std::os::unix::fs::MetadataExt;
-            file.metadata().unwrap().ino()
+    fn retired_logs_expire_without_removing_speaker_identity_or_active_logs() {
+        let root = tempfile::tempdir().unwrap();
+        let active = SpeakerInstance {
+            id: "live".into(),
+            name: "live".into(),
+            device_id: "usb".into(),
         };
-        write!(file, "head\n{}\n", "x".repeat(4096)).unwrap();
-        file.flush().unwrap();
-        rotate_if_needed(&path, 1024, 128);
-        let inode_after = {
-            use std::os::unix::fs::MetadataExt;
-            std::fs::metadata(&path).unwrap().ino()
-        };
-        assert_eq!(inode_before, inode_after, "rotation must rewrite the same inode");
-        let text = std::fs::read_to_string(&path).unwrap();
-        assert!(text.len() <= 160, "tail-trim kept {} bytes", text.len());
-        assert!(text.trim_end().ends_with('x'));
+        for room in ["live", "old"] {
+            let path = root.path().join("instances").join(room);
+            fs::create_dir_all(&path).unwrap();
+            fs::write(path.join("config.json"), "{}").unwrap();
+            let log = std::fs::File::create(path.join("errors.log")).unwrap();
+            log.set_modified(SystemTime::now() - shared_logging::IDLE_RETENTION)
+                .unwrap();
+        }
+        clean_retired_logs(root.path(), &[active]);
+        assert!(root.path().join("instances/live/errors.log").exists());
+        assert!(root.path().join("instances/old/config.json").exists());
+        assert!(!root.path().join("instances/old/errors.log").exists());
     }
 }

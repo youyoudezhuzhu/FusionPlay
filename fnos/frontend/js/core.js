@@ -443,6 +443,7 @@ window.FP = window.FP || {};
     logs: function (lines) {
       return request('GET', '/api/logs?lines=' + (lines || 200), undefined, 10000);
     },
+    logReport: function () { return request('GET', '/api/logs/export', undefined, 10000); },
     setLogLevel: function (level) { return request('POST', '/api/logs/level', { level: level }, 10000); },
     exportConfig: function () { return request('GET', '/api/export', undefined, 10000); },
     importConfig: function (config) { return request('POST', '/api/import', config, 45000); },

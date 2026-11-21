@@ -110,6 +110,11 @@ fn main() -> Result<()> {
         .with_context(|| format!("无法创建数据目录 {}", args.state_dir.display()))?;
     let config = Config::load(&args.config)?;
     logging::init(&args.state_dir, &config.logging.level, config.logging.max_bytes, config.logging.keep_bytes)?;
+    let previous = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |panic| {
+        tracing::error!("PANIC {panic}");
+        previous(panic);
+    }));
     if args.probe {
         let mut rows = Vec::new();
         for device in fusionplay_fnos::audio::alsa::probe_devices() {
@@ -171,7 +176,7 @@ fn main() -> Result<()> {
     let _servers = http::start(Arc::clone(&app), tcp, args.listen_unix.clone())?;
     tracing::info!(
         "HTTP 已启动：tcp={:?} unix={:?}",
-        app.config.read().unwrap().receiver.name,
+        tcp,
         args.listen_unix
     );
     // Expose gateway health first. Startup time grows with attached hardware;
@@ -181,12 +186,18 @@ fn main() -> Result<()> {
             state.record_error(format!("独立音箱启动失败：{error:#}"));
         }
     }
+    let cleanup_period = std::time::Duration::from_secs(3600);
+    let mut next_cleanup = std::time::Instant::now();
     let mut health_interval = 5;
     let mut last_health = std::time::Instant::now();
     while !SHUTDOWN.load(Ordering::SeqCst) {
         // Child processes may be spawned by a transient HTTP thread. Linux
         // PDEATHSIG tracks that thread's lifetime; watch the process instead.
         if parent_pid.is_some_and(|pid| unsafe { libc::getppid() } != pid) { break }
+        if parent_pid.is_none() && std::time::Instant::now() >= next_cleanup {
+            logging::clean_retired_logs(&args.state_dir, &app.config.read().unwrap().audio.instances);
+            next_cleanup = std::time::Instant::now() + cleanup_period;
+        }
         if last_health.elapsed() >= std::time::Duration::from_secs(health_interval) {
             if let Some(supervisor) = &instances {
                 if let Err(error) = supervisor.apply(&app.config.read().unwrap()) {

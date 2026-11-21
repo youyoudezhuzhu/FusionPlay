@@ -10,6 +10,8 @@ pub mod config;
 pub mod dlna_player;
 pub mod http;
 pub mod instances;
+#[path = "../../../src/shared_logging/mod.rs"]
+mod shared_logging;
 pub mod logging;
 pub mod protocols;
 pub mod session;

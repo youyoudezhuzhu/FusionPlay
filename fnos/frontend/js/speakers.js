@@ -31,6 +31,7 @@
     return el;
   }
   function fail(error) {
+    if (window.fpRecordBrowserError) window.fpRecordBrowserError(error.stack || error.message || error);
     $('notice').textContent = error.message || String(error);
     $('retry').hidden = false;
   }

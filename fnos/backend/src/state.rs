@@ -150,6 +150,7 @@ impl AppState {
 
     pub fn record_error(&self, message: impl Into<String>) {
         let message = message.into();
+        tracing::error!(%message, "接收器错误");
         let mut state = self.state.write().unwrap();
         state.last_error = Some(message.clone());
         state.errors.push(message);
