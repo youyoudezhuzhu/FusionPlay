@@ -14,10 +14,11 @@ FusionPlay 是一个面向全平台的局域网音乐投放接收器，支持 **
 
 ```text
 flutter/
-  lib/ui/, lib/theme/   Android 与 Windows 共用的播放器、歌词、设置和视觉参数
-  lib/models/           两端共用的界面状态
+  lib/ui/, lib/theme/   三端共用的播放器、歌词和视觉参数，以及宿主设置组件
+  lib/models/           三端共用的播放器状态和歌词模型
   lib/backend/android/  Kotlin MethodChannel 适配器
   lib/backend/windows/  Rust 侧车 NDJSON 适配器
+  lib/backend/fnos/     飞牛 Web 播放器入口、实例选择和 HTTP 适配器
   android/app/          Android 宿主、Kotlin 后端和 Rust 构建任务
   windows/              Windows 宿主工程（CMake/runner）
   test/                 Flutter 与界面交互测试
@@ -36,6 +37,8 @@ docs/                   平台与协议说明
 ```
 
 三端在同一分支维护。播放协议改动集中在 `src/`。Android 和 Windows 通过各自的控制器向同一个 `FusionPlayHome` 提供状态。飞牛通过 Flutter Web 使用同一个 `PlayerView`、歌词布局、封面背景和菜单动效。NAS 专有的音箱分配、校准和接收管理集中在右上角的「设置」。飞牛播放器右下角提供「切换音箱」和「新建实例」。选定输出并保存绑定后即可调节这只音箱的音量曲线。每个实例的播放地址可单独收藏或在新标签页打开。播放器的 HTTP 适配器位于 `flutter/lib/backend/fnos/`。
+
+三端的源码复用范围、宿主适配职责、更新渠道和回归入口见[跨平台维护说明](docs/CROSS_PLATFORM_MAINTENANCE.md)。
 
 调整共享颜色、圆角或模糊半径时，编辑 `flutter/lib/theme/fusion_theme.dart`，运行 `python3 tools/sync_web_theme.py` 并提交生成的样式。飞牛构建使用 `--check` 验证同步。播放器从当前媒体的封面生成背景，缺少封面时使用中性底色。
 
