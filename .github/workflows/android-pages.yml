@@ -2,7 +2,7 @@ name: Sync Android update to GitHub Pages
 
 # 两条触发路径：
 #   1. release: published —— 手工在 GitHub UI 发布 Release 时自动同步；
-#   2. workflow_dispatch   —— android.yml 在 tag 构建里创建 Release 后用
+#   2. workflow_dispatch   —— release.yml 创建 Release 后用
 #      `gh workflow run` 显式触发（GITHUB_TOKEN 创建的 Release 不会触发
 #      release: published 事件，这是 GitHub 的防递归限制），也可手工重跑。
 #
@@ -19,7 +19,7 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: 'Release tag to sync (android-v<version>); empty = latest android release'
+        description: 'Release tag to sync (v<version>); empty = latest android release'
         required: false
         type: string
 
@@ -34,12 +34,12 @@ concurrency:
 
 jobs:
   sync:
-    # pre-release 不推送 stable；非 android-v* 的 Release（例如 windows-v*）直接忽略。
+    # 仅同步正式发布。
     if: |
       github.event_name == 'workflow_dispatch' ||
       (github.event_name == 'release' &&
        github.event.release.prerelease == false &&
-       startsWith(github.event.release.tag_name, 'android-v'))
+       (startsWith(github.event.release.tag_name, 'v') || startsWith(github.event.release.tag_name, 'android-v')))
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -63,23 +63,18 @@ jobs:
           elif [ -n "${INPUT_TAG:-}" ]; then
             tag="${INPUT_TAG}"
           else
-            # latest non-prerelease android-v* release；不能用 `gh release view`
-            # （仓库里还有 windows-v* Release，最新 Release 可能不是 Android）。
             tag="$(gh release list --repo "$GITHUB_REPOSITORY" --limit 100 \
               --json tagName,isPrerelease \
-              --jq '[.[] | select(.isPrerelease == false) | .tagName | select(startswith("android-v"))][0] // empty')"
+              --jq '[.[] | select(.isPrerelease == false) | .tagName | select(test("^(android-)?v[0-9]+[.][0-9]+[.][0-9]+$"))][0] // empty')"
           fi
           if [ -z "$tag" ]; then
-            echo "::error::could not resolve an android-v* release tag"
+            echo "::error::could not resolve a stable release tag"
             exit 1
           fi
-          case "$tag" in
-            android-v*) ;;
-            *)
-              echo "::error::release tag '$tag' is not an android-v* tag"
-              exit 1
-              ;;
-          esac
+          if [[ ! "$tag" =~ ^(android-)?v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::invalid release tag '$tag'"
+            exit 1
+          fi
           echo "tag=$tag" >> "$GITHUB_OUTPUT"
           echo "Resolved release tag: $tag"
 
