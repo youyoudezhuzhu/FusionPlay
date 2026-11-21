@@ -371,3 +371,19 @@ fn editing_a_room_preserves_identity_calibration_and_other_owners() {
     assert!(cfg.audio.instances.iter().any(|s| s.id == other && s.device_id == "a"));
     assert_eq!(cfg.audio.devices.iter().find(|d| d.id == "b").unwrap().curve, soft);
 }
+
+#[test]
+fn output_edit_preserves_receiver_and_rejects_stale_audio() {
+    let dir = tempfile::tempdir().unwrap();
+    let (app, http) = start_app(dir.path(), vec![device("desk", VolumeCurve::default())]);
+    let original = app.snapshot().audio;
+    let mut next = original.clone();
+    next.devices[0].delay_ms = 123.0;
+    let edit = serde_json::json!({"audio":next, "original":original}).to_string();
+    assert_eq!(http.request("PATCH", "/api/config", Some(r#"{"name":"Office"}"#)).0, 200);
+    assert_eq!(http.request("PUT", "/api/outputs", Some(&edit)).0, 200);
+    assert_eq!(http.request("PUT", "/api/outputs", Some(&edit)).0, 409);
+    let saved = app.snapshot();
+    assert_eq!(saved.audio.devices[0].delay_ms, 123.0);
+    assert_eq!(saved.receiver.name, "Office");
+}

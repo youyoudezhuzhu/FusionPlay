@@ -106,10 +106,8 @@ sudo avahi-browse -rt _raop._tcp   | head
 
 ### 4.4 桌面入口 / Web UI
 
-- 桌面点击 FusionPlay 图标，应打开中文管理面板（**概览 / 音频 / 接收 / 设置** 四页）。
-- 浏览器直接访问网关路径 `http://<NAS>:5666/app/fusionplay-fnos/`（需登录飞牛），应返回 200，
-  页面资源（`js/main.js`、`js/page-audio.js`、`style.css`）不 404。
-- 主题按钮应在「跟随系统 → 浅色 → 深色」间切换，所有卡片/输入/曲线同步换色。
+- 桌面点击 FusionPlay 图标应进入共享播放器。三点菜单打开设置，右下角飞牛菜单可切换音箱、管理输出或新建实例。
+- 访问旧书签 `#/settings` 应打开 Flutter 设置面板。`#/audio` 应打开音箱玻璃页面中的主接收器输出。旧脚本 `js/page-audio.js` 应返回 404。
 - 远程访问请认准桌面图标或 `/app/fusionplay-fnos/`；**不要**把 `http://<NAS>:18080` 当对外入口
   （端口只绑 loopback）。
 
@@ -140,7 +138,7 @@ sudo ls -l /vol1/@appdata/fusionplay-fnos/              # app.log、fusionplay.l
 - [ ] `sudo avahi-browse -rt _airplay._tcp` 能看到 `FusionPlay`（mDNS 广播正常）。
 - [ ] 控制中心音频输出列表里能看到 FusionPlay（默认名 `FusionPlay`，可在 UI 改）。
 - [ ] 首次连接可完成配对（临时配对，无 PIN）；再次连接无需重复配对。
-- [ ] 播放音乐：NAS 对应声卡出声；UI 概览显示当前音源 = AirPlay、曲名/歌手/封面。
+- [ ] 播放音乐：NAS 对应声卡出声；播放器显示当前音源 = AirPlay、曲名/歌手/封面。
 - [ ] 播放/暂停/切歌：NAS 端暂停与恢复、切歌跟随；UI 状态同步。
 - [ ] 发送端音量：拖手机音量条，NAS 输出响度随之变化（UI 显示 airplay_db）。
 - [ ] 断开 AirPlay 后，UI 返回空闲；再次投放可正常接管。

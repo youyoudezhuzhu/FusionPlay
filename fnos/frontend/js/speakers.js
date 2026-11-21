@@ -3,7 +3,7 @@
 (async function () {
   const $ = id => document.getElementById(id);
   const url = new URL(location.href);
-  const section = ['curve','new','edit'].includes(location.hash.slice(1)) ? location.hash.slice(1) : 'rooms';
+  const section = ['curve','new','edit','outputs'].includes(location.hash.slice(1)) ? location.hash.slice(1) : 'rooms';
   const api = FP.api;
   let roomId = url.searchParams.get('instance');
   let dirty = false;
@@ -52,6 +52,9 @@
     $('back').href = player(roomId);
     $('all-rooms').href = page(roomId, 'rooms');
     $('add-room').href = page(roomId, 'new');
+    $('manage-outputs').href = page(roomId, 'outputs');
+    $('manage-outputs').hidden = catalog.instances.some(room => room.id === 'default');
+    $('outputs-rooms').href = page(roomId, 'rooms');
     const devices = config.audio.devices;
     const instances = config.audio.instances || [];
     const outputs = id => devices.filter(device => id === 'default' ? device.enabled :
@@ -85,10 +88,7 @@
         }
         if (outputs(s.id).length) actions.append(link('音量曲线',page(s.id,'curve')));
         if (s.id === 'default') {
-          const settings = new URL('index.html', document.baseURI);
-          settings.searchParams.set('instance', s.id);
-          settings.hash = '/audio';
-          actions.append(link('管理输出', settings));
+          actions.append(link('管理输出', page(s.id, 'outputs')));
         } else {
           actions.append(link('编辑实例', page(s.id, 'edit')));
         }
@@ -128,6 +128,9 @@
     refreshMedia();
     window.setInterval(refreshMedia, 4000);
     document.addEventListener('visibilitychange',refreshMedia);
+    if (section === 'outputs') {
+      await FP.editOutputs(config.audio, fail, changed => { dirty = changed; });
+    }
     if (section === 'new' || section === 'edit') {
       const editing = section === 'edit';
       const original = instances.find(s => s.id === roomId);
@@ -154,6 +157,17 @@
         $('bind-title').textContent = '编辑实例';
         $('room-name').value = original.name;
         select.value = original.device_id;
+        const remove = $('remove-instance');
+        remove.hidden = false;
+        remove.onclick = async () => {
+          if (!confirm('移除「' + original.name + '」的接收实例？')) return;
+          remove.disabled = true;
+          try {
+            const next = {...config.audio, instances: instances.filter(item => item.id !== roomId)};
+            await api.saveOutputs(config.audio, next);
+            location.replace(page(null, 'rooms'));
+          } catch (error) { fail(error); remove.disabled = false; }
+        };
       }
       const hasOutput = [...select.options].some(o => o.value && !o.disabled);
       function hint() {

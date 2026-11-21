@@ -384,7 +384,9 @@ fn handle(
         if path == app.gateway_prefix {
             // fnOS gateway does not strip the prefix; the UI must load with a
             // trailing slash so its relative asset URLs resolve.
-            let location = format!("{}/", app.gateway_prefix);
+            let query = request.path.split_once('?').map(|(_, q)| q);
+            let mut location = format!("{}/", app.gateway_prefix);
+            if let Some(query) = query { location.push('?'); location.push_str(query); }
             return respond(307, "text/plain", b"", &[("Location", location.as_str())]);
         }
         if let Some(rest) = path.strip_prefix(&format!("{}/", app.gateway_prefix)) {
@@ -540,6 +542,23 @@ fn handle(
             Ok(config) => respond_json(respond, json!({"ok": true, "config": config})),
             Err(error) => respond_error(respond, 400, &format!("{error:#}")),
         },
+        ("PUT", "/api/outputs") => {
+            use crate::config::AudioSettings;
+            #[derive(serde::Deserialize)]
+            struct Edit { original: AudioSettings, audio: AudioSettings }
+            let edit: Edit = match serde_json::from_slice(&request.body) {
+                Ok(edit) => edit,
+                Err(error) => return respond_error(respond, 400, &error.to_string()),
+            };
+            match app.update_config(|config| {
+                anyhow::ensure!(config.audio == edit.original, "音箱配置已改变，请重新加载后编辑");
+                config.audio = edit.audio;
+                Ok(())
+            }) {
+                Ok(config) => respond_json(respond, json!({"audio":config.audio})),
+                Err(error) => respond_error(respond, 409, &format!("{error:#}")),
+            }
+        }
         ("PATCH", "/api/config") => {
             #[derive(serde::Deserialize)]
             #[serde(deny_unknown_fields)]

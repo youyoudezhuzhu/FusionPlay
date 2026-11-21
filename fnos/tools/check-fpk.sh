@@ -59,17 +59,20 @@ check_exec "$TMP/app/bin/fusionplay-fnos" "含可执行 bin/fusionplay-fnos"
 check_file "$TMP/app/www/player/main.dart.js" "共享 Flutter 播放器"
 check_file "$TMP/app/www/player/fnos-mark.png" "播放器右下角的飞牛标识"
 check_file "$TMP/app/www/player/canvaskit/canvaskit.wasm" "离线 CanvasKit"
-for asset in speakers.html speakers.css js/speakers.js js/curve.js js/glass.js; do
+for asset in speakers.html speakers.css fusion-theme.css js/speakers.js js/outputs.js js/curve.js js/glass.js; do
     check_file "$TMP/app/www/$asset" "含音箱设置资源 $asset"
 done
 for asset in update.html js/update.js js/trim-web-app.js; do
     check_file "$TMP/app/www/$asset" "含更新和目录授权资源 $asset"
 done
 check_file "$TMP/app/www/index.html" "含 www/index.html"
-check_file "$TMP/app/www/js/main.js" "含 www/js/main.js"
+for asset in js/main.js js/page-{audio,overview,receive,settings}.js js/store.js js/speaker-instances.js style.css; do
+    if [ -e "$TMP/app/www/$asset" ]; then bad "打包内容含旧后台资源 $asset"; fi
+done
+if grep -Eq 'page-overview|main-nav|page-audio' "$TMP/app/www/index.html"; then
+    bad "首页仍含旧后台界面"
+fi
 check_file "$TMP/app/www/js/core.js" "含 www/js/core.js"
-check_file "$TMP/app/www/js/page-audio.js" "含 www/js/page-audio.js"
-check_file "$TMP/app/www/style.css" "含 www/style.css"
 check_file "$TMP/app/ui/config" "含 ui/config"
 check_file "$TMP/app/ui/images/icon_64.png" "含 ui/images/icon_64.png"
 check_file "$TMP/app/ui/images/icon_256.png" "含 ui/images/icon_256.png"

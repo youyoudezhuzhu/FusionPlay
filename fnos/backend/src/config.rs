@@ -118,7 +118,7 @@ impl Default for MiPlaySwitch {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct AudioSettings {
     /// Independent receiver processes. Legacy output groups still mirror the main stream.
@@ -154,7 +154,7 @@ impl Default for AudioSettings {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct SpeakerInstance {
     /// Stable URL and on-disk identity, independent of display name or device.
     pub id: String,
@@ -162,13 +162,13 @@ pub struct SpeakerInstance {
     pub device_id: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct OutputGroup {
     pub name: String,
     pub devices: Vec<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct DeviceSetting {
     /// Stable ALSA id, e.g. `hw:CARD=ultra,DEV=0`.

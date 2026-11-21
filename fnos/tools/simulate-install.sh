@@ -155,8 +155,8 @@ sim_eq "$VERSION" "$(curl -fsS --max-time 2 "http://127.0.0.1:$PORT/api/status" 
 sim_eq "200" "$(sim_http_code "http://127.0.0.1:$PORT/api/diagnostics")" "/api/diagnostics 返回 200"
 sim_eq "200" "$(sim_http_code "http://127.0.0.1:$PORT/")" "首页 / 返回 200"
 sim_true "首页 HTML 内容正常" bash -c "curl -fsS --max-time 2 'http://127.0.0.1:$PORT/' | grep -qi '<html'"
-sim_eq "200" "$(sim_http_code "http://127.0.0.1:$PORT/js/main.js")" "静态资源 /js/main.js 返回 200"
-sim_eq "200" "$(sim_http_code "http://127.0.0.1:$PORT/style.css")" "静态资源 /style.css 返回 200"
+sim_eq "404" "$(sim_http_code "http://127.0.0.1:$PORT/js/main.js")" "旧后台脚本不可访问"
+sim_eq "200" "$(sim_http_code "http://127.0.0.1:$PORT/speakers.css")" "静态资源 /speakers.css 返回 200"
 
 echo
 echo "=== 8. fnOS 统一网关前缀 ==="

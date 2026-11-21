@@ -24,6 +24,10 @@ def main():
         browser = playwright.chromium.launch(executable_path=os.getenv("CHROMIUM"))
         page = browser.new_page(viewport={"width": 390, "height": 760})
 
+        output_edits = []
+        errors = []
+        page.on("pageerror", lambda error: errors.append(str(error)))
+
         def api(route):
             request = route.request
             path = urlparse(request.url).path
@@ -43,8 +47,13 @@ def main():
             elif path == "/api/instances":
                 route.fulfill(json={"default": "default", "instances": [
                     {"id": "default", "name": "Living room"}, *instances]})
+            elif path == "/api/outputs" and request.method == "PUT":
+                edit = request.post_data_json
+                output_edits.append(edit)
+                devices[:] = edit["audio"]["devices"]
+                route.fulfill(json={"audio": edit["audio"]})
             elif path == "/api/config":
-                route.fulfill(json={"audio": {"devices": devices, "instances": instances}})
+                route.fulfill(json={"audio": {"devices": devices, "instances": instances, "global_attenuation_percent": 100}})
             elif path == "/api/devices":
                 route.fulfill(json={"devices": []})
             else:
@@ -54,6 +63,31 @@ def main():
         page.route("**/player/fnos-mark.png",
                    lambda route: route.fulfill(path=repo / "flutter/web/fnos-mark.png"))
         base = f"http://127.0.0.1:{server.server_port}/speakers.html?instance="
+        root = f"http://127.0.0.1:{server.server_port}/"
+        page.route("**/player/index.html*", lambda route: route.fulfill(body="<html></html>", content_type="text/html"))
+        for old, new in [("#/overview", "player/index.html"), ("#/settings", "player/index.html"),
+                         ("#/receive", "player/index.html"), ("#/unknown", "player/index.html"),
+                         ("#/audio", "speakers.html"), ("#/curve", "speakers.html")]:
+            page.goto(root + "index.html?instance=room" + old)
+            fragment = {"#/settings":"#/settings", "#/receive":"#/settings", "#/audio":"#outputs",
+                        "#/curve":"#curve"}.get(old, "")
+            expect(page).to_have_url(root + new + "?instance=room" + fragment)
+            expect(page.locator(".main-nav, #page-overview, #page-audio")).to_have_count(0)
+        for old in ["js/main.js", "js/page-audio.js", "js/page-receive.js", "js/page-settings.js", "style.css"]:
+            assert page.request.get(root + old).status == 404
+        page.goto(base + "room#rooms")
+        page.get_by_role("link", name="管理输出").click()
+        page.locator("#output-select").select_option("Study")
+        expect(page.locator("#output-enable")).to_be_disabled()
+        expect(page.locator("#output-owner")).to_contain_text("Study")
+        page.locator("#output-select").select_option("HDMI")
+        page.locator("#output-delay").fill("123")
+        page.locator("#output-delay").press("Tab")
+        with page.expect_navigation(wait_until="load"):
+            page.locator("#outputs-save").click()
+        expect(page.locator("#outputs-save")).to_be_disabled()
+        assert output_edits and next(d for d in devices if d["id"] == "HDMI")["delay_ms"] == 123
+        assert not errors, errors
         page.goto(base + "room#rooms")
         expect(page.locator(".room")).to_have_count(2)
         page.locator(".room").filter(has_text="Study").get_by_text("音量曲线").click()

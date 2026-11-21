@@ -86,7 +86,7 @@ FP.initGlass = function () {
       if (e.isIntersecting) resize.observe(e.target);
       else resize.unobserve(e.target);
     }));
-    document.querySelectorAll('.card:not(.now-card), .savebar, .app-header, .toast').forEach(p => visibility.observe(p));
+    document.querySelectorAll('.card').forEach(p => visibility.observe(p));
   }
   return function updateArtwork(status, instance) {
     let url = status && status.current_source && status.media && status.media.cover_url || '';

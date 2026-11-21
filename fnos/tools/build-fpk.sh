@@ -109,7 +109,12 @@ chmod -R u+rwX "$STAGE" 2>/dev/null || true
 sed -i -E "s/^platform([[:space:]]*)=.*/platform\1= $FPK_PLATFORM/" "$STAGE/manifest"
 mkdir -p "$STAGE/app/bin" "$STAGE/app/www" "$STAGE/app/licenses"
 cp -f "$BIN" "$STAGE/app/bin/fusionplay-fnos"
-cp -r "$ROOT/frontend/." "$STAGE/app/www/"
+# Both architectures ship the same explicitly selected NAS screens.
+mkdir -p "$STAGE/app/www/js"
+for asset in index.html speakers.html update.html speakers.css fusion-theme.css \
+    js/{browser-diagnostics,core,curve,glass,outputs,speakers,update}.js; do
+    cp "$ROOT/frontend/$asset" "$STAGE/app/www/$asset"
+done
 # Package the pinned fnOS SDK locally; NAS users do not need an external CDN.
 sdk_archive="$STAGE_ROOT/$FPK_PLATFORM/trim-web-app-0.6.0.tgz"
 curl --fail --silent --show-error --location --retry 2 --max-time 60 \

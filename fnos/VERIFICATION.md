@@ -474,3 +474,22 @@ python3 -m venv /tmp/fusionplay-sender
 # 对已经运行的 NAS 验证发现身份，传入测试机的局域网 IPv4 地址与投送名
 /tmp/fusionplay-sender/bin/python fnos/tools/test-speaker-discovery.py <local-ip> <name-1> <name-2> ...
 ```
+
+## 2026-11-21 飞牛 DLNA 和旧界面复核
+
+此次环境为 Linux x86_64、Chromium、飞牛 Rust 服务及模拟音频输出。分别运行了共享协议核心、飞牛和 Windows 后端的 `cargo test --locked --all-targets`，三者通过数依次为 133、104 和 135。飞牛套件按既有配置跳过了两项，其中一项需要真实 ALSA 声卡。共享设置、更新和播放器地址的 25 个 Flutter 测试通过。
+
+- 8 个实例、24 个协议服务就绪后，通过本地 HTTP 和 UPnP SOAP 同时播放 8 首 WAV。各实例的曲名、歌手、歌词和封面独立。暂停一个房间后 PCM 帧数保持不变，其他七个房间仍为 PLAYING。同 URI 刷新元数据及恢复播放均未再次下载媒体。
+- 0.7 秒短曲自然结束、同曲再次播放和 HTTP 404 均经 SOAP 查询确认返回 STOPPED。另用一份 2.6 秒的 44.1 kHz MP3 对照完整请求与中途断开后续读，后者从第 42,654 字节发出 Range 请求。两次各输出 124,729 个 48 kHz 双声道 PCM 帧。设备拒绝续传或对象改变时仍会报告播放失败。
+- 两种 FPK 架构共用显式 Web 资源清单。按打包脚本复制静态资源到临时目录，用真实飞牛 HTTP 服务和 390 × 760 的 Chromium 打开带实例参数的旧音频书签。它进入音箱输出管理，修改的延迟值 32 ms 在重载后保留。旧后台脚本和样式返回 404。浏览器回归另覆盖旧概览、接收、设置、曲线链接和 19 个实例的滚动。截图中的音箱为测试配置。[主接收器输出截图](../docs/platform-previews/fnos-primary-outputs.png)
+
+复现投送和浏览器回归可在仓库根目录执行以下命令。并发实例测试需独占其协议端口。
+
+```sh
+cargo test --locked --manifest-path fnos/backend/Cargo.toml --all-targets
+ffmpeg -loglevel error -f lavfi -i 'sine=frequency=440:duration=2.6' -ar 44100 -ac 2 -b:a 256k -y /tmp/fusionplay-test.mp3
+python3 fnos/tools/test-speaker-instances.py "${CARGO_TARGET_DIR:-fnos/backend/target}/debug/fusionplay-fnos" --rooms 8 --mp3 /tmp/fusionplay-test.mp3
+CHROMIUM=/usr/bin/chromium python3 fnos/tools/test-curve-page.py
+```
+
+本次没有生成安装包。ARM64 NAS、物理音箱、手机端 QQ 音乐、网易云和 BubbleUPnP 的组合仍待真机复测。
