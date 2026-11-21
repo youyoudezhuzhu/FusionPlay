@@ -35,7 +35,7 @@ tools/                  图标、抓包和诊断辅助工具
 docs/                   平台与协议说明
 ```
 
-三端在同一分支维护。播放协议改动集中在 `src/`。Android 和 Windows 通过各自的控制器向同一个 `FusionPlayHome` 提供状态。飞牛通过 Flutter Web 使用同一个 `PlayerView`、歌词布局、封面背景和菜单动效。右上角菜单打开独立的音箱与输出方案、接收设置、概览和维护页面。播放器的 HTTP 适配器位于 `flutter/lib/backend/fnos/`。
+三端在同一分支维护。播放协议改动集中在 `src/`。Android 和 Windows 通过各自的控制器向同一个 `FusionPlayHome` 提供状态。飞牛通过 Flutter Web 使用同一个 `PlayerView`、歌词布局、封面背景和菜单动效。NAS 专有的音箱分配、校准和接收管理集中在右上角的「设置」。配置多个播放实例后，菜单增加「切换音箱」，每个实例的播放地址可单独收藏或在新标签页打开。播放器的 HTTP 适配器位于 `flutter/lib/backend/fnos/`。
 
 调整共享颜色、圆角或模糊半径时，编辑 `flutter/lib/theme/fusion_theme.dart`，运行 `python3 tools/sync_web_theme.py` 并提交生成的样式。飞牛构建使用 `--check` 验证同步。播放器从当前媒体的封面生成背景，缺少封面时使用中性底色。
 
