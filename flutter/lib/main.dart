@@ -771,6 +771,7 @@ class _FusionPlayHomeState extends State<FusionPlayHome> {
                         child: LiquidGlass(
                           key: const ValueKey('error-toast'),
                           level: GlassLevel.panel,
+                          blurSigma: 9,
                           interactive: true,
                           borderRadius: 22,
                           padding: const EdgeInsets.fromLTRB(18, 8, 6, 8),

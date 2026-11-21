@@ -143,6 +143,57 @@ void main() {
   setUpAll(
     () => Directory('/tmp/fusionplay-preview').createSync(recursive: true),
   );
+  testWidgets('glass panel transmits layers outside the artwork capture', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(640, 420);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    final boundary = GlobalKey();
+    final lowerLayer = ValueNotifier<Color>(Colors.red);
+    addTearDown(lowerLayer.dispose);
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: RepaintBoundary(
+          key: boundary,
+          child: GlassBackdropScope(
+            background: const ColoredBox(color: Colors.black),
+            child: Stack(
+              fit: StackFit.expand,
+              children: [
+                ValueListenableBuilder<Color>(
+                  valueListenable: lowerLayer,
+                  builder: (_, color, _) => ColoredBox(color: color),
+                ),
+                const Center(
+                  child: SizedBox(
+                    width: 240,
+                    height: 120,
+                    child: LiquidGlass(
+                      level: GlassLevel.panel,
+                      blurSigma: 9,
+                      child: SizedBox.expand(),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+
+    final red = await _captureRgba(tester, boundary);
+    lowerLayer.value = Colors.blue;
+    final blue = await _captureRgba(tester, boundary);
+    final center = (420 * 1280 + 640) * 4;
+    expect(red[center], greaterThan(blue[center] + 35));
+    expect(blue[center + 2], greaterThan(red[center + 2] + 35));
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets('pressing clear glass bends the scene and release restores it', (
     tester,
   ) async {

@@ -521,9 +521,9 @@ class _FusionMorphOverlayState extends State<FusionMorphOverlay>
           final menuOpacity = _menuOpacity;
           final settingsOpacity = _settingsOpacity;
           final dim =
-              (.18 * math.max(menuOpacity, settingsOpacity) +
-                      .12 * settingsOpacity)
-                  .clamp(0.0, .42);
+              (.12 * math.max(menuOpacity, settingsOpacity) +
+                      .06 * settingsOpacity)
+                  .clamp(0.0, .18);
           final menuSize = _menuRect(_size).size;
           final settingsSize = _settingsRect(_size).size;
           final tint = Color.lerp(menuTint, settingsTint, settingsAmount)!;
@@ -534,7 +534,7 @@ class _FusionMorphOverlayState extends State<FusionMorphOverlay>
               interactive: true,
               borderRadius: radius,
               blurSigma:
-                  20 + (FusionGlassColors.panelBlur - 20) * settingsAmount,
+                  10 + 4 * settingsAmount,
               tint: tint,
               forceFallback: widget.forceFallback,
               animate: false,

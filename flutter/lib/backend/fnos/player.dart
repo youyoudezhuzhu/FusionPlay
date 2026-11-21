@@ -185,7 +185,26 @@ class _ReceiverState extends State<_Receiver> {
       if (mounted) {
         ScaffoldMessenger.of(
           context,
-        ).showSnackBar(const SnackBar(content: Text('操作未完成，请检查发送端连接')));
+        ).showSnackBar(
+          SnackBar(
+            behavior: SnackBarBehavior.floating,
+            backgroundColor: Colors.transparent,
+            elevation: 0,
+            padding: EdgeInsets.zero,
+            content: GlassAppearance(
+              enabled: advancedEffects,
+              child: const LiquidGlass(
+                level: GlassLevel.popup,
+                blurSigma: 9,
+                padding: EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                child: Text(
+                  '操作未完成，请检查发送端连接',
+                  style: TextStyle(color: Colors.white),
+                ),
+              ),
+            ),
+          ),
+        );
       }
     }
   }
@@ -314,15 +333,36 @@ class _ReceiverState extends State<_Receiver> {
                             child: LiquidGlass(
                               borderRadius: 22,
                               interactive: true,
-                              child: IconButton(
-                                tooltip: '飞牛音箱',
-                                focusNode: speakerFocus,
-                                onPressed: () => menu(forSpeakers: true),
-                                icon: Image.network(
-                                  Uri.base.resolve('fnos-mark.png').toString(),
-                                  width: 23,
-                                  height: 23,
-                                  excludeFromSemantics: true,
+                              child: Tooltip(
+                                padding: EdgeInsets.zero,
+                                decoration: const BoxDecoration(),
+                                richMessage: WidgetSpan(
+                                  child: GlassAppearance(
+                                    enabled: advancedEffects,
+                                    child: const LiquidGlass(
+                                      level: GlassLevel.popup,
+                                      borderRadius: 10,
+                                      blurSigma: 6,
+                                      padding: EdgeInsets.symmetric(
+                                        horizontal: 10,
+                                        vertical: 6,
+                                      ),
+                                      child: Text(
+                                        '飞牛音箱',
+                                        style: TextStyle(color: Colors.white),
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                                child: IconButton(
+                                  focusNode: speakerFocus,
+                                  onPressed: () => menu(forSpeakers: true),
+                                  icon: Image.network(
+                                    Uri.base.resolve('fnos-mark.png').toString(),
+                                    width: 23,
+                                    height: 23,
+                                    excludeFromSemantics: true,
+                                  ),
                                 ),
                               ),
                             ),

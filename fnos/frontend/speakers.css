@@ -114,11 +114,12 @@ select option:disabled { color: #aaa3b6; }
 #output-groups .toolbar {margin:8px 0}
 
 .solid-surfaces .card, .solid-surfaces dialog.card {background:var(--fusion-solid-panel);backdrop-filter:none;box-shadow:none}
-dialog.card {width:min(400px,calc(100% - 32px));color:white;padding:24px;background-color:var(--fusion-popup-tint)}
-dialog::backdrop {background:rgb(0 0 0 / .42)}
+dialog.card {width:min(400px,calc(100% - 32px));color:white;padding:24px;background:var(--fusion-popup-tint);backdrop-filter:blur(9px) var(--surface-lens,brightness(1))}
+dialog::backdrop {background:rgb(0 0 0 / .16)}
+.solid-surfaces dialog::backdrop {background:rgb(0 0 0 / .42)}
 dialog h2 {font-size:20px;line-height:1.35}
 dialog .footer {margin-top:20px}
-@media(prefers-reduced-transparency:reduce),(forced-colors:active){dialog.card{background:var(--fusion-solid-panel)}}
+@media(prefers-reduced-transparency:reduce),(forced-colors:active){dialog.card{background:var(--fusion-solid-panel);backdrop-filter:none}}
 
 /* Canvas chart colours must follow the browser's high-contrast palette too. */
 @media(forced-colors:active){#graph{color:CanvasText;background-color:Canvas;border-color:GrayText}}

@@ -430,7 +430,7 @@ class _RefractiveSurfaceState extends State<_RefractiveSurface> {
   @override
   Widget build(BuildContext context) {
     final shader = _shader;
-    final needsBlur = shader == null || (kIsWeb && widget.frostLiveFace);
+    final needsBlur = shader == null || widget.frostLiveFace;
     return Stack(
       key: _key,
       fit: StackFit.expand,
@@ -456,6 +456,7 @@ class _RefractiveSurfaceState extends State<_RefractiveSurface> {
               specular: widget.specular,
               thickness: widget.thickness,
               absorption: widget.absorption,
+              liveFace: kIsWeb || widget.frostLiveFace,
             ),
           ),
       ],
@@ -475,6 +476,7 @@ class _RefractionPainter extends CustomPainter {
     required this.specular,
     required this.thickness,
     required this.absorption,
+    required this.liveFace,
   }) : super(repaint: contact);
 
   final ui.FragmentShader shader;
@@ -487,6 +489,7 @@ class _RefractionPainter extends CustomPainter {
   final double specular;
   final double thickness;
   final double absorption;
+  final bool liveFace;
 
   @override
   void paint(Canvas canvas, Size size) {
@@ -516,7 +519,7 @@ class _RefractionPainter extends CustomPainter {
       ..setFloat(13, axisX.dy)
       ..setFloat(14, axisY.dx)
       ..setFloat(15, axisY.dy)
-      ..setFloat(16, kIsWeb ? 1 : 0)
+      ..setFloat(16, liveFace ? 1 : 0)
       ..setFloat(17, pointer.dx)
       ..setFloat(18, pointer.dy)
       ..setFloat(19, state.pressure)
@@ -527,6 +530,7 @@ class _RefractionPainter extends CustomPainter {
 
   @override
   bool shouldRepaint(_RefractionPainter oldDelegate) =>
+      oldDelegate.liveFace != liveFace ||
       oldDelegate.lensPower != lensPower ||
       oldDelegate.shader != shader ||
       oldDelegate.backdrop != backdrop ||
@@ -740,6 +744,7 @@ class GlassDialog extends StatelessWidget {
               // color of the layer underneath visible through the dialog.
               forceFallback: true,
               blurSigma: 9,
+              tint: FusionGlassColors.popupTint.withValues(alpha: .58),
               specular: .18,
               child: Theme(
                 data: surfaceTheme,
