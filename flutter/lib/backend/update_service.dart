@@ -97,6 +97,11 @@ class UpdateInstallResult {
 typedef DownloadProgress = void Function(int bytes, int total);
 typedef DownloadUpdate =
     Future<void> Function(String releaseKey, DownloadProgress progress);
+
+/// Opens a platform folder picker and returns the verified installer's full path.
+/// A null result means the user cancelled the picker.
+typedef SaveUpdate =
+    Future<String?> Function(String key, DownloadProgress progress);
 typedef InstallUpdate = Future<UpdateInstallResult> Function(String releaseKey);
 
 /// Thin client of the Android update MethodChannel.

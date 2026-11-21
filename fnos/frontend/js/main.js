@@ -15,6 +15,7 @@ window.FP = window.FP || {};
   const THEME_ICONS = { system: 'auto', light: 'sun', dark: 'moon' };
   const POLL_MS = 2000;
   const originId = new URLSearchParams(location.search).get('instance');
+  if (originId) document.getElementById('get-update').href = 'update.html?instance=' + encodeURIComponent(originId);
 
   const store = FP.createStore();
   const updateArtwork = FP.initGlass();

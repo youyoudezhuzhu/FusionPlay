@@ -7,6 +7,8 @@
 //! The interface is specified in `docs/WINDOWS_ARCHITECTURE.md`.
 
 pub mod app;
+#[path = "../../../src/shared_update/mod.rs"]
+pub mod shared_update;
 pub mod audio;
 pub mod dlna_player;
 #[path = "../../../src/shared_logging/mod.rs"]

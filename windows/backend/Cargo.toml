@@ -16,6 +16,8 @@ name = "FusionPlayCore"
 path = "src/main.rs"
 
 [dependencies]
+sha2 = "0.10"
+tempfile = "3"
 regex-lite = "0.1"
 airplay-receiver-core = { path = "../../src/AirPlayReceiver.Core" }
 fusionplay-miplay-sdk = { path = "../../src/FusionPlay.MiPlaySdk" }
@@ -68,8 +70,7 @@ windows-sys = { version = "0.61", features = [
     "Win32_Networking_WinSock",
 ] }
 
-[dev-dependencies]
-tempfile = "3"
+
 
 [profile.release]
 opt-level = "s"

@@ -62,6 +62,9 @@ check_file "$TMP/app/www/player/canvaskit/canvaskit.wasm" "离线 CanvasKit"
 for asset in speakers.html speakers.css js/speakers.js js/curve.js js/glass.js; do
     check_file "$TMP/app/www/$asset" "含音箱设置资源 $asset"
 done
+for asset in update.html js/update.js js/trim-web-app.js; do
+    check_file "$TMP/app/www/$asset" "含更新和目录授权资源 $asset"
+done
 check_file "$TMP/app/www/index.html" "含 www/index.html"
 check_file "$TMP/app/www/js/main.js" "含 www/js/main.js"
 check_file "$TMP/app/www/js/core.js" "含 www/js/core.js"

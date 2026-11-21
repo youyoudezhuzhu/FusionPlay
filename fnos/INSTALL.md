@@ -228,3 +228,12 @@ sudo rm -rf /vol1/@apphome/fusionplay-fnos /vol1/@appdata/fusionplay-fnos \
 本应用以 **AGPL-3.0-only** 分发，包内包含完整许可证 `app/licenses/LICENSE` 与源码地址
 `app/licenses/SOURCE.txt`、`app/BUILD-INFO`（版本/commit/构建时间）。
 对应源码：<https://github.com/youyoudezhuzhu/FusionPlay>（tag/commit 见 BUILD-INFO）。
+
+### 保存在线更新包
+
+在播放器右上角或设置页点「检查更新」。有新版本时，选择 NAS 上的保存目录，并在飞牛文件选择器内确认授权。下载完成后，页面会显示 FPK 的完整路径。在「应用中心 → 手动安装」中选取该文件。x86_64 与 ARM64 接收各自架构的 FPK。
+
+此功能使用飞牛统一网关和个人目录授权。请通过飞牛桌面或同域网关访问，并选择当前账号可以读写的目录。飞牛官方标注文件授权接口从 fnOS 1.2.0401 和客户端 1.34.0 开始支持。旧系统仍可从项目 Releases 获取对应架构的 FPK。
+
+- [飞牛个人目录授权](https://developer.fnnas.com/api/authorization/user-access)
+- [飞牛文件权限检查](https://developer.fnnas.com/api/authorization/file-acl)

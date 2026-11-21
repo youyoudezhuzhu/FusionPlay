@@ -238,12 +238,16 @@ void main() {
       expect(install.status, UpdateInstallStatus.started);
     });
 
-    test('WindowsAppController 使用默认实现（不可用/不支持）', () async {
-      final controller = WindowsAppController();
+    test('Windows 提供目录保存能力并报告侧车缺失', () async {
+      final controller = WindowsAppController(
+        executablePath: 'missing-for-update-test/FusionPlayCore.exe',
+      );
       addTearDown(controller.dispose);
 
       final check = await controller.checkForUpdate();
-      expect(check.status, UpdateCheckStatus.unavailable);
+      expect(controller.saveUpdate, isA<SaveUpdate>());
+      expect(check.status, UpdateCheckStatus.error);
+      expect(check.message, contains('FusionPlayCore.exe'));
 
       final install = await controller.downloadAndInstallUpdate();
       expect(install.status, UpdateInstallStatus.error);

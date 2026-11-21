@@ -13,6 +13,7 @@ Future<void> _pumpSettings(
   Future<UpdateCheckResult> Function()? onCheckUpdate,
   Future<UpdateInstallResult> Function()? onInstallUpdate,
   DownloadUpdate? onDownload,
+  SaveUpdate? onSave,
   Size size = const Size(480, 1100),
 }) async {
   final initialFocus = FocusNode(debugLabel: 'settings-update-test');
@@ -40,6 +41,7 @@ Future<void> _pumpSettings(
           onDlna: (_) {},
           onExportLogs: () async {},
           isAndroid: isAndroid,
+          saveUpdate: onSave,
           onCheckUpdate: onCheckUpdate,
           onDownloadUpdate: onDownload ?? (_, _) async {},
           onInstallUpdate: onInstallUpdate == null
@@ -69,7 +71,7 @@ const _available = UpdateCheckResult(
 );
 
 void main() {
-  testWidgets('Windows（非 Android）不显示检查更新行', (tester) async {
+  testWidgets('没有保存安装包能力的平台隐藏更新入口', (tester) async {
     await _pumpSettings(
       tester,
       isAndroid: false,
@@ -80,6 +82,34 @@ void main() {
 
     expect(find.text('检查更新'), findsNothing);
     expect(find.text('导出日志'), findsOneWidget);
+  });
+
+  testWidgets('Windows 取消选目录可重试，保存后显示路径并由用户手动安装', (tester) async {
+    var calls = 0;
+    final finish = Completer<String?>();
+    await _pumpSettings(
+      tester,
+      isAndroid: false,
+      onCheckUpdate: () async => _available,
+      onSave: (key, progress) async {
+        if (++calls == 1) return null;
+        progress(5, 10);
+        return finish.future;
+      },
+    );
+    await _tapCheckUpdate(tester);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('选择保存目录'));
+    await tester.pumpAndSettle();
+    expect(find.text('安装'), findsNothing);
+    await tester.tap(find.text('选择保存目录'));
+    await tester.pump();
+    expect(find.text('已下载 50%'), findsOneWidget);
+    finish.complete(r'D:\更新\FusionPlay-Setup.exe');
+    await tester.pumpAndSettle();
+    expect(find.textContaining(r'D:\更新\FusionPlay-Setup.exe'), findsOneWidget);
+    expect(find.text('安装'), findsNothing);
+    expect(find.text('关闭'), findsOneWidget);
   });
 
   testWidgets('Android 显示检查更新行', (tester) async {

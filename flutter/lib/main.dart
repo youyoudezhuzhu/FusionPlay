@@ -461,6 +461,7 @@ class _FusionPlayHomeState extends State<FusionPlayHome> {
           onCheckUpdate: widget.controller.checkForUpdate,
           onDownloadUpdate: widget.controller.downloadUpdate,
           onInstallUpdate: widget.controller.installDownloadedUpdate,
+          saveUpdate: widget.controller.saveUpdate,
         ),
       ),
     );
@@ -584,7 +585,7 @@ class _FusionPlayHomeState extends State<FusionPlayHome> {
         label: '设置',
         onSelected: _settingsAction,
       ),
-      if (_isAndroid)
+      if (_isAndroid || widget.controller.saveUpdate != null)
         FusionMenuItem(
           icon: const Icon(Icons.system_update_rounded),
           label: '检查更新',
@@ -706,6 +707,7 @@ class _FusionPlayHomeState extends State<FusionPlayHome> {
                           isAndroid: _isAndroid,
                           onCheckUpdate: widget.controller.checkForUpdate,
                           onDownloadUpdate: widget.controller.downloadUpdate,
+                          saveUpdate: widget.controller.saveUpdate,
                           onInstallUpdate:
                               widget.controller.installDownloadedUpdate,
                         ),

@@ -71,6 +71,7 @@ class SettingsView extends StatefulWidget {
     this.onCheckUpdate,
     this.onDownloadUpdate,
     this.onInstallUpdate,
+    this.saveUpdate,
     this.showHeader = true,
   });
 
@@ -96,7 +97,7 @@ class SettingsView extends StatefulWidget {
   final Future<void> Function() onExportLogs;
 
   /// Overrides the platform detection so widget tests can render the update
-  /// row for Android and hide it for Windows without touching the host OS.
+  /// Android row independently of the host without touching the host OS.
   final bool? isAndroid;
 
   /// When false the host (the morphing settings sheet) owns the scrolling via a
@@ -104,12 +105,13 @@ class SettingsView extends StatefulWidget {
   /// its padded content. Standalone pages/tests keep the internal scroll view.
   final bool scrollable;
 
-  /// Update check triggered by the "检查更新" row (Android only).
+  /// Update check triggered by the "检查更新" row.
   final Future<UpdateCheckResult> Function()? onCheckUpdate;
 
   /// Download + system installer triggered from the update dialog.
   final DownloadUpdate? onDownloadUpdate;
   final InstallUpdate? onInstallUpdate;
+  final SaveUpdate? saveUpdate;
 
   /// When false the page title is omitted (hosted inside the glass overlay).
   final bool showHeader;
@@ -443,10 +445,12 @@ class _SettingsViewState extends State<SettingsView> {
   }
 
   bool get _showUpdateRow =>
-      (widget.isAndroid ?? defaultTargetPlatform == TargetPlatform.android) &&
       widget.onCheckUpdate != null &&
-      widget.onDownloadUpdate != null &&
-      widget.onInstallUpdate != null;
+      (widget.saveUpdate != null ||
+          ((widget.isAndroid ??
+                  defaultTargetPlatform == TargetPlatform.android) &&
+              widget.onDownloadUpdate != null &&
+              widget.onInstallUpdate != null));
 
   Widget _checkUpdateRow() {
     final busy = _checkingUpdate || _downloadingUpdate;
@@ -486,13 +490,14 @@ class _SettingsViewState extends State<SettingsView> {
     final onCheck = widget.onCheckUpdate;
     final onInstall = widget.onInstallUpdate;
     final onDownload = widget.onDownloadUpdate;
-    if (onCheck == null || onInstall == null || onDownload == null) return;
+    if (onCheck == null || !_showUpdateRow) return;
 
     await runUpdateFlow(
       context: context,
       onCheckUpdate: onCheck,
       onDownloadUpdate: onDownload,
       onInstallUpdate: onInstall,
+      saveUpdate: widget.saveUpdate,
       onCheckingChanged: (checking) {
         if (mounted) setState(() => _checkingUpdate = checking);
       },

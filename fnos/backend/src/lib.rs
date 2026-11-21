@@ -5,6 +5,8 @@
 //! unified multi-device ALSA engine, volume/calibration chain, three-protocol
 //! arbitration, DLNA media fetching/decoding, HTTP API and management UI.
 
+#[path = "../../../src/shared_update/mod.rs"]
+pub mod shared_update;
 pub mod audio;
 pub mod config;
 pub mod dlna_player;
@@ -17,5 +19,6 @@ pub mod protocols;
 pub mod session;
 pub mod state;
 pub mod volume;
+mod update;
 
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");

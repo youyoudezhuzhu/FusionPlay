@@ -149,6 +149,27 @@ pub fn start(
 
 fn serve_unix(mut stream: std::os::unix::net::UnixStream, app: Arc<HttpApp>) -> Result<()> {
     let request = read_request(&mut stream)?;
+    if request.path == format!("{}/api/update/save", app.gateway_prefix) && request.method == "POST" {
+        let uid = request.uid.filter(|&uid| crate::update::authentic_user(&stream, uid));
+        if !request.update_json || uid.is_none() || std::env::var_os(crate::instances::PORT_OFFSET).is_some() {
+            return write_response(&mut stream, 403, "text/plain; charset=utf-8", "请通过飞牛统一网关登录后再选择保存目录".as_bytes(), &[]);
+        }
+        stream.set_write_timeout(Some(std::time::Duration::from_secs(10)))?;
+        stream.write_all(b"HTTP/1.1 200 OK\r\nContent-Type: application/x-ndjson; charset=utf-8\r\nCache-Control: no-store\r\nX-Accel-Buffering: no\r\nConnection: close\r\n\r\n")?;
+        let mut event = |value: Value| -> Result<()> {
+            writeln!(&mut stream, "{value}")?;
+            stream.flush()?;
+            Ok(())
+        };
+        let result = crate::update::save(uid.unwrap(), &request.body, |bytes, total| event(json!({"bytes":bytes,"total":total})));
+        return match result {
+            Ok(path) => event(json!({"path":path})),
+            Err(e) => {
+                tracing::warn!("FPK 下载失败：{e:#}");
+                event(json!({"error":format!("{e:#}")}))
+            }
+        };
+    }
     handle(request, &mut |status, content_type, body, headers| {
         write_response(&mut stream, status, content_type, body, headers)
     }, app)
@@ -163,6 +184,8 @@ fn serve_tcp(mut stream: TcpStream, app: Arc<HttpApp>) -> Result<()> {
 }
 
 struct Request {
+    uid: Option<u32>,
+    update_json: bool,
     method: String,
     path: String,
     body: Vec<u8>,
@@ -192,8 +215,19 @@ fn read_request<S: Read>(stream: &mut S) -> Result<Request> {
     let method = first.next().unwrap_or("GET").to_string();
     let path = first.next().unwrap_or("/").to_string();
     let mut content_length = 0usize;
+    let mut uid = None;
+    let mut is_json = false;
+    let mut update_header = false;
     for line in lines {
         let Some((name, value)) = line.split_once(':') else { continue };
+        if name.eq_ignore_ascii_case("X-Trim-Userid") {
+            anyhow::ensure!(uid.is_none(), "重复的用户身份");
+            uid = value.trim().parse().ok();
+        } else if name.eq_ignore_ascii_case("Content-Type") {
+            is_json = value.trim().eq_ignore_ascii_case("application/json");
+        } else if name.eq_ignore_ascii_case("X-FusionPlay-Update") {
+            update_header = value.trim() == "1";
+        }
         if name.trim().eq_ignore_ascii_case("content-length") {
             content_length = value.trim().parse().unwrap_or(0);
         }
@@ -210,7 +244,7 @@ fn read_request<S: Read>(stream: &mut S) -> Result<Request> {
         body.extend_from_slice(&chunk[..read]);
     }
     body.truncate(content_length);
-    Ok(Request { method, path, body })
+    Ok(Request { method, path, body, uid, update_json: is_json && update_header })
 }
 
 fn find_subslice(haystack: &[u8], needle: &[u8]) -> Option<usize> {
@@ -230,6 +264,7 @@ fn write_response<S: Write>(
         301 => "Moved Permanently",
         307 => "Temporary Redirect",
         400 => "Bad Request",
+        403 => "Forbidden",
         404 => "Not Found",
         405 => "Method Not Allowed",
         409 => "Conflict",
@@ -666,6 +701,11 @@ fn handle(
             }
             Err(error) => respond_error(&mut *respond, 400, &format!("{error:#}")),
         },
+        ("GET", "/api/update/check") => match crate::update::check() {
+            Ok(info) => respond_json(respond, info),
+            Err(e) => respond_error(respond, 503, &format!("{e:#}")),
+        },
+        ("POST", "/api/update/save") => respond_error(respond, 403, "请通过飞牛桌面或统一网关选择 NAS 保存目录"),
         ("GET", "/api/logs/export") => {
             let file = logging::path().context("日志未初始化")?;
             let report = logging::export_report(file.parent().context("日志目录无效")?, &app.snapshot().audio.instances);

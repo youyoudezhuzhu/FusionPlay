@@ -20,5 +20,6 @@ desktop_applaunchname = fusionplay-fnos.main
 service_port          = 18080
 checkport             = true
 ctl_stop              = true
-disable_authorization_path = true
+micro_app             = true
+disable_authorization_path = false
 os_min_version        = 1.0.0

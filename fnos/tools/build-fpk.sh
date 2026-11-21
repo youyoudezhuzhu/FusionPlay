@@ -110,6 +110,14 @@ sed -i -E "s/^platform([[:space:]]*)=.*/platform\1= $FPK_PLATFORM/" "$STAGE/mani
 mkdir -p "$STAGE/app/bin" "$STAGE/app/www" "$STAGE/app/licenses"
 cp -f "$BIN" "$STAGE/app/bin/fusionplay-fnos"
 cp -r "$ROOT/frontend/." "$STAGE/app/www/"
+# Package the pinned fnOS SDK locally; NAS users do not need an external CDN.
+sdk_archive="$STAGE_ROOT/$FPK_PLATFORM/trim-web-app-0.6.0.tgz"
+curl --fail --silent --show-error --location --retry 2 --max-time 60 \
+    https://registry.npmjs.org/@trimjs/web-app/-/web-app-0.6.0.tgz -o "$sdk_archive"
+echo "a60f04172186017ac5b4e4d2b2af64c11fa699b48c9e3a69577e7c06f88ab4ec  $sdk_archive" | sha256sum -c -
+tar -xzOf "$sdk_archive" package/dist/index.js > "$STAGE/app/www/js/trim-web-app.js"
+tar -xzOf "$sdk_archive" package/README.md > "$STAGE/app/licenses/trim-web-app-README.md"
+
 PLAYER_WEB="${FPK_PLAYER_WEB_DIR:-$REPO/flutter/build/web}"
 if [ -z "${FPK_PLAYER_WEB_DIR:-}" ]; then
     (

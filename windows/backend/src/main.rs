@@ -4,6 +4,8 @@
 //! runtime, pump NDJSON commands from stdin and emit NDJSON events through a
 //! [`StdioUiSink`]. All business logic lives in [`fusionplay_windows::app`].
 
+mod update_cli;
+
 use std::io::{BufRead, IsTerminal};
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -90,6 +92,8 @@ fn print_help() {
            --no-miplay               本次启动禁用小米妙播\n\
            --airplay-latency-ms <ms>  AirPlay 2 广告延迟（默认 2000，低延迟可试 500–1000）\n\
            --log-level <level>       trace|debug|info|warn|error（默认 info）\n\
+           --check-update            检查 Windows 稳定版更新\n\
+           --save-update <tag> <dir> 下载并校验安装程序\n\
            --version                 打印版本号\n\
            --help                    显示本帮助\n\n\
          协议通过 stdin/stdout 的 NDJSON 与 UI 通信，详见 docs/WINDOWS_ARCHITECTURE.md。"
@@ -98,6 +102,14 @@ fn print_help() {
 
 
 fn main() {
+    let args: Vec<_> = std::env::args_os().skip(1).collect();
+    if args.first().is_some_and(|cmd| cmd == "--check-update" || cmd == "--save-update") {
+        if let Err(error) = update_cli::run(&args) {
+            println!("{}", serde_json::json!({"error":format!("{error:#}")}));
+            std::process::exit(1);
+        }
+        return;
+    }
     let args = match parse_args() {
         Ok(args) => args,
         Err(message) => {

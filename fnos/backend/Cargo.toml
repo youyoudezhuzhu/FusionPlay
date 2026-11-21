@@ -15,6 +15,8 @@ name = "fusionplay-fnos"
 path = "src/main.rs"
 
 [dependencies]
+sha2 = "0.10"
+tempfile = "3"
 regex-lite = "0.1"
 airplay-receiver-core = { path = "../../src/AirPlayReceiver.Core" }
 fusionplay-miplay-sdk = { path = "../../src/FusionPlay.MiPlaySdk" }
@@ -31,6 +33,3 @@ rubato = "3"
 rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12", "logging"] }
 webpki-roots = "1"
 libc = "0.2"
-
-[dev-dependencies]
-tempfile = "3"

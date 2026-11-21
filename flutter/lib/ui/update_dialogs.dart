@@ -11,11 +11,15 @@ import 'liquid_glass.dart';
 Future<void> runUpdateFlow({
   required BuildContext context,
   required Future<UpdateCheckResult> Function() onCheckUpdate,
-  required DownloadUpdate onDownloadUpdate,
-  required InstallUpdate onInstallUpdate,
+  DownloadUpdate? onDownloadUpdate,
+  InstallUpdate? onInstallUpdate,
+  SaveUpdate? saveUpdate,
   ValueChanged<bool>? onCheckingChanged,
   ValueChanged<bool>? onDownloadingChanged,
 }) async {
+  assert(
+    saveUpdate != null || (onDownloadUpdate != null && onInstallUpdate != null),
+  );
   onCheckingChanged?.call(true);
   UpdateCheckResult? result;
   try {
@@ -39,6 +43,7 @@ Future<void> runUpdateFlow({
         result,
         download: onDownloadUpdate,
         install: onInstallUpdate,
+        saveUpdate: saveUpdate,
         onDownloadingChanged: onDownloadingChanged,
       );
     case UpdateCheckStatus.upToDate:
@@ -66,8 +71,9 @@ Future<T?> showBusyDialog<T>({
 Future<void> showAvailableUpdateDialog(
   BuildContext context,
   UpdateCheckResult result, {
-  required DownloadUpdate download,
-  required InstallUpdate install,
+  DownloadUpdate? download,
+  InstallUpdate? install,
+  SaveUpdate? saveUpdate,
   ValueChanged<bool>? onDownloadingChanged,
 }) => showGlassDialog<void>(
   context: context,
@@ -77,6 +83,7 @@ Future<void> showAvailableUpdateDialog(
     result: result,
     download: download,
     install: install,
+    saveUpdate: saveUpdate,
     onDownloadingChanged: onDownloadingChanged,
   ),
 );
@@ -86,11 +93,13 @@ class _AvailableUpdate extends StatefulWidget {
     required this.result,
     required this.download,
     required this.install,
+    this.saveUpdate,
     this.onDownloadingChanged,
   });
   final UpdateCheckResult result;
-  final DownloadUpdate download;
-  final InstallUpdate install;
+  final DownloadUpdate? download;
+  final InstallUpdate? install;
+  final SaveUpdate? saveUpdate;
   final ValueChanged<bool>? onDownloadingChanged;
 
   @override
@@ -98,11 +107,12 @@ class _AvailableUpdate extends StatefulWidget {
 }
 
 class _AvailableUpdateState extends State<_AvailableUpdate> {
-  late bool ready = widget.result.downloaded;
+  late bool ready = widget.saveUpdate == null && widget.result.downloaded;
   bool busy = false;
   int bytes = 0;
   int total = 0;
   String? message;
+  String? savedPath;
 
   Future<void> _act() async {
     if (busy) return;
@@ -117,16 +127,25 @@ class _AvailableUpdateState extends State<_AvailableUpdate> {
         bytes = 0;
         total = 0;
         onDownloadingChanged?.call(true);
-        await widget.download(widget.result.releaseKey, (received, expected) {
+        void progress(int received, int expected) {
           if (!mounted) return;
           setState(() {
             bytes = received;
             total = expected;
           });
-        });
+        }
+
+        final save = widget.saveUpdate;
+        if (save != null) {
+          final path = await save(widget.result.releaseKey, progress);
+          if (path == null) return;
+          savedPath = path;
+        } else {
+          await widget.download!(widget.result.releaseKey, progress);
+        }
         if (mounted) setState(() => ready = true);
       } else {
-        final result = await widget.install(widget.result.releaseKey);
+        final result = await widget.install!(widget.result.releaseKey);
         if (!mounted) return;
         setState(() {
           if (result.status == UpdateInstallStatus.missing) ready = false;
@@ -170,6 +189,8 @@ class _AvailableUpdateState extends State<_AvailableUpdate> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
+                  if (savedPath != null)
+                    SelectableText('已保存到 $savedPath\n请从此位置手动运行安装程序。'),
                   if (result.publishedAt?.isNotEmpty == true)
                     _updateDetail('发布时间：${result.publishedAt}'),
                   if ((result.apkSize ?? 0) > 0)
@@ -209,15 +230,18 @@ class _AvailableUpdateState extends State<_AvailableUpdate> {
                 label: ready ? '关闭' : '取消',
                 onPressed: busy ? null : () => Navigator.of(context).pop(),
               ),
-              _GlassDialogButton(
-                label: ready
-                    ? '安装'
-                    : downloading
-                    ? '正在下载…'
-                    : '下载更新',
-                primary: true,
-                onPressed: busy ? null : _act,
-              ),
+              if (widget.saveUpdate == null || !ready)
+                _GlassDialogButton(
+                  label: ready
+                      ? '安装'
+                      : downloading
+                      ? '正在下载…'
+                      : widget.saveUpdate == null
+                      ? '下载更新'
+                      : '选择保存目录',
+                  primary: true,
+                  onPressed: busy ? null : _act,
+                ),
             ],
           ),
         ],

@@ -326,7 +326,7 @@ class _ReceiverState extends State<_Receiver> {
                           label: '新建实例',
                           onSelected: () => closeMenu(location.createInstance),
                         ),
-                      ] else
+                      ] else ...[
                         FusionMenuItem(
                           icon: const FusionVectorIcon(
                             FusionIcons.settings,
@@ -336,6 +336,19 @@ class _ReceiverState extends State<_Receiver> {
                           label: '设置',
                           onSelected: () => closeMenu(location.settings),
                         ),
+                        FusionMenuItem(
+                          icon: const Icon(Icons.system_update_rounded),
+                          label: '检查更新',
+                          onSelected: () => closeMenu(
+                            location.root
+                                .resolve('update.html')
+                                .replace(
+                                  queryParameters:
+                                      location.page.queryParameters,
+                                ),
+                          ),
+                        ),
+                      ],
                     ],
                     settingsTitle: '设置',
                     settingsChild: const SizedBox.shrink(),

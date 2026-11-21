@@ -48,3 +48,7 @@ DLNA 宿主播放器新增的 TLS 传输依赖：`rustls`（Apache-2.0/MIT/ISC �
 ## 飞牛平台标识
 
 飞牛播放器入口使用飞牛官网站点图标中的白色图形识别 fnOS 平台。标识权利归原权利人。图形随 Web 播放器本地打包。[原图](https://www.fnnas.com/favicon.ico)
+
+## 安装包目录选择
+
+Windows 使用 Flutter Authors 的 `file_selector_windows`（BSD 3-Clause）。飞牛使用官方 `@trimjs/web-app` 0.6.0（MIT），SDK 随 FPK 打包，原包说明见 `licenses/trim-web-app-README.md`。[Windows 插件](https://pub.dev/packages/file_selector_windows) · [飞牛 SDK](https://www.npmjs.com/package/@trimjs/web-app)

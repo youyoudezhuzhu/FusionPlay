@@ -2,7 +2,10 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:file_selector_windows/file_selector_windows.dart';
+
 import '../../models/app_state.dart';
+import '../update_service.dart';
 import '../app_controller.dart';
 import 'player_log.dart';
 
@@ -257,6 +260,65 @@ class WindowsAppController extends FusionPlayController {
 
   /// Resolved sidecar executable path (useful for diagnostics/tests).
   String get executablePath => _executablePath ?? defaultExecutablePath();
+
+  @override
+  Future<UpdateCheckResult> checkForUpdate() async {
+    try {
+      final result = await Process.run(executablePath, [
+        '--check-update',
+      ], stdoutEncoding: utf8);
+      final data = jsonDecode(result.stdout as String) as Map<String, dynamic>;
+      if (result.exitCode != 0) throw StateError(data['error'] ?? '读取发布信息失败');
+      return UpdateCheckResult.fromMap(data);
+    } catch (error) {
+      recordWindowsPlayerError('检查更新失败：$error');
+      return UpdateCheckResult(
+        status: UpdateCheckStatus.error,
+        message: error.toString(),
+      );
+    }
+  }
+
+  @override
+  SaveUpdate get saveUpdate => _saveInstaller;
+
+  Future<String?> _saveInstaller(String key, DownloadProgress progress) async {
+    final directory = await FileSelectorWindows().getDirectoryPath(
+      confirmButtonText: '保存到此文件夹',
+    );
+    if (directory == null) return null;
+    final process = await Process.start(executablePath, [
+      '--save-update',
+      key,
+      directory,
+    ]);
+    final errors = process.stderr.drain<void>();
+    String? path;
+    String? failure;
+    try {
+      await for (final line
+          in process.stdout
+              .transform(utf8.decoder)
+              .transform(const LineSplitter())) {
+        final data = jsonDecode(line) as Map<String, dynamic>;
+        if (data['bytes'] is int && data['total'] is int) {
+          progress(data['bytes'] as int, data['total'] as int);
+        }
+        if (data['path'] is String) path = data['path'] as String;
+        if (data['error'] is String) failure = data['error'] as String;
+      }
+      final code = await process.exitCode;
+      await errors;
+      if (code != 0 || path == null || failure != null) {
+        throw StateError(failure ?? '下载未完成，请重试');
+      }
+      return path;
+    } catch (error) {
+      process.kill();
+      recordWindowsPlayerError('保存更新失败：$error');
+      rethrow;
+    }
+  }
 
   SidecarTransport get _resolvedTransport =>
       _transport ??= ProcessSidecarTransport(executablePath: executablePath);
