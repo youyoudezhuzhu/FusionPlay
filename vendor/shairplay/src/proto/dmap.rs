@@ -6,6 +6,10 @@
 /// Parsed track metadata from DMAP.
 #[derive(Debug, Clone, Default)]
 pub struct TrackMetadata {
+    /// Receiver confirmed a sender using minm for live lyrics and asar for credits.
+    pub lyric_credit: Option<(String, String)>,
+    /// Stable DMAP item identifier (mper), encoded as hex for JSON clients.
+    pub persistent_id: Option<String>,
     /// Track title (`minm`).
     pub title: Option<String>,
     /// Artist name (`asar`).
@@ -46,6 +50,10 @@ impl TrackMetadata {
             let as_u32 = || chunk.try_into().ok().map(u32::from_be_bytes);
             let as_u16 = || chunk.try_into().ok().map(u16::from_be_bytes);
             match tag {
+                b"mper" if len == 8 => {
+                    let id = u64::from_be_bytes(chunk.try_into().unwrap());
+                    meta.persistent_id = (id != 0).then(|| format!("{id:016x}"));
+                }
                 b"minm" => meta.title = as_str(),
                 b"asar" => meta.artist = as_str(),
                 b"asal" => meta.album = as_str(),
@@ -73,7 +81,7 @@ impl TrackMetadata {
             }
             pos += len;
         }
-        tracing::debug!(?meta, "Track metadata parsed");
+        tracing::debug!(bytes = data.len(), "Track metadata parsed");
         meta
     }
 }

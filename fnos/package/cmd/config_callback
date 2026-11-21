@@ -1,27 +1,5 @@
 #!/bin/bash
-# config_callback — 应用中心保存设置后调用：重启服务让新配置生效。
-# 配置本身由 Web UI 通过 PUT /api/config 原子写入 $TRIM_PKGHOME/config.json，
-# 这里不再改写配置文件（避免覆盖用户刚保存的内容）。
-set -u
-
-SELF_DIR="$(cd "$(dirname "$0")" && pwd)"
-APP="${TRIM_APPDEST:-/var/apps/fusionplay-fnos/target}"
-VAR="${TRIM_PKGVAR:-/vol1/@appdata/fusionplay-fnos}"
-PKGHOME="${TRIM_PKGHOME:-/vol1/@apphome/fusionplay-fnos}"
-ERRLOG="${TRIM_TEMP_LOGFILE:-$VAR/config-error.log}"
-
-export HOME="$PKGHOME"
-export DATA_LIBRARY_PATH="${DATA_LIBRARY_PATH:-$VAR}"
-mkdir -p "$VAR" "$PKGHOME" 2>/dev/null || true
-
-CMD_MAIN=""
-for c in "$SELF_DIR/main" "$SELF_DIR/../cmd/main" "/var/apps/${TRIM_APPNAME:-fusionplay-fnos}/cmd/main"; do
-    if [ -f "$c" ]; then CMD_MAIN="$c"; break; fi
-done
-
-if [ -z "$CMD_MAIN" ] || ! /bin/bash "$CMD_MAIN" restart; then
-    mkdir -p "$(dirname "$ERRLOG")" 2>/dev/null || true
-    printf '%s\n' "FusionPlay 配置已保存，但服务重启失败，请在应用中心手动启动一次并查看 $VAR/app.log。" > "$ERRLOG" 2>/dev/null || true
-    exit 1
-fi
-exit 0
+# Apply settings immediately to a running app. Respect an app left disabled.
+main="$(dirname "$0")/main"
+if /bin/bash "$main" status; then exec /bin/bash "$main" restart; fi
+exec /bin/bash "$main" prepare

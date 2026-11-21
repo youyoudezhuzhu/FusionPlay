@@ -371,6 +371,50 @@ fn serve_truncated(body: Vec<u8>, keep: usize) -> (u16, JoinHandle<()>) {
     (port, handle)
 }
 
+/// The first response closes early. The second must request the exact byte
+/// offset, even when the initial reply did not advertise Accept-Ranges.
+fn serve_resumable(body: Vec<u8>, keep: usize, same_object: bool) -> (u16, JoinHandle<()>) {
+    let listener = listen();
+    listener.set_nonblocking(true).unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let server = thread::spawn(move || {
+        let accept = || {
+            let start = Instant::now();
+            loop {
+                match listener.accept() {
+                    Ok((stream, _)) => return stream,
+                    Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                        assert!(start.elapsed() < Duration::from_secs(8), "no HTTP request");
+                        thread::sleep(Duration::from_millis(5));
+                    }
+                    Err(error) => panic!("accept: {error}"),
+                }
+            }
+        };
+        let length = body.len();
+        {
+            let mut stream = accept();
+            read_request(&stream);
+            write!(
+                stream,
+                "HTTP/1.1 200 OK\r\nContent-Type: audio/wav\r\nContent-Length: {length}\r\nETag: \"audio1\"\r\nConnection: close\r\n\r\n"
+            ).unwrap();
+            stream.write_all(&body[..keep]).unwrap();
+        }
+        let mut stream = accept();
+        let request = read_request(&stream);
+        assert!(String::from_utf8_lossy(&request).contains(&format!("Range: bytes={keep}-")));
+        let tag = if same_object { "audio1" } else { "audio2" };
+        write!(
+            stream,
+            "HTTP/1.1 206 Partial Content\r\nContent-Range: bytes {keep}-{}/{length}\r\nContent-Length: {}\r\nETag: \"{tag}\"\r\nConnection: close\r\n\r\n",
+            length - 1, length - keep
+        ).unwrap();
+        let _ = stream.write_all(&body[keep..]);
+    });
+    (port, server)
+}
+
 /// Accepts the request and never answers (until the test drops the listener).
 fn serve_stall(hold: Duration) -> (u16, JoinHandle<()>) {
     let listener = listen();
@@ -636,9 +680,19 @@ fn content_length_wav_plays_as_48k_stereo_and_releases_arbiter() {
     let wav = wav_bytes(44_100, 2, 1.5);
     let (port, server) = serve_content_length(wav, "audio/wav");
 
-    harness
-        .player
-        .play_uri(&format!("http://127.0.0.1:{port}/media/a.wav"))
+    let receiver = play_in_background(
+        Arc::clone(&harness.player),
+        format!("http://127.0.0.1:{port}/media/a.wav"),
+    );
+    assert!(wait_for(|| harness.backend.frames() > 0, Duration::from_secs(5)));
+    let first_frames = harness.backend.frames();
+    assert!(
+        first_frames <= 12_000,
+        "fast HTTP sent {first_frames} frames before the sink could play them"
+    );
+    receiver
+        .recv_timeout(Duration::from_secs(5))
+        .expect("content-length WAV should finish")
         .expect("content-length WAV should play");
     server.join().unwrap();
 
@@ -646,7 +700,7 @@ fn content_length_wav_plays_as_48k_stereo_and_releases_arbiter() {
     expect_frames(frames, 1.5 * 48_000.0);
     harness.backend.assert_48k_stereo();
     assert!(harness.backend.peak() > 0.05, "decoded audio must not be silent");
-    assert!(harness.backend.flushes() >= 1, "engine flush must run at end of track");
+    assert_eq!(harness.backend.flushes(), 0, "natural EOF must let the device play the tail");
 
     let state = harness.state.snapshot();
     assert_eq!(state.dlna.state, "idle", "detail: {}", state.dlna.detail);
@@ -681,6 +735,11 @@ fn content_length_wav_plays_as_48k_stereo_and_releases_arbiter() {
     let stats = harness.player.stats().expect("stats are recorded");
     assert!(stats.finished);
     assert!(stats.decoded_frames > 0 && stats.output_frames > 0);
+    assert!(
+        stats.elapsed >= Duration::from_millis(1_450),
+        "fast HTTP WAV must take its audio duration to play, got {:?}",
+        stats.elapsed
+    );
     assert!(stats.bytes_read > 0);
     assert!(stats.error.is_none());
 }
@@ -852,6 +911,30 @@ fn https_network_errors_empty_hls_and_video_are_rejected_explicitly() {
 }
 
 #[test]
+fn premature_eof_resumes_exactly_once_without_joining_a_changed_object() {
+    for same_object in [true, false] {
+        let harness = harness();
+        let wav = wav_bytes(48_000, 2, 1.0);
+        let (port, server) = serve_resumable(wav, 72_032, same_object);
+        let result = harness.player.play_uri(&format!(
+            "http://127.0.0.1:{port}/network.wav?token=temporary-signature"
+        ));
+        server.join().unwrap();
+        if same_object {
+            result.expect("matching 206 must resume the same stream");
+            expect_frames(harness.backend.frames(), 48_000.0);
+            assert!(harness.state.snapshot().errors.is_empty());
+        } else {
+            result.expect_err("a changed object must never be spliced into PCM");
+            let errors = harness.state.snapshot().errors;
+            assert_eq!(errors.len(), 1);
+            assert!(errors[0].contains("Content-Length"));
+            assert!(!errors[0].contains("temporary-signature"));
+        }
+    }
+}
+
+#[test]
 fn truncated_download_is_an_explicit_error() {
     let harness = harness();
     let wav = wav_bytes(44_100, 2, 1.5);
@@ -960,6 +1043,13 @@ fn stop_releases_lease_and_stops_feeding_engine() {
         wait_for(|| harness.backend.frames() > 4_800, Duration::from_secs(10)),
         "playback never produced audio"
     );
+    harness.player.set_paused(true);
+    thread::sleep(Duration::from_millis(75));
+    let paused_frames = harness.backend.frames();
+    thread::sleep(Duration::from_millis(100));
+    assert_eq!(harness.backend.frames(), paused_frames, "paused decode still feeding PCM");
+    harness.player.set_paused(false);
+    assert!(wait_for(|| harness.backend.frames() > paused_frames, Duration::from_secs(5)));
     harness.player.stop();
 
     let result = receiver
@@ -990,21 +1080,29 @@ fn flv_aac_audio_plays_from_disk() {
     let harness = harness();
     let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/data/sine_aac.flv");
     let uri = format!("file://{}", path.display());
-    let track = DlnaTrack {
-        uri: &uri,
-        media_kind: "audio",
-        content_type: Some("video/flv"),
-        upnp_class: Some("object.item.videoItem"),
-        ..DlnaTrack::default()
-    };
+    let event = serde_json::json!({
+        "url": uri, "media_kind": "audio", "content_type": "video/flv",
+        "upnp_class": "object.item.videoItem", "title": "Overture",
+        "artwork_url": "https://example.test/cover.jpg"
+    });
+    let track = serde::Deserialize::deserialize(&event).unwrap();
     harness
         .player
         .play_track(&track)
         .expect("FLV AAC audio playback should work");
 
     assert!(harness.backend.frames() > 20_000, "no FLV audio reached the engine");
+    let stats = harness.player.stats().unwrap();
+    let pcm_duration = Duration::from_secs_f64(stats.output_frames as f64 / 48_000.0);
+    assert!(
+        stats.elapsed + Duration::from_millis(50) >= pcm_duration,
+        "FLV decoded in {:?} but contains {pcm_duration:?} of audio",
+        stats.elapsed
+    );
     harness.backend.assert_48k_stereo();
     let state = harness.state.snapshot();
+    assert_eq!(state.media.title.as_deref(), Some("Overture"));
+    assert_eq!(state.media.cover_url.as_deref(), Some("https://example.test/cover.jpg"));
     assert!(state.last_error.is_none(), "unexpected error: {:?}", state.last_error);
     assert_eq!(harness.arbiter.current(), None);
 }

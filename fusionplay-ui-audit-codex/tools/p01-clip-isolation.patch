@@ -1,0 +1,20 @@
+diff --git a/flutter/third_party/liquid_glass_widgets/lib/widgets/shared/lightweight_liquid_glass.dart b/flutter/third_party/liquid_glass_widgets/lib/widgets/shared/lightweight_liquid_glass.dart
+index 205a638..3ee7acf 100644
+--- a/flutter/third_party/liquid_glass_widgets/lib/widgets/shared/lightweight_liquid_glass.dart
++++ b/flutter/third_party/liquid_glass_widgets/lib/widgets/shared/lightweight_liquid_glass.dart
+@@ -767,6 +767,7 @@ class _RenderLightweightGlass extends RenderProxyBox {
+         _settings.effectiveSaturation,
+       );
+ 
++      context.pushClipRect(true, offset, Offset.zero & size, (context, offset) {
+       context.pushLayer(
+         BackdropFilterLayer(filter: filter),
+         (context, offset) {
+@@ -774,6 +775,7 @@ class _RenderLightweightGlass extends RenderProxyBox {
+         },
+         offset,
+       );
++      });
+     } else {
+       _paintGlassContent(context, offset);
+     }

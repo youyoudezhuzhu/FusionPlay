@@ -11,10 +11,15 @@ import 'liquid_glass.dart';
 Future<void> runUpdateFlow({
   required BuildContext context,
   required Future<UpdateCheckResult> Function() onCheckUpdate,
-  required Future<UpdateInstallResult> Function() onInstallUpdate,
+  DownloadUpdate? onDownloadUpdate,
+  InstallUpdate? onInstallUpdate,
+  SaveUpdate? saveUpdate,
   ValueChanged<bool>? onCheckingChanged,
   ValueChanged<bool>? onDownloadingChanged,
 }) async {
+  assert(
+    saveUpdate != null || (onDownloadUpdate != null && onInstallUpdate != null),
+  );
   onCheckingChanged?.call(true);
   UpdateCheckResult? result;
   try {
@@ -33,11 +38,12 @@ Future<void> runUpdateFlow({
   }
   switch (result.status) {
     case UpdateCheckStatus.available:
-      final install = await showAvailableUpdateDialog(context, result);
-      if (!context.mounted || !install) return;
-      await _downloadAndInstall(
+      await showAvailableUpdateDialog(
         context,
-        onInstallUpdate,
+        result,
+        download: onDownloadUpdate,
+        install: onInstallUpdate,
+        saveUpdate: saveUpdate,
         onDownloadingChanged: onDownloadingChanged,
       );
     case UpdateCheckStatus.upToDate:
@@ -46,41 +52,6 @@ Future<void> runUpdateFlow({
       await showUpdateMessage(context, '当前无法检查更新', result.message);
     case UpdateCheckStatus.error:
       await showUpdateMessage(context, '检查更新失败', result.message ?? '请稍后重试');
-  }
-}
-
-Future<void> _downloadAndInstall(
-  BuildContext context,
-  Future<UpdateInstallResult> Function() onInstall, {
-  ValueChanged<bool>? onDownloadingChanged,
-}) async {
-  onDownloadingChanged?.call(true);
-  UpdateInstallResult? result;
-  try {
-    result = await showBusyDialog<UpdateInstallResult>(
-      context: context,
-      message: '正在下载更新…',
-      task: onInstall,
-    );
-  } finally {
-    onDownloadingChanged?.call(false);
-  }
-  if (!context.mounted) return;
-  if (result == null) {
-    await showUpdateMessage(context, '下载更新失败', '请稍后重试');
-    return;
-  }
-  switch (result.status) {
-    case UpdateInstallStatus.started:
-      await showUpdateMessage(context, '安装器已打开', '请在系统安装界面完成更新。');
-    case UpdateInstallStatus.permissionRequired:
-      await showUpdateMessage(
-        context,
-        '需要安装权限',
-        '请在系统设置中允许「FusionPlay」安装未知应用后重试。',
-      );
-    case UpdateInstallStatus.error:
-      await showUpdateMessage(context, '下载更新失败', result.message ?? '请稍后重试');
   }
 }
 
@@ -97,71 +68,186 @@ Future<T?> showBusyDialog<T>({
   builder: (_) => UpdateProgressDialog<T>(message: message, task: task),
 );
 
-Future<bool> showAvailableUpdateDialog(
+Future<void> showAvailableUpdateDialog(
   BuildContext context,
-  UpdateCheckResult result,
-) async {
-  final version = result.versionName?.trim();
-  final title = version == null || version.isEmpty ? '发现新版本' : '发现新版本 $version';
-  final notes = result.notes?.trim();
-  final publishedAt = result.publishedAt?.trim();
-  final apkSize = result.apkSize;
-  final accepted = await showGlassDialog<bool>(
-    context: context,
-    dialogKey: const ValueKey('update-dialog'),
-    builder: (dialogContext) => Column(
-      mainAxisSize: MainAxisSize.min,
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        _GlassDialogTitle(title),
-        const SizedBox(height: 10),
-        if (publishedAt != null && publishedAt.isNotEmpty)
-          _updateDetail('发布时间：$publishedAt'),
-        if (apkSize != null && apkSize > 0)
-          _updateDetail('安装包大小：${_formatBytes(apkSize)}'),
-        if (notes != null && notes.isNotEmpty) ...[
-          if ((publishedAt != null && publishedAt.isNotEmpty) ||
-              (apkSize != null && apkSize > 0))
-            const SizedBox(height: 12),
+  UpdateCheckResult result, {
+  DownloadUpdate? download,
+  InstallUpdate? install,
+  SaveUpdate? saveUpdate,
+  ValueChanged<bool>? onDownloadingChanged,
+}) => showGlassDialog<void>(
+  context: context,
+  dialogKey: const ValueKey('update-dialog'),
+  barrierDismissible: false,
+  builder: (_) => _AvailableUpdate(
+    result: result,
+    download: download,
+    install: install,
+    saveUpdate: saveUpdate,
+    onDownloadingChanged: onDownloadingChanged,
+  ),
+);
+
+class _AvailableUpdate extends StatefulWidget {
+  const _AvailableUpdate({
+    required this.result,
+    required this.download,
+    required this.install,
+    this.saveUpdate,
+    this.onDownloadingChanged,
+  });
+  final UpdateCheckResult result;
+  final DownloadUpdate? download;
+  final InstallUpdate? install;
+  final SaveUpdate? saveUpdate;
+  final ValueChanged<bool>? onDownloadingChanged;
+
+  @override
+  State<_AvailableUpdate> createState() => _AvailableUpdateState();
+}
+
+class _AvailableUpdateState extends State<_AvailableUpdate> {
+  late bool ready = widget.saveUpdate == null && widget.result.downloaded;
+  bool busy = false;
+  int bytes = 0;
+  int total = 0;
+  String? message;
+  String? savedPath;
+
+  Future<void> _act() async {
+    if (busy) return;
+    setState(() {
+      busy = true;
+      message = null;
+    });
+    final downloading = !ready;
+    final onDownloadingChanged = widget.onDownloadingChanged;
+    try {
+      if (downloading) {
+        bytes = 0;
+        total = 0;
+        onDownloadingChanged?.call(true);
+        void progress(int received, int expected) {
+          if (!mounted) return;
+          setState(() {
+            bytes = received;
+            total = expected;
+          });
+        }
+
+        final save = widget.saveUpdate;
+        if (save != null) {
+          final path = await save(widget.result.releaseKey, progress);
+          if (path == null) return;
+          savedPath = path;
+        } else {
+          await widget.download!(widget.result.releaseKey, progress);
+        }
+        if (mounted) setState(() => ready = true);
+      } else {
+        final result = await widget.install!(widget.result.releaseKey);
+        if (!mounted) return;
+        setState(() {
+          if (result.status == UpdateInstallStatus.missing) ready = false;
+          message = switch (result.status) {
+            UpdateInstallStatus.started => '安装器已打开',
+            UpdateInstallStatus.permissionRequired =>
+              '请在系统设置中允许安装未知应用，返回后点击「安装」。',
+            _ => result.message ?? '启动安装器失败',
+          };
+        });
+      }
+    } catch (error) {
+      if (mounted) {
+        setState(
+          () =>
+              message = error is StateError ? error.message : error.toString(),
+        );
+      }
+    } finally {
+      if (downloading) onDownloadingChanged?.call(false);
+      if (mounted) setState(() => busy = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final result = widget.result;
+    final downloading = busy && !ready;
+    final expected = total > 0 ? total : result.apkSize ?? 0;
+    final fraction = expected > 0 ? (bytes / expected).clamp(0.0, 1.0) : null;
+    return PopScope(
+      canPop: !busy,
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          _GlassDialogTitle('发现新版本 ${result.versionName ?? ''}'.trim()),
+          const SizedBox(height: 10),
           Flexible(
             child: SingleChildScrollView(
-              child: Text(
-                notes,
-                style: const TextStyle(
-                  fontSize: 14,
-                  height: 1.5,
-                  color: Color(0xB8FFFFFF),
-                ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  if (savedPath != null)
+                    SelectableText('已保存到 $savedPath\n请从此位置手动运行安装程序。'),
+                  if (result.publishedAt?.isNotEmpty == true)
+                    _updateDetail('发布时间：${result.publishedAt}'),
+                  if ((result.apkSize ?? 0) > 0)
+                    _updateDetail('安装包大小：${_formatBytes(result.apkSize!)}'),
+                  const SizedBox(height: 6),
+                  Text(
+                    result.notes?.trim().isNotEmpty == true
+                        ? result.notes!.trim()
+                        : '本次更新未提供更新说明。',
+                  ),
+                ],
               ),
             ),
           ),
-        ] else
-          const Text(
-            '本次更新未提供更新说明。',
-            style: TextStyle(
-              fontSize: 14,
-              height: 1.5,
-              color: Color(0x8CFFFFFF),
+          const SizedBox(height: 12),
+          if (downloading || ready) ...[
+            LinearProgressIndicator(
+              value: ready ? 1.0 : fraction,
+              semanticsLabel: '下载进度',
             ),
-          ),
-        const SizedBox(height: 20),
-        _GlassDialogActions(
-          children: [
-            _GlassDialogButton(
-              label: '取消',
-              onPressed: () => Navigator.of(dialogContext).pop(false),
-            ),
-            _GlassDialogButton(
-              label: '下载并安装',
-              primary: true,
-              onPressed: () => Navigator.of(dialogContext).pop(true),
+            const SizedBox(height: 4),
+            _updateDetail(
+              ready
+                  ? '下载完成，安装包已校验'
+                  : fraction == 1.0
+                  ? '正在校验安装包…'
+                  : fraction == null
+                  ? '已下载 ${_formatBytes(bytes)}'
+                  : '已下载 ${(fraction * 100).floor()}%',
             ),
           ],
-        ),
-      ],
-    ),
-  );
-  return accepted ?? false;
+          if (message != null) Text(message!),
+          const SizedBox(height: 8),
+          _GlassDialogActions(
+            children: [
+              _GlassDialogButton(
+                label: ready ? '关闭' : '取消',
+                onPressed: busy ? null : () => Navigator.of(context).pop(),
+              ),
+              if (widget.saveUpdate == null || !ready)
+                _GlassDialogButton(
+                  label: ready
+                      ? '安装'
+                      : downloading
+                      ? '正在下载…'
+                      : widget.saveUpdate == null
+                      ? '下载更新'
+                      : '选择保存目录',
+                  primary: true,
+                  onPressed: busy ? null : _act,
+                ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
 }
 
 Widget _updateDetail(String text) => Padding(
@@ -251,7 +337,7 @@ class _GlassDialogButton extends StatelessWidget {
   });
 
   final String label;
-  final VoidCallback onPressed;
+  final VoidCallback? onPressed;
   final bool primary;
 
   @override

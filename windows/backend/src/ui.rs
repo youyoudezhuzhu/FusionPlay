@@ -186,6 +186,9 @@ impl UiSink for StdioUiSink {
     }
 
     fn log(&self, level: LogLevel, source: &str, message: &str) {
+        if !matches!(level, LogLevel::Info) {
+            crate::logging::append_line(&format!("{} [{source}] {message}", level.as_str()));
+        }
         self.send_event(&UiEvent::Log {
             timestamp: chrono_like_now(),
             level,
@@ -204,6 +207,7 @@ impl UiSink for StdioUiSink {
     }
 
     fn fatal(&self, message: &str, exit_code: i32) {
+        crate::logging::append_line(&format!("FATAL exit={exit_code} {message}"));
         self.send_event(&UiEvent::Fatal {
             message: message.to_owned(),
             exit_code,

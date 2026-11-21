@@ -176,7 +176,8 @@ pub fn export_diagnostics(
     std::fs::create_dir_all(&exports_dir)
         .map_err(|error| anyhow::anyhow!("无法创建导出目录 {}：{error}", exports_dir.display()))?;
     let timestamp = sanitise_for_file_name(&crate::ui::chrono_like_now());
-    let path = exports_dir.join(format!("FusionPlay-diagnostics-{timestamp}.txt"));
+    let nonce = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)?.as_nanos();
+    let path = exports_dir.join(format!("FusionPlay-diagnostics-{timestamp}-{nonce}.txt"));
 
     let mut report = String::new();
     let _ = writeln!(report, "FusionPlay diagnostics");
@@ -222,14 +223,25 @@ pub fn export_diagnostics(
         }
     }
     let _ = writeln!(report, "\n--- app state ---");
-    match serde_json::to_string_pretty(state) {
-        Ok(json) => {
-            let _ = writeln!(report, "{json}");
-        }
-        Err(error) => {
-            let _ = writeln!(report, "无法序列化应用状态：{error}");
-        }
-    }
+    let playback = &state.playback;
+    let summary = serde_json::json!({
+        "coreRunning": state.core_running, "receiverReady": state.receiver_ready,
+        "receiverName": state.receiver_name, "receiverPort": state.receiver_port,
+        "receiverDeviceId": state.receiver_device_id, "initialized": state.initialized,
+        "busy": state.busy, "selectedSource": state.selected_core_media_source,
+        "hasConnectedClient": state.connected_client.is_some(),
+        "activeSource": state.active_media_source, "lastError": state.last_error,
+        "protocol": playback.protocol, "positionMs": playback.position_ms,
+        "sourceEpoch": playback.source_epoch, "streamActive": playback.stream_active,
+        "titleLength": playback.title.as_ref().map(String::len),
+        "artistLength": playback.artist.as_ref().map(String::len),
+        "lyricsLength": playback.lyrics.as_ref().map(String::len),
+        "volumePercent": playback.volume_percent, "mediaKind": playback.media_kind,
+        "durationMs": playback.duration_ms, "playing": playback.is_playing,
+        "hasCover": playback.cover_art.is_some(), "hasLyrics": playback.lyrics.is_some(),
+        "hasMediaUrl": playback.media_url.is_some(), "remoteControl": state.remote_control,
+    });
+    let _ = writeln!(report, "{}", serde_json::to_string_pretty(&summary)?);
 
     let _ = writeln!(report, "\n--- log tail ({}) ---", log_file.display());
     match read_log_tail(log_file, 2000) {
@@ -244,21 +256,52 @@ pub fn export_diagnostics(
         }
     }
 
-    std::fs::write(&path, report)
+    if let Some(dir) = log_file.parent() {
+        for name in ["errors.log", "player.previous.log", "player.log"] {
+            if let Some(text) = read_log_tail(&dir.join(name), 500) {
+                let _ = writeln!(report, "\n--- {name} ---\n{text}");
+            }
+        }
+    }
+    std::fs::write(&path, crate::shared_logging::redact(&report).as_bytes())
         .map_err(|error| anyhow::anyhow!("无法写入诊断文件 {}：{error}", path.display()))?;
+    clean_exports(&exports_dir);
     tracing::info!("诊断包已导出：{}", path.display());
     Ok(path)
 }
 
 fn read_log_tail(log_file: &Path, max_lines: usize) -> Option<String> {
-    let bytes = std::fs::read(log_file).ok()?;
-    // Bounded read: only the last 4 MiB can contribute the log tail.
-    const MAX_BYTES: usize = 4 * 1024 * 1024;
-    let start = bytes.len().saturating_sub(MAX_BYTES);
-    let text = String::from_utf8_lossy(&bytes[start..]);
+    let bytes = crate::shared_logging::read_tail(log_file, crate::shared_logging::MIB).ok()?;
+    let text = String::from_utf8_lossy(&bytes);
     let mut lines: Vec<&str> = text.lines().rev().take(max_lines).collect();
     lines.reverse();
     Some(lines.join("\n"))
+}
+
+pub(crate) fn clean_exports(dir: &Path) {
+    use std::time::{Duration, SystemTime};
+    let Ok(entries) = std::fs::read_dir(dir) else { return };
+    let mut files = Vec::new();
+    for entry in entries.flatten() {
+        let name = entry.file_name();
+        let Some(stamp) = name.to_str().and_then(|n| n.strip_prefix("FusionPlay-diagnostics-"))
+            .and_then(|s| s.strip_suffix(".txt")) else { continue };
+        if stamp.is_empty() || !stamp.bytes().all(|b| b.is_ascii_digit() || matches!(b, b'-' | b'T' | b'Z')) {
+            continue;
+        }
+        let Ok(meta) = entry.path().symlink_metadata() else { continue };
+        if meta.is_file() {
+            files.push((meta.modified().unwrap_or(SystemTime::UNIX_EPOCH), entry.path(), meta.len()));
+        }
+    }
+    files.sort_unstable_by(|a,b| b.cmp(a));
+    let mut bytes = 0;
+    for (i, (modified, path, size)) in files.into_iter().enumerate() {
+        if i >= 3 || bytes + size > 8 * crate::shared_logging::MIB ||
+            modified.elapsed().is_ok_and(|age| age >= Duration::from_secs(3 * 86400)) {
+            let _ = std::fs::remove_file(path);
+        } else { bytes += size; }
+    }
 }
 
 fn sanitise_for_file_name(value: &str) -> String {
@@ -890,6 +933,22 @@ mod tests {
         .expect("export");
         let report = std::fs::read_to_string(path).unwrap();
         assert!(report.contains("(日志文件不可用)"));
+    }
+
+    #[test]
+    fn export_cache_enforces_age_count_and_owned_names() {
+        use std::{fs::File, time::{Duration, SystemTime}};
+        let dir = tempfile::tempdir().unwrap();
+        let old = dir.path().join("FusionPlay-diagnostics-2026-10-01T00-00-00Z.txt");
+        File::create(&old).unwrap().set_modified(SystemTime::now() - Duration::from_secs(4 * 86400)).unwrap();
+        std::fs::write(dir.path().join("my-notes.txt"), "keep").unwrap();
+        for n in 0..6 {
+            std::fs::write(dir.path().join(format!("FusionPlay-diagnostics-{n}.txt")), "test").unwrap();
+        }
+        clean_exports(dir.path());
+        assert!(!old.exists());
+        assert!(dir.path().join("my-notes.txt").exists());
+        assert_eq!(dir.path().read_dir().unwrap().count(), 4);
     }
 
     #[test]

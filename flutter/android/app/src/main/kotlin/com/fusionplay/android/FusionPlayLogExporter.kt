@@ -26,14 +26,21 @@ internal object FusionPlayLogExporter {
     private const val ARCHIVE_RETENTION_MS = 3L * 24L * 60L * 60L * 1_000L
     private const val MAXIMUM_LOGCAT_LINES = 4_000
 
+    private const val MAX_ARCHIVE_BYTES = 48L * 1024 * 1024
+    private const val MAX_ARCHIVES = 3
+
+    @Synchronized
+    fun maintain(context: Context) = cleanDirectory(File(context.cacheDir, EXPORT_DIRECTORY))
+
+    @Synchronized
     fun createShareIntent(
         context: Context,
         logger: FusionPlayDiagnosticLogger,
     ): Intent {
         val exportRoot = File(context.cacheDir, EXPORT_DIRECTORY).apply { mkdirs() }
-        removeExpiredArchives(exportRoot)
+        cleanDirectory(exportRoot)
 
-        val timestamp = archiveTimestamp()
+        val timestamp = archiveTimestamp() + "-" + java.util.UUID.randomUUID()
         val staging = File(exportRoot, "staging-$timestamp-${Process.myPid()}")
         val archive = File(exportRoot, "FusionPlay-logs-$timestamp.zip")
         check(staging.mkdirs()) { "无法创建日志导出暂存目录。" }
@@ -45,7 +52,10 @@ internal object FusionPlayLogExporter {
             )
             writeServiceLogs(snapshots.map { it.toFile() }, File(staging, "services"))
             writeLogcat(logger, File(staging, "android-logcat.txt"))
-            zipDirectory(staging, archive)
+            val partial = File(staging, "archive.tmp")
+            zipDirectory(staging, partial)
+            check(partial.renameTo(archive)) { "无法完成日志归档。" }
+            cleanDirectory(exportRoot, archive)
         } finally {
             staging.deleteRecursively()
         }
@@ -149,8 +159,14 @@ internal object FusionPlayLogExporter {
                 .start()
             destination.bufferedWriter(Charsets.UTF_8).use { writer ->
                 process.inputStream.bufferedReader(Charsets.UTF_8).useLines { lines ->
-                    lines.take(MAXIMUM_LOGCAT_LINES).forEach { line ->
-                        writer.appendLine(logger.sanitizeLineForExport(line))
+                    var remaining = 1024 * 1024
+                    lines.forEachIndexed { index, line ->
+                        if (index < MAXIMUM_LOGCAT_LINES && remaining > 0) {
+                            val cleaned = logger.sanitizeLineForExport(line)
+                            val size = cleaned.toByteArray(Charsets.UTF_8).size + 1
+                            if (size <= remaining) writer.appendLine(cleaned)
+                            remaining -= size
+                        }
                     }
                 }
             }
@@ -167,7 +183,7 @@ internal object FusionPlayLogExporter {
     private fun zipDirectory(source: File, archive: File) {
         ZipOutputStream(BufferedOutputStream(FileOutputStream(archive))).use { output ->
             source.walkTopDown()
-                .filter(File::isFile)
+                .filter { it.isFile && it != archive }
                 .sortedBy { it.relativeTo(source).invariantSeparatorsPath }
                 .forEach { file ->
                     val entryName = file.relativeTo(source).invariantSeparatorsPath
@@ -180,16 +196,23 @@ internal object FusionPlayLogExporter {
         }
     }
 
-    private fun removeExpiredArchives(directory: File) {
-        val cutoff = System.currentTimeMillis() - ARCHIVE_RETENTION_MS
-        directory.listFiles().orEmpty()
-            .filter { file ->
-                file.isFile &&
-                    file.name.startsWith("FusionPlay-logs-") &&
-                    file.name.endsWith(".zip") &&
-                    file.lastModified() < cutoff
+    internal fun cleanDirectory(directory: File, newest: File? = null, now: Long = System.currentTimeMillis()) {
+        val files = directory.listFiles().orEmpty()
+        // createShareIntent and maintenance share a lock. A staged directory
+        // left by a terminated process is never needed by a shared content URI.
+        files.filter { it.isDirectory && it.name.startsWith("staging-") }
+            .forEach { it.deleteRecursively() }
+        var retained = 0L
+        val cutoff = now - ARCHIVE_RETENTION_MS
+        files.filter { it.isFile && it.name.startsWith("FusionPlay-logs-") && it.extension == "zip" }
+            .sortedWith(compareByDescending<File> { it == newest }.thenByDescending { it.lastModified() })
+            .forEachIndexed { index, f ->
+                if (f != newest && (index >= MAX_ARCHIVES || f.lastModified() < cutoff || retained + f.length() > MAX_ARCHIVE_BYTES)) {
+                    f.delete()
+                } else {
+                    retained += f.length()
+                }
             }
-            .forEach { file -> file.delete() }
     }
 
     private fun archiveTimestamp(): String =

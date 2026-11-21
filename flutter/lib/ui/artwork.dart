@@ -4,6 +4,7 @@ import 'dart:io';
 import 'dart:math' as math;
 import 'dart:ui';
 
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter_svg/flutter_svg.dart';
 
@@ -11,7 +12,8 @@ import '../theme/fusion_theme.dart';
 
 const _artworkProviderCacheLimit = 4;
 const _artworkDecodeSize = 1024;
-const _maximumDataArtworkCharacters = 12 * 1024 * 1024;
+// Matches the Android MiPlay reducer’s maximum encoded artwork length.
+const _maximumDataArtworkCharacters = 22 * 1024 * 1024;
 const artworkClearGracePeriod = Duration(milliseconds: 1200);
 final _artworkProviderCache = <String, ImageProvider<Object>>{};
 
@@ -55,6 +57,45 @@ ImageProvider<Object>? artworkProvider(String? source) {
   } catch (_) {
     return null;
   }
+}
+
+class PlayerBackdrop extends StatelessWidget {
+  const PlayerBackdrop({
+    super.key,
+    required this.source,
+    required this.hasPlayback,
+  });
+
+  final String? source;
+  final bool hasPlayback;
+
+  @override
+  Widget build(BuildContext context) => Stack(
+    fit: StackFit.expand,
+    children: [
+      ArtworkBackground(source: source, hasPlayback: hasPlayback),
+      DecoratedBox(
+        decoration: BoxDecoration(
+          gradient: source?.trim().isNotEmpty == true
+              ? const RadialGradient(
+                  center: Alignment(.12, -.05),
+                  radius: 1.05,
+                  colors: [
+                    Color(0x96121728),
+                    Color(0x31101725),
+                    Color(0x60101725),
+                  ],
+                  stops: [0, .79, 1],
+                )
+              : const LinearGradient(
+                  begin: Alignment.topLeft,
+                  end: Alignment.bottomRight,
+                  colors: [Color(0xCC101316), Color(0xF0101316)],
+                ),
+        ),
+      ),
+    ],
+  );
 }
 
 class ArtworkBackground extends StatelessWidget {
@@ -138,7 +179,12 @@ class _ArtworkBackgroundLayer extends StatelessWidget {
         !(MediaQuery.maybeOf(context)?.disableAnimations ?? false);
     final artworkImage = provider == null
         ? null
-        : Image(image: provider!, fit: BoxFit.cover, gaplessPlayback: true);
+        : Image(
+            image: provider!,
+            fit: advancedEffectsEnabled ? BoxFit.fill : BoxFit.cover,
+            errorBuilder: kIsWeb ? (_, _, _) => const SizedBox.expand() : null,
+            gaplessPlayback: true,
+          );
     return DecoratedBox(
       decoration: BoxDecoration(
         color: provider == null && !hasPlayback
@@ -161,13 +207,24 @@ class _ArtworkBackgroundLayer extends StatelessWidget {
         children: [
           if (artworkImage != null)
             advancedEffectsEnabled
-                ? ImageFiltered(
-                    imageFilter: ImageFilter.blur(
-                      sigmaX: 76,
-                      sigmaY: 76,
-                      tileMode: TileMode.clamp,
-                    ),
-                    child: artworkImage,
+                ? LayoutBuilder(
+                    builder: (context, bounds) {
+                      final shortSide = bounds.biggest.shortestSide;
+                      final blur = (shortSide * .061)
+                          .clamp(16.0, 65.0)
+                          .toDouble();
+                      // Spread the whole artwork palette across the viewport.
+                      // Reflect only the backdrop so its brightest features
+                      // need not sit directly behind their sharp equivalents.
+                      return ImageFiltered(
+                        imageFilter: ImageFilter.blur(
+                          sigmaX: blur * 1.45,
+                          sigmaY: blur,
+                          tileMode: TileMode.clamp,
+                        ),
+                        child: Transform.flip(flipX: true, child: artworkImage),
+                      );
+                    },
                   )
                 : artworkImage,
           if (provider != null)
@@ -185,8 +242,6 @@ class _ArtworkBackgroundLayer extends StatelessWidget {
                 ),
               ),
             ),
-          if (provider != null)
-            const ColoredBox(color: Color.fromRGBO(255, 255, 255, .15)),
         ],
       ),
     );
@@ -370,8 +425,21 @@ class _ArtworkCardState extends State<ArtworkCard>
                     image: provider,
                     fit: BoxFit.cover,
                     gaplessPlayback: true,
-                    errorBuilder: (_, _, _) =>
-                        const ColoredBox(color: Color(0x1A1A1A1A)),
+                    errorBuilder: (_, _, _) {
+                      // A sender can host its cover without granting CanvasKit CORS access.
+                      final uri = Uri.tryParse(visibleSource ?? '');
+                      if (kIsWeb &&
+                          (uri?.scheme == 'https' || uri?.scheme == 'http')) {
+                        return Image.network(
+                          uri.toString(),
+                          fit: BoxFit.cover,
+                          webHtmlElementStrategy: WebHtmlElementStrategy.prefer,
+                          errorBuilder: (_, _, _) =>
+                              const ColoredBox(color: Color(0x1A1A1A1A)),
+                        );
+                      }
+                      return const ColoredBox(color: Color(0x1A1A1A1A));
+                    },
                   ),
           ),
         ),

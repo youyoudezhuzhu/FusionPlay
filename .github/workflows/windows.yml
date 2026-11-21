@@ -2,7 +2,7 @@ name: Build Windows
 
 # 触发：
 #   - workflow_dispatch：手动出包，可选输入 version（默认读仓库根目录 VERSION）
-#   - push tags `windows-v*`：打 tag 时出包并附到 GitHub Release
+#   - workflow_call：为统一 Release 构建 Windows 安装程序和便携包
 #
 # 产物（dist/）：
 #   - FusionPlay-Windows-<ver>-x64.zip（zip 根目录直接是 FusionPlay.exe /
@@ -17,13 +17,14 @@ on:
         description: 'Version to build (MAJOR.MINOR.PATCH); empty = repository VERSION'
         required: false
         type: string
-  push:
-    tags:
-      - 'windows-v*'
+  workflow_call:
+    inputs:
+      version:
+        type: string
+        required: false
 
-# softprops/action-gh-release 需要写权限；默认 GITHUB_TOKEN 只读，不加会 403。
 permissions:
-  contents: write
+  contents: read
 
 env:
   CARGO_TERM_COLOR: always
@@ -87,10 +88,10 @@ jobs:
       - name: Validate release tag
         if: startsWith(github.ref, 'refs/tags/')
         run: |
-          $tagVersion = '${{ github.ref_name }}' -replace '^windows-v', ''
+          $tagVersion = '${{ github.ref_name }}' -replace '^v', ''
           $version = '${{ steps.version.outputs.version }}'
           if ($tagVersion -ne $version) {
-            throw "Tag '${{ github.ref_name }}' does not match VERSION '$version'; expected tag 'windows-v$version'."
+            throw "Tag '${{ github.ref_name }}' does not match VERSION '$version'; expected tag 'v$version'."
           }
           Write-Host "Tag ${{ github.ref_name }} matches VERSION $version."
 
@@ -336,11 +337,7 @@ jobs:
       # Flutter Windows application
       # ---------------------------------------------------------------------
       - name: Set up Flutter
-        uses: subosito/flutter-action@v2
-        with:
-          flutter-version: '3.32.8'
-          channel: stable
-          cache: true
+        uses: ./.github/actions/setup-flutter
 
       - name: Resolve Flutter dependencies
         working-directory: flutter
@@ -520,16 +517,3 @@ jobs:
             dist/FusionPlay-Setup-*-x64.exe.sha256
           if-no-files-found: error
           retention-days: 30
-
-      - name: Attach artifacts to GitHub Release (tag pushes)
-        if: startsWith(github.ref, 'refs/tags/')
-        uses: softprops/action-gh-release@v2
-        with:
-          name: FusionPlay Windows ${{ steps.version.outputs.version }}
-          tag_name: ${{ github.ref_name }}
-          generate_release_notes: true
-          files: |
-            dist/FusionPlay-Windows-*-x64.zip
-            dist/FusionPlay-Windows-*-x64.zip.sha256
-            dist/FusionPlay-Setup-*-x64.exe
-            dist/FusionPlay-Setup-*-x64.exe.sha256

@@ -123,6 +123,9 @@ pub struct PlaybackView {
     pub album: Option<String>,
     #[serde(default)]
     pub cover_art: Option<String>,
+    /// Raw receiver lyrics; the shared Flutter model decodes the sender format.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lyrics: Option<String>,
     #[serde(default)]
     pub media_url: Option<String>,
     #[serde(default)]

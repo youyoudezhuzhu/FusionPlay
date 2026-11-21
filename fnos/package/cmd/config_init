@@ -1,7 +1,2 @@
 #!/bin/bash
-# config_init — 应用中心保存设置前调用。这里只确保数据目录存在，保持幂等。
-set -u
-VAR="${TRIM_PKGVAR:-/vol1/@appdata/fusionplay-fnos}"
-PKGHOME="${TRIM_PKGHOME:-/vol1/@apphome/fusionplay-fnos}"
-mkdir -p "$VAR" "$PKGHOME" 2>/dev/null || true
 exit 0

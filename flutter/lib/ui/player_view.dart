@@ -10,7 +10,7 @@ import 'animated_press_scale.dart';
 import 'artwork.dart';
 import 'floating_album_art.dart';
 import 'g2_shape.dart';
-import 'package:liquid_glass_widgets/liquid_glass_widgets.dart' as lg;
+import 'liquid_glass.dart';
 
 import 'lyrics_view.dart';
 import 'remote_focus.dart';
@@ -50,6 +50,7 @@ class PlayerView extends StatefulWidget {
     required this.onPlayback,
     required this.onSeek,
     required this.onVolume,
+    this.volumeEnabled = true,
     this.artworkSource,
     this.artworkIdentity,
     this.progressFocusNode,
@@ -67,6 +68,7 @@ class PlayerView extends StatefulWidget {
   final ValueChanged<PlaybackCommand> onPlayback;
   final ValueChanged<int> onSeek;
   final ValueChanged<int> onVolume;
+  final bool volumeEnabled;
   final String? artworkSource;
   final String? artworkIdentity;
   final FocusNode? progressFocusNode;
@@ -132,15 +134,26 @@ class _PlayerViewState extends State<PlayerView> {
   // changes), so interpolate between them with the local monotonic wall clock.
   Timer? _progressTicker;
   int _progressAnchorMs = 0;
-  DateTime _progressAnchorAt = DateTime.now();
+  final Stopwatch _progressElapsed =
+      WidgetsBinding.instance.samplingClock.stopwatch()..start();
   int _displayedPositionMs = 0;
-  int _lastStatePositionMs = 0;
-  bool _lastPlaying = false;
+  static const _progressToleranceMs = 1500;
   // NetEase (and some other AirPlay senders) put the current lyric line in the
   // now-playing *title* field and the song/composer in artist. Detect a rapidly
   // changing AirPlay title and treat the captured titles as lyrics.
   final List<_AirPlayTitleCapture> _airPlayTitleCaptures = [];
   bool _airPlayTitleLyrics = false;
+  static const _airPlayArtistSeparators = [
+    ' - ',
+    ' – ',
+    ' — ',
+    ' / ',
+    '｜',
+    '|',
+    '·',
+  ];
+  String? _lastAirPlayId;
+  int? _lastAirPlayEpoch;
   String? _lastAirPlayTitle;
   String? _lastAirPlayArtist;
   String? _lastAirPlayAlbum;
@@ -180,10 +193,6 @@ class _PlayerViewState extends State<PlayerView> {
         playback.durationMs != null;
   }
 
-  bool get _lyricsSupported =>
-      lyricsAvailabilityForProtocol(widget.state.playback.protocol) ==
-      LyricsAvailability.supported;
-
   bool _hasDisplayableLyricsFor(PlaybackSnapshot playback) {
     if (_isAirPlayProtocol(playback) && _airPlayTitleLyrics) return true;
     final lyrics = playback.lyrics;
@@ -197,7 +206,11 @@ class _PlayerViewState extends State<PlayerView> {
       (playback.protocol ?? '').toLowerCase().contains('airplay');
 
   void _observeAirPlayTitle(PlaybackSnapshot playback) {
-    if (!_isAirPlayProtocol(playback)) {
+    final artistField = playback.artist ?? '';
+    final titleSender = _airPlayArtistSeparators.any(artistField.contains);
+    if (!_isAirPlayProtocol(playback) ||
+        playback.lyrics?.hasLyrics == true ||
+        !titleSender) {
       _airPlayTitleCaptures.clear();
       _airPlayTitleLyrics = false;
       _lastAirPlayTitle = null;
@@ -207,7 +220,12 @@ class _PlayerViewState extends State<PlayerView> {
     }
     final artist = playback.artist?.trim();
     final album = playback.album?.trim();
-    if (artist != _lastAirPlayArtist || album != _lastAirPlayAlbum) {
+    if (artist != _lastAirPlayArtist ||
+        album != _lastAirPlayAlbum ||
+        playback.trackIdentity != _lastAirPlayId ||
+        playback.sourceEpoch != _lastAirPlayEpoch) {
+      _lastAirPlayId = playback.trackIdentity;
+      _lastAirPlayEpoch = playback.sourceEpoch;
       // New track: restart the title/lyrics history.
       _airPlayTitleCaptures.clear();
       _airPlayTitleLyrics = false;
@@ -236,7 +254,10 @@ class _PlayerViewState extends State<PlayerView> {
   /// Keep a short bounded history keyed by the current playback session; never
   /// invent future lines or word timestamps.
   void _observeStreamLyrics(PlaybackSnapshot playback) {
-    final session = _trackKeyOf(playback);
+    // An AirPlay epoch may contain several songs, even without a DMAP item ID.
+    final session = playback.lyrics?.origin == 'airplay_title'
+        ? '${_trackKeyOf(playback)}\u001f${playback.artist}\u001f${playback.title}'
+        : _trackKeyOf(playback);
     if (_streamSessionKey != session) {
       _streamSessionKey = session;
       _streamLyrics.clear();
@@ -343,7 +364,7 @@ class _PlayerViewState extends State<PlayerView> {
       final album = playback.album?.trim();
       return (album != null && album.isNotEmpty ? album : 'AirPlay', null);
     }
-    for (final separator in const [' - ', ' – ', ' — ', ' / ', '｜', '|', '·']) {
+    for (final separator in _airPlayArtistSeparators) {
       final index = artist.indexOf(separator);
       if (index > 0 && index < artist.length - separator.length) {
         final title = artist.substring(0, index).trim();
@@ -356,13 +377,12 @@ class _PlayerViewState extends State<PlayerView> {
     return (artist, null);
   }
 
-  bool get _lyricsToggleVisible => _lyricsSupported && _hasDisplayableLyrics;
+  bool get _lyricsToggleVisible => _hasDisplayableLyrics;
 
-  /// Two-column lyrics layout: only when the channel supports lyrics and the
+  /// Two-column lyrics layout: only when lyrics are available and the
   /// user has not hidden them. While loading we keep the two-column shimmer
   /// placeholder even if the user had hidden lyrics before.
   bool get _showLyricsLayout =>
-      _lyricsSupported &&
       _hasDisplayableLyrics &&
       (widget.state.playback.lyricsLoading || _lyricsVisible);
 
@@ -375,11 +395,11 @@ class _PlayerViewState extends State<PlayerView> {
         '\u001f${playback.artist ?? ''}\u001f${playback.mediaUrl ?? ''}';
   }
 
-  bool get _playVisible => _hasPlayback && _controls.playPause;
+  bool get _playEnabled => _hasPlayback && _controls.playPause;
 
-  bool get _previousVisible => _hasPlayback && _controls.previous;
+  bool get _previousEnabled => _hasPlayback && _controls.previous;
 
-  bool get _nextVisible => _hasPlayback && _controls.next;
+  bool get _nextEnabled => _hasPlayback && _controls.next;
 
   bool get _seekable => _durationMs > 0 && _controls.seek;
 
@@ -392,10 +412,7 @@ class _PlayerViewState extends State<PlayerView> {
   void initState() {
     super.initState();
     _lastTrackKey = _trackKeyOf(widget.state.playback);
-    _lastStatePositionMs = widget.state.playback.positionMs;
-    _displayedPositionMs = _lastStatePositionMs;
-    _progressAnchorMs = _lastStatePositionMs;
-    _lastPlaying = widget.state.playback.isPlaying;
+    _anchorProgress(widget.state.playback.positionMs);
     _observeAirPlayTitle(widget.state.playback);
     _observeStreamLyrics(widget.state.playback);
     _progressTicker = Timer.periodic(
@@ -470,62 +487,90 @@ class _PlayerViewState extends State<PlayerView> {
       artworkFlipDirectionPending = false;
       artworkFlipDirectionTimer?.cancel();
     }
-    if (!seeking) {
-      final pending = pendingSeekTargetMs;
-      if (pending == null ||
-          (widget.state.playback.positionMs - pending).abs() <= 1500) {
-        pendingSeekTimer?.cancel();
-        pendingSeekTargetMs = null;
-        seekPositionMs = widget.state.playback.positionMs.toDouble();
-      } else {
-        seekPositionMs = pending.toDouble();
-      }
-    }
-    final playing = widget.state.playback.isPlaying;
-    if (!playing || playing != _lastPlaying) {
-      _syncProgressAnchor(force: true);
-    } else {
-      _syncProgressAnchor();
-    }
-    _lastPlaying = playing;
+    _updateProgress(oldWidget.state.playback, widget.state.playback);
   }
 
-  bool get _isAirPlayPlayback =>
-      (widget.state.playback.protocol ?? '').toLowerCase().contains('airplay');
+  bool get _isAirPlayPlayback => _isAirPlayProtocol(widget.state.playback);
 
-  void _syncProgressAnchor({bool force = false}) {
-    final reported = widget.state.playback.positionMs;
-    if (force || reported != _lastStatePositionMs) {
-      _lastStatePositionMs = reported;
-      _progressAnchorMs = reported;
-      _progressAnchorAt = DateTime.now();
-      _displayedPositionMs = reported;
+  void _anchorProgress(int position) {
+    _progressAnchorMs = position;
+    _progressElapsed.reset();
+    _displayedPositionMs = position;
+  }
+
+  void _updateProgress(PlaybackSnapshot old, PlaybackSnapshot next) {
+    // Without an item ID a sender can update the title with each lyric.
+    // Only compare fallback titles when they represent actual song names.
+    bool hasSongTitle(PlaybackSnapshot p) =>
+        !_isAirPlayProtocol(p) ||
+        p.lyrics?.origin == 'airplay_title' ||
+        !_airPlayArtistSeparators.any((p.artist ?? '').contains);
+    final changedTrack =
+        old.protocol != next.protocol ||
+        old.sourceEpoch != next.sourceEpoch ||
+        (old.trackIdentity != null && next.trackIdentity != null
+            ? old.trackIdentity != next.trackIdentity
+            : old.title != next.title &&
+                  hasSongTitle(old) &&
+                  hasSongTitle(next));
+    if (changedTrack) {
+      pendingSeekTimer?.cancel();
+      pendingSeekTargetMs = null;
+      seeking = false;
+      seekPositionMs = null;
+      _anchorProgress(next.positionMs);
+      return;
+    }
+    if (seeking) return;
+    final updated = next.positionMs != old.positionMs;
+    final pending = pendingSeekTargetMs;
+    if (pending != null) {
+      final expected = _isAirPlayPlayback ? _displayedPositionMs : pending;
+      if (!updated ||
+          ((next.positionMs - pending).abs() > _progressToleranceMs &&
+              (next.positionMs - expected).abs() > _progressToleranceMs)) {
+        if (next.isPlaying != old.isPlaying) {
+          _anchorProgress(_displayedPositionMs);
+        }
+        return;
+      }
+      pendingSeekTimer?.cancel();
+      pendingSeekTargetMs = null;
+    }
+    if (updated) {
+      final previous = _displayedPositionMs;
+      _anchorProgress(next.positionMs);
+      // A slightly late clock sample can lag the interpolated display. Hold
+      // the visible position until the new anchor catches up.
+      if (_isAirPlayPlayback &&
+          old.isPlaying &&
+          next.isPlaying &&
+          previous > next.positionMs &&
+          previous - next.positionMs <= _progressToleranceMs) {
+        _displayedPositionMs = previous;
+      }
+    } else if (next.isPlaying != old.isPlaying) {
+      _anchorProgress(_displayedPositionMs);
     }
   }
 
   void _tickProgress() {
-    if (!mounted) return;
     final playback = widget.state.playback;
-    if (!playback.isPlaying ||
-        !_isAirPlayPlayback ||
-        seeking ||
-        pendingSeekTargetMs != null) {
-      if (_displayedPositionMs != playback.positionMs) {
-        setState(() => _displayedPositionMs = playback.positionMs);
-      }
+    if (!mounted || !playback.isPlaying || !_isAirPlayPlayback || seeking) {
       return;
     }
-    final elapsed = DateTime.now().difference(_progressAnchorAt).inMilliseconds;
-    int next = _progressAnchorMs + math.max(0, elapsed).toInt();
-    final duration = playback.durationMs ?? 0;
-    if (duration > 0) next = next.clamp(0, duration).toInt();
-    if ((next - _displayedPositionMs).abs() >= 100) {
+    final next = airPlayInterpolatedPositionMs(
+      anchorMs: _progressAnchorMs,
+      elapsed: _progressElapsed.elapsed,
+      durationMs: playback.durationMs,
+    );
+    if (next - _displayedPositionMs >= 100) {
       setState(() => _displayedPositionMs = next);
     }
   }
 
   int get _visiblePositionMs {
-    if (seeking || pendingSeekTargetMs != null) {
+    if (seeking || (!_isAirPlayPlayback && pendingSeekTargetMs != null)) {
       return (seekPositionMs ?? widget.state.playback.positionMs).round();
     }
     return _isAirPlayPlayback
@@ -648,13 +693,7 @@ class _PlayerViewState extends State<PlayerView> {
   }
 
   @override
-  Widget build(BuildContext context) {
-    return LayoutBuilder(
-      builder: (context, outer) {
-        return lg.LiquidGlassWidgets.wrap(child: _liquid21PlayerLayout());
-      },
-    );
-  }
+  Widget build(BuildContext context) => _liquid21PlayerLayout();
 
   // ------------------------------------------------------------------
   // Top bar
@@ -724,15 +763,7 @@ class _PlayerViewState extends State<PlayerView> {
   ({double left, double gap, double right}) _liquid21PanelWidths(
     Size available,
   ) {
-    final minLeft = math.min(
-      260.0,
-      available.width * (available.width < 600 ? .46 : .40),
-    );
-    final maxLeft = math.max(minLeft, available.width * .46);
-    // Wider than 16:9: the left panel can take a little more room, but the
-    // lyrics column must keep a readable minimum width.
-    final preferred = available.width * .40;
-    final left = preferred.clamp(minLeft, maxLeft).toDouble();
+    final left = available.width * .47;
     final gap = (available.width * .022).clamp(12.0, 28.0).toDouble();
     return (
       left: left,
@@ -744,6 +775,23 @@ class _PlayerViewState extends State<PlayerView> {
   Widget _liquid21LyricsStage() => LayoutBuilder(
     key: const ValueKey('player-layout-horizontal'),
     builder: (context, content) {
+      if (content.maxHeight > content.maxWidth) {
+        return Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 12),
+          child: Column(
+            children: [
+              Expanded(child: _liquid21PlayerPanel()),
+              Expanded(
+                child: _lyricsColumn(
+                  activeFontSize: 24,
+                  inactiveFontSize: 16,
+                  alignCenter: true,
+                ),
+              ),
+            ],
+          ),
+        );
+      }
       final cappedWidth =
           (content.maxWidth > 1400
                   ? math.min(content.maxWidth, 1600)
@@ -784,33 +832,33 @@ class _PlayerViewState extends State<PlayerView> {
       final panelWidth = constraints.maxWidth;
       final panelHeight = constraints.maxHeight;
       final compact = panelHeight < 560 || panelWidth < 300;
-      final dense = compact && panelHeight < 330;
+      final room = ((panelHeight - 380) / 120).clamp(0.0, 1.0);
       final padding = compact ? 8.0 : 16.0;
-      // Reserve space for metadata, timeline, transport and volume first.
-      // Use remaining height for artwork rather than an arbitrary 238px cut.
-      // Conservative reserve includes title/artist, timeline, transport,
-      // volume and spacing.  The 900x400 / 980x420 previews previously
-      // overflowed because 183px underestimated the real controls stack.
-      final controlsBudget = dense ? 206.0 : (compact ? 248.0 : 286.0);
-      final cover = math
-          .min(
-            panelWidth - padding * 2,
-            math.max(64.0, panelHeight - padding * 2 - controlsBudget),
-          )
-          .clamp(64.0, 500.0)
-          .toDouble();
       final playback = widget.state.playback;
       final (title, artist) = _displayMetadata(playback);
       final artistLine = _cleanArtist(artist);
       return Padding(
-        padding: EdgeInsets.all(padding),
+        padding: EdgeInsets.symmetric(
+          horizontal: padding,
+          vertical: compact ? 2 + 6 * room : padding,
+        ),
         child: Column(
           key: const ValueKey('player-controls-column'),
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            _breathingArtwork(
-              size: cover,
-              child: _artworkCard(cover, radius: compact ? 16 : 20),
+            Flexible(
+              child: LayoutBuilder(
+                builder: (context, space) {
+                  final size = math.min(
+                    space.maxHeight,
+                    math.min(space.maxWidth, panelHeight * (.47 - .03 * room)),
+                  );
+                  return _breathingArtwork(
+                    size: size,
+                    child: _artworkCard(size, radius: size * .10),
+                  );
+                },
+              ),
             ),
             SizedBox(height: compact ? 6 : 12),
             Text(
@@ -838,18 +886,21 @@ class _PlayerViewState extends State<PlayerView> {
                 ),
               ),
             SizedBox(height: compact ? 1 : 4),
-            _liquidTimeline(compact: compact),
-            SizedBox(height: compact ? 0 : 4),
-            Center(child: _liquidTransport(compact: compact)),
-            SizedBox(height: dense ? 8 : (compact ? 10 : 20)),
-            _liquid21Volume(compact: compact),
+            SizedBox(
+              width: (panelWidth * .68).clamp(210.0, 560.0),
+              child: _playbackControls(
+                compact: compact,
+                gap: compact ? 2 + 5 * room : 12,
+                fillVolumeWidth: true,
+              ),
+            ),
           ],
         ),
       );
     },
   );
 
-  Widget _liquid21Volume({required bool compact}) {
+  Widget _liquid21Volume({required bool compact, required double height}) {
     final percent = (_displayVolume * 100).round();
     final icon = percent == 0
         ? Icons.volume_off_rounded
@@ -860,55 +911,54 @@ class _PlayerViewState extends State<PlayerView> {
             ? 360
             : (MediaQuery.sizeOf(context).width >= 1500 ? 560 : 460),
       ),
-      child: lg.GlassContainer(
+      child: SizedBox(
         key: const ValueKey('player-volume-capsule'),
-        height: compact
-            ? (MediaQuery.sizeOf(context).height < 500 ? 28 : 30)
-            : 40,
-        padding: EdgeInsets.symmetric(horizontal: compact ? 7 : 10),
-        shape: const lg.LiquidRoundedSuperellipse(borderRadius: 999),
-        useOwnLayer: true,
-        quality: lg.GlassQuality.standard,
-        settings: const lg.LiquidGlassSettings(
-          thickness: 14,
-          blur: 4,
-          glassColor: Color(0x18FFFFFF),
-        ),
-        child: Row(
-          children: [
-            InkResponse(
-              key: const ValueKey('volume-mute-button'),
-              onTap: _toggleMute,
-              radius: 16,
-              child: Icon(icon, size: compact ? 16 : 18, color: Colors.white70),
-            ),
-            const SizedBox(width: 4),
-            Expanded(
-              child: RoundedProgressBar(
-                key: const ValueKey('volume-slider'),
-                value: _displayVolume,
-                enabled: true,
-                seekEnabled: true,
-                showThumb: true,
-                focusNode: _volumeFocus,
-                upFocusNode: _playVisible ? _playPauseFocus : null,
-                focusBorderColor: Colors.white,
-                activeColor: Colors.white.withValues(alpha: .82),
-                inactiveColor: Colors.white.withValues(alpha: .18),
-                onChanged: (value) => setState(() => _volumeDrag = value),
-                onChangeEnd: (value) => _commitVolume((value * 100).round()),
+        height: height,
+        child: LiquidGlass(
+          interactive: true,
+          forceFallback: widget.forceGlassFallback,
+          borderRadius: 999,
+          padding: EdgeInsets.symmetric(horizontal: compact ? 7 : 10),
+          child: Row(
+            children: [
+              InkResponse(
+                key: const ValueKey('volume-mute-button'),
+                onTap: widget.volumeEnabled ? _toggleMute : null,
+                radius: 16,
+                child: Icon(
+                  icon,
+                  size: compact ? 16 : 18,
+                  color: Colors.white70,
+                ),
               ),
-            ),
-            SizedBox(width: compact ? 5 : 8),
-            Text(
-              '$percent',
-              style: TextStyle(
-                fontSize: compact ? 9 : 10,
-                color: Colors.white.withValues(alpha: .48),
-                fontFeatures: const [FontFeature.tabularFigures()],
+              const SizedBox(width: 4),
+              Expanded(
+                child: RoundedProgressBar(
+                  key: const ValueKey('volume-slider'),
+                  value: _displayVolume,
+                  enabled: widget.volumeEnabled,
+                  seekEnabled: widget.volumeEnabled,
+                  showThumb: true,
+                  focusNode: _volumeFocus,
+                  upFocusNode: _playEnabled ? _playPauseFocus : null,
+                  focusBorderColor: Colors.white,
+                  activeColor: Colors.white.withValues(alpha: .82),
+                  inactiveColor: Colors.white.withValues(alpha: .18),
+                  onChanged: (value) => setState(() => _volumeDrag = value),
+                  onChangeEnd: (value) => _commitVolume((value * 100).round()),
+                ),
               ),
-            ),
-          ],
+              SizedBox(width: compact ? 5 : 8),
+              Text(
+                '$percent',
+                style: TextStyle(
+                  fontSize: compact ? 9 : 10,
+                  color: Colors.white.withValues(alpha: .48),
+                  fontFeatures: const [FontFeature.tabularFigures()],
+                ),
+              ),
+            ],
+          ),
         ),
       ),
     );
@@ -1022,11 +1072,11 @@ class _PlayerViewState extends State<PlayerView> {
             ),
           ],
           SizedBox(height: dense ? 2 : (compact ? 6 : 20)),
-          _liquidTimeline(compact: compact),
-          SizedBox(height: dense ? 2 : (compact ? 4 : 10)),
-          Center(child: _liquidTransport(compact: compact)),
-          SizedBox(height: compact ? 6 : 14),
-          _liquid21Volume(compact: compact),
+          _playbackControls(
+            fillVolumeWidth: true,
+            compact: compact,
+            gap: dense ? 7 : (compact ? 10 : 16),
+          ),
         ],
       ),
     );
@@ -1073,7 +1123,11 @@ class _PlayerViewState extends State<PlayerView> {
     );
   }
 
-  Widget _liquidTimeline({required bool compact}) {
+  Widget _playbackControls({
+    required bool compact,
+    required double gap,
+    bool fillVolumeWidth = false,
+  }) {
     final playback = widget.state.playback;
     final duration = _durationMs;
     final position = _visiblePositionMs.clamp(
@@ -1081,71 +1135,104 @@ class _PlayerViewState extends State<PlayerView> {
       duration == 0 ? playback.positionMs : duration,
     );
     final progress = duration > 0 ? position / duration : 0.0;
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
+    const trackHeight = RoundedProgressBar.hitHeight;
+    const labelFont = 10.5;
+    final volumeHeight = compact
+        ? (MediaQuery.sizeOf(context).height < 500 ? 28.0 : 30.0)
+        : 40.0;
+    final labelSpace = MediaQuery.textScalerOf(context).scale(labelFont);
+    final inset = gap + labelSpace * .40;
+    final volume = _liquid21Volume(compact: compact, height: volumeHeight);
+    return Stack(
+      alignment: Alignment.topCenter,
       children: [
-        TweenAnimationBuilder<double>(
-          tween: Tween(end: progress),
-          duration: _reduceMotion
-              ? Duration.zero
-              : const Duration(milliseconds: 220),
-          curve: Curves.easeOutCubic,
-          builder: (context, value, _) => RoundedProgressBar(
-            key: const ValueKey('player-progress-bar'),
-            value: value,
-            enabled: duration > 0,
-            seekEnabled: _seekable,
-            showThumb: false,
-            focusNode: _progressFocus,
-            upFocusNode: _menuVisible ? _menuFocus : null,
-            downFocusNode: _playVisible ? _playPauseFocus : null,
-            focusBorderColor: Colors.white,
-            activeColor: Colors.white,
-            inactiveColor: Colors.white.withValues(alpha: .18),
-            onChangeStart: (_) => setState(() => seeking = true),
-            onChanged: (value) => setState(() {
-              seeking = true;
-              seekPositionMs = duration * value;
-            }),
-            onChangeEnd: (value) {
-              final target = (duration * value).round();
-              setState(() {
-                seeking = false;
-                seekPositionMs = target.toDouble();
-                pendingSeekTargetMs = target;
-                _progressAnchorMs = target;
-                _progressAnchorAt = DateTime.now();
-                _displayedPositionMs = target;
-              });
-              widget.onSeek(target);
-            },
-          ),
+        Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            TweenAnimationBuilder<double>(
+              tween: Tween(end: progress),
+              duration: _reduceMotion
+                  ? Duration.zero
+                  : const Duration(milliseconds: 220),
+              curve: Curves.easeOutCubic,
+              builder: (context, value, _) => RoundedProgressBar(
+                key: const ValueKey('player-progress-bar'),
+                value: value,
+                enabled: duration > 0,
+                seekEnabled: _seekable,
+                showThumb: false,
+                focusNode: _progressFocus,
+                upFocusNode: _menuVisible ? _menuFocus : null,
+                downFocusNode: _playEnabled ? _playPauseFocus : null,
+                focusBorderColor: Colors.white,
+                activeColor: Colors.white,
+                inactiveColor: Colors.white.withValues(alpha: .18),
+                onChangeStart: (_) => setState(() {
+                  seekPositionMs = _visiblePositionMs.toDouble();
+                  pendingSeekTimer?.cancel();
+                  pendingSeekTargetMs = null;
+                  seeking = true;
+                }),
+                onChanged: (value) => setState(() {
+                  seeking = true;
+                  seekPositionMs = duration * value;
+                }),
+                onChangeEnd: (value) {
+                  final target = (duration * value).round();
+                  setState(() {
+                    seeking = false;
+                    seekPositionMs = target.toDouble();
+                    pendingSeekTargetMs = target;
+                    _anchorProgress(target);
+                    pendingSeekTimer?.cancel();
+                    pendingSeekTimer = Timer(const Duration(seconds: 5), () {
+                      if (!mounted) return;
+                      setState(() {
+                        pendingSeekTargetMs = null;
+                        _anchorProgress(widget.state.playback.positionMs);
+                      });
+                    });
+                  });
+                  widget.onSeek(target);
+                },
+              ),
+            ),
+            SizedBox(height: inset),
+            Center(child: _liquidTransport(compact: compact)),
+            // Equal distances from the transport center to the two track centers.
+            SizedBox(height: inset + (trackHeight - volumeHeight) / 2),
+            if (fillVolumeWidth) volume else Center(child: volume),
+          ],
         ),
-        SizedBox(height: compact ? 0 : 2),
-        Transform.translate(
-          offset: Offset(0, compact ? -4 : -2),
-          child: Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              Text(
-                _hasPlayback ? _formatDuration(position) : '0:00',
-                style: TextStyle(
-                  fontSize: 10.5,
-                  color: Colors.white.withValues(alpha: .42),
-                  fontFeatures: const [FontFeature.tabularFigures()],
+        Positioned(
+          left: 0,
+          right: 0,
+          top: trackHeight / 2 + (compact ? 7 : 11),
+          child: IgnorePointer(
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Text(
+                  _hasPlayback ? _formatDuration(position) : '0:00',
+                  style: TextStyle(
+                    fontSize: labelFont,
+                    color: Colors.white.withValues(alpha: .42),
+                    fontFeatures: const [FontFeature.tabularFigures()],
+                  ),
                 ),
-              ),
-              Text(
-                _hasPlayback
-                    ? '-${_formatDuration(math.max(0, duration - position))}'
-                    : '-0:00',
-                style: TextStyle(
-                  fontSize: 10.5,
-                  color: Colors.white.withValues(alpha: .42),
-                  fontFeatures: const [FontFeature.tabularFigures()],
+                Text(
+                  _hasPlayback
+                      ? '-${_formatDuration(math.max(0, duration - position))}'
+                      : '-0:00',
+                  style: TextStyle(
+                    fontSize: labelFont,
+                    color: Colors.white.withValues(alpha: .42),
+                    fontFeatures: const [FontFeature.tabularFigures()],
+                  ),
                 ),
-              ),
-            ],
+              ],
+            ),
           ),
         ),
       ],
@@ -1154,9 +1241,10 @@ class _PlayerViewState extends State<PlayerView> {
 
   Widget _liquidTransport({required bool compact}) {
     final reduceMotion = _reduceMotion;
-    final children = <Widget>[];
-    if (_previousVisible) {
-      children.add(
+    final gap = SizedBox(width: compact ? 18 : 28);
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
         _ControlEntrance(
           index: 0,
           reduceMotion: reduceMotion,
@@ -1164,33 +1252,25 @@ class _PlayerViewState extends State<PlayerView> {
             key: const ValueKey('playback-previous-button'),
             focusNode: _previousFocus,
             icon: FusionIcons.previous,
-            onTap: () => _changeTrack(
-              PlaybackCommand.previous,
-              ArtworkFlipDirection.right,
-            ),
-            rightFocusNode: _playVisible ? _playPauseFocus : null,
+            onTap: _previousEnabled
+                ? () => _changeTrack(
+                    PlaybackCommand.previous,
+                    ArtworkFlipDirection.right,
+                  )
+                : null,
+            rightFocusNode: _playEnabled
+                ? _playPauseFocus
+                : (_nextEnabled ? _nextFocus : _volumeFocus),
             compact: compact,
           ),
         ),
-      );
-    }
-    if (_playVisible) {
-      if (children.isNotEmpty) {
-        children.add(SizedBox(width: compact ? 18 : 28));
-      }
-      children.add(
+        gap,
         _ControlEntrance(
           index: 1,
           reduceMotion: reduceMotion,
           child: _playPauseButton(reduceMotion, compact: compact),
         ),
-      );
-    }
-    if (_nextVisible) {
-      if (children.isNotEmpty) {
-        children.add(SizedBox(width: compact ? 18 : 28));
-      }
-      children.add(
+        gap,
         _ControlEntrance(
           index: 2,
           reduceMotion: reduceMotion,
@@ -1198,25 +1278,29 @@ class _PlayerViewState extends State<PlayerView> {
             key: const ValueKey('playback-next-button'),
             focusNode: _nextFocus,
             icon: FusionIcons.next,
-            onTap: () =>
-                _changeTrack(PlaybackCommand.next, ArtworkFlipDirection.left),
-            leftFocusNode: _playVisible ? _playPauseFocus : null,
+            onTap: _nextEnabled
+                ? () => _changeTrack(
+                    PlaybackCommand.next,
+                    ArtworkFlipDirection.left,
+                  )
+                : null,
+            leftFocusNode: _playEnabled
+                ? _playPauseFocus
+                : (_previousEnabled ? _previousFocus : null),
             rightFocusNode: _volumeFocus,
             downFocusNode: _volumeFocus,
             compact: compact,
           ),
         ),
-      );
-    }
-    if (children.isEmpty) return const SizedBox(height: 56);
-    return Row(mainAxisSize: MainAxisSize.min, children: children);
+      ],
+    );
   }
 
   Widget _liquidIconButton({
     required Key key,
     required FocusNode focusNode,
     required String icon,
-    required VoidCallback onTap,
+    required VoidCallback? onTap,
     FocusNode? leftFocusNode,
     FocusNode? rightFocusNode,
     FocusNode? upFocusNode,
@@ -1227,11 +1311,13 @@ class _PlayerViewState extends State<PlayerView> {
     final size = compact ? 34.0 : (tv ? 56.0 : 44.0);
     return AnimatedPressScale(
       key: key,
+      enabled: onTap != null,
       externalPressed: focusNode == _previousFocus
           ? _previousPressed
           : _nextPressed,
       child: RemoteFocusFrame(
         focusNode: focusNode,
+        enabled: onTap != null,
         onActivate: onTap,
         borderColor: Colors.white,
         shape: const CircleBorder(),
@@ -1268,18 +1354,10 @@ class _PlayerViewState extends State<PlayerView> {
         },
         child: SizedBox.square(
           dimension: size,
-          child: lg.GlassContainer(
-            height: size,
-            padding: EdgeInsets.zero,
-            shape: const lg.LiquidRoundedSuperellipse(borderRadius: 999),
-            useOwnLayer: true,
-            quality: lg.GlassQuality.standard,
-            settings: const lg.LiquidGlassSettings(
-              thickness: 9,
-              blur: 2,
-              glassColor: Color(0x12FFFFFF),
-              chromaticAberration: 0,
-            ),
+          child: LiquidGlass(
+            interactive: onTap != null,
+            forceFallback: widget.forceGlassFallback,
+            borderRadius: 999,
             child: Material(
               color: Colors.transparent,
               shape: const CircleBorder(),
@@ -1291,7 +1369,9 @@ class _PlayerViewState extends State<PlayerView> {
                   child: FusionVectorIcon(
                     icon,
                     size: compact ? 18 : 22,
-                    color: Colors.white.withValues(alpha: .9),
+                    color: Colors.white.withValues(
+                      alpha: onTap == null ? .48 : .9,
+                    ),
                   ),
                 ),
               ),
@@ -1377,21 +1457,18 @@ class _PlayerViewState extends State<PlayerView> {
       },
       child: Semantics(
         button: true,
-        child: lg.GlassIconButton(
-          icon: Icon(
-            icon,
-            size: 19,
-            color: Colors.white.withValues(alpha: .90),
-          ),
-          onPressed: onTap,
-          size: 36,
-          useOwnLayer: true,
-          quality: lg.GlassQuality.standard,
-          settings: const lg.LiquidGlassSettings(
-            thickness: 9,
-            blur: 2,
-            glassColor: Color(0x1FFFFFFF),
-            chromaticAberration: 0,
+        child: LiquidGlass(
+          interactive: true,
+          forceFallback: widget.forceGlassFallback,
+          borderRadius: 999,
+          child: IconButton(
+            padding: EdgeInsets.zero,
+            onPressed: onTap,
+            icon: Icon(
+              icon,
+              size: 19,
+              color: Colors.white.withValues(alpha: .90),
+            ),
           ),
         ),
       ),
@@ -1488,15 +1565,15 @@ class _PlayerViewState extends State<PlayerView> {
     final radius = compact ? 23.0 : 29.0;
     final short = MediaQuery.sizeOf(context).height < 400;
     final glyph = short ? 20.0 : (compact ? 24.0 : 30.0);
-    final hasPlayback = _hasPlayback;
+    final enabled = _playEnabled;
     return AnimatedPressScale(
       key: const ValueKey('playback-play-pause-button'),
-      enabled: hasPlayback,
+      enabled: enabled,
       externalPressed: _playPausePressed,
       child: RemoteFocusFrame(
-        enabled: hasPlayback,
+        enabled: enabled,
         focusNode: _playPauseFocus,
-        onActivate: hasPlayback
+        onActivate: enabled
             ? () => widget.onPlayback(PlaybackCommand.playPause)
             : null,
         onPressChange: (pressed) => _playPausePressed.value = pressed,
@@ -1505,10 +1582,10 @@ class _PlayerViewState extends State<PlayerView> {
         shortcuts: <ShortcutActivator, Intent>{
           const SingleActivator(LogicalKeyboardKey.arrowUp):
               const DirectionalFocusIntent(TraversalDirection.up),
-          if (_previousVisible)
+          if (_previousEnabled)
             const SingleActivator(LogicalKeyboardKey.arrowLeft):
                 const DirectionalFocusIntent(TraversalDirection.left),
-          if (_nextVisible)
+          if (_nextEnabled)
             const SingleActivator(LogicalKeyboardKey.arrowRight):
                 const DirectionalFocusIntent(TraversalDirection.right),
           const SingleActivator(LogicalKeyboardKey.arrowDown):
@@ -1525,9 +1602,9 @@ class _PlayerViewState extends State<PlayerView> {
                             ? _progressFocus
                             : (_menuVisible ? _menuFocus : null)),
                 TraversalDirection.left =>
-                  _previousVisible ? _previousFocus : null,
+                  _previousEnabled ? _previousFocus : null,
                 TraversalDirection.right =>
-                  _nextVisible ? _nextFocus : _volumeFocus,
+                  _nextEnabled ? _nextFocus : _volumeFocus,
                 TraversalDirection.down => _volumeFocus,
               };
               target?.requestFocus();
@@ -1536,7 +1613,7 @@ class _PlayerViewState extends State<PlayerView> {
           ),
         },
         child: AnimatedOpacity(
-          opacity: hasPlayback ? 1 : .45,
+          opacity: enabled ? 1 : .45,
           duration: reduceMotion
               ? Duration.zero
               : const Duration(milliseconds: 160),
@@ -1565,7 +1642,7 @@ class _PlayerViewState extends State<PlayerView> {
                 shape: const CircleBorder(),
                 clipBehavior: Clip.antiAlias,
                 child: InkResponse(
-                  onTap: hasPlayback
+                  onTap: enabled
                       ? () => widget.onPlayback(PlaybackCommand.playPause)
                       : null,
                   radius: 60,

@@ -1,39 +1,20 @@
 #!/bin/bash
-# cmd/main — 运行控制：start / stop / restart / status
-#
-# 约定（fnOS 只认这两个值）：status 返回 0 = 运行中，3 = 未运行，其它值会被判为异常。
-#
-# 关键设计（对应总纲 §5.5「升级后功能没变」的隐形故障）：
-#   1. 启动成功判据 = 轮询 /healthz 通过，而不是「进程还活着」（绑不上端口的进程会活一小会儿再死）。
-#   2. 启动前清理陈旧进程：PID 文件丢了但旧进程还占着端口时（升级遗留），按【精确二进制路径】
-#      清掉本应用自己的进程；绝不 pkill 其它应用/系统进程。
-#   3. HOME 无条件覆盖为 $TRIM_PKGHOME（fnOS 注入 HOME=/root，${HOME:-...} 挡不住）。
-#   4. fnOS 不注入 DATA_LIBRARY_PATH，这里补桥接；服务端代码仍做 TRIM_PKGVAR 兜底。
-#   5. 日志按 5 MiB 上限 / 保留尾部 1 MiB 原地轮转（tail-trim，绝不 mv/rename）。
+# fnOS invokes start/stop/status. Install and upgrade callbacks only prepare files.
 set -u
 
-APP="${TRIM_APPDEST:-/var/apps/fusionplay-fnos/target}"
-VAR="${TRIM_PKGVAR:-/vol1/@appdata/fusionplay-fnos}"
-PKGHOME="${TRIM_PKGHOME:-/vol1/@apphome/fusionplay-fnos}"
-PORT="${TRIM_SERVICE_PORT:-18080}"          # 默认值必须与 manifest 的 service_port 一致（check-fpk 会校验）
+BASE="/var/apps/${TRIM_APPNAME:-fusionplay-fnos}"
+APP="${TRIM_APPDEST:-$BASE/target}"
+VAR="${TRIM_PKGVAR:-$BASE/var}"
+PKGHOME="${TRIM_PKGHOME:-$BASE/home}"
+PORT="${TRIM_SERVICE_PORT:-18080}"
 BIN="$APP/bin/fusionplay-fnos"
 WWW="$APP/www"
 LOG="$VAR/app.log"
 PID_FILE="$VAR/app.pid"
 SOCK="$APP/fusionplay-fnos.sock"
-
-# HOME 必须无条件覆盖（fnOS 拉起脚本时已注入 HOME=/root；写成 ${HOME:-$PKGHOME} 无效）
-export HOME="$PKGHOME"
-export DATA_LIBRARY_PATH="${DATA_LIBRARY_PATH:-$VAR}"
-export TRIM_SERVICE_PORT="$PORT"
-export GATEWAY_SOCKET="$SOCK"
-export GATEWAY_PREFIX="/app/fusionplay-fnos"
-mkdir -p "$VAR" "$PKGHOME" 2>/dev/null || true
-
-# ★ 上游 shairplay 用环境变量 CI 做测试开关：CI 存在时【跳过 mDNS 注册】，
-#   表现为 AirPlay 在手机上完全搜不到（但 HTTP 管理页正常，极难排查）。fnOS 运行环境
-#   不应有 CI；这里显式清掉，避免宿主机/调试脚本/编排工具把 CI=1 带进服务进程。
-unset CI 2>/dev/null || true
+export HOME="$PKGHOME" DATA_LIBRARY_PATH="${DATA_LIBRARY_PATH:-$VAR}"
+export TRIM_SERVICE_PORT="$PORT" GATEWAY_SOCKET="$SOCK" GATEWAY_PREFIX="/app/fusionplay-fnos"
+unset CI
 
 # ---------------- 日志上限（tail-trim，原地重写） ----------------
 # ★ 必须原地重写，不能 mv/rename：子进程的 stdout/stderr、shell 的 >> 都持有同一个 inode，
@@ -59,130 +40,120 @@ trim_log() {
 }
 log() { echo "$(date '+%Y-%m-%d %H:%M:%S') - $1" >> "$LOG" 2>/dev/null; trim_log "$LOG"; }
 
-# ---------------- 进程 / 端口工具 ----------------
-pid_of() {
-    local pid=""
-    [ -f "$PID_FILE" ] && pid="$(tr -dc '0-9' < "$PID_FILE" 2>/dev/null)"
-    [ -n "$pid" ] && printf '%s' "$pid"
-}
-is_running() { local pid; pid="$(pid_of)"; [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; }
-health() { curl -fsS --max-time 2 "http://127.0.0.1:$PORT/healthz" >/dev/null 2>&1; }
-
-have_ss() { command -v ss >/dev/null 2>&1; }
-port_busy() {
-    if have_ss; then
-        ss -H -lnt 2>/dev/null | awk '{print $4}' | grep -qE "[:.]${PORT}\$"
-    else
-        return 1   # 无法检测时交给启动失败 / healthz 兜底
-    fi
-}
-
-# 只列出「命令行精确包含本应用二进制路径」的进程（排除当前脚本自身），不误伤其它应用。
-our_pids() { pgrep -f -- "$BIN" 2>/dev/null | grep -v "^$$\$" || true; }
-
-kill_stale() {
-    local pids left i
-    pids="$(our_pids)"
-    [ -z "$pids" ] && return 0
-    log "清理本应用陈旧进程: $(echo "$pids" | tr '\n' ' ')"
-    # shellcheck disable=SC2086
-    kill $pids 2>/dev/null || true
-    for i in $(seq 1 25); do
-        left="$(our_pids)"
-        [ -z "$left" ] && return 0
-        sleep 0.2
-    done
-    # shellcheck disable=SC2086
-    kill -9 $pids 2>/dev/null || true
-    sleep 0.3
-    return 0
-}
-
-# ---------------- 启停 ----------------
-start() {
-    if is_running && health; then
-        log "already running pid=$(pid_of)"
-        return 0
-    fi
-    if is_running; then
-        log "进程在但不健康（pid=$(pid_of)），重启"
-        kill "$(pid_of)" 2>/dev/null || true
-        sleep 1
-    fi
-    # PID 文件丢失的孤儿进程：/healthz 能应答说明端口被本应用旧进程占着
-    if health; then
-        log "端口 $PORT 有本应用旧进程应答但无 PID 文件，清理陈旧进程"
-        kill_stale
-    fi
-    if port_busy; then
-        if [ -n "$(our_pids)" ]; then kill_stale; fi
-        if port_busy; then
-            log "端口 $PORT 被其它进程占用，拒绝启动（不误杀他人）"
-            return 1
-        fi
-    fi
-    rm -f "$SOCK" "$PID_FILE" 2>/dev/null || true
-    chmod +x "$BIN" 2>/dev/null || true
-    if [ ! -x "$BIN" ]; then
-        log "缺少可执行文件: $BIN"
-        return 1
-    fi
-    log "starting port=$PORT home=$HOME var=$VAR"
-    nohup "$BIN" --config "$PKGHOME/config.json" --state-dir "$VAR" --www "$WWW" \
-        --listen-tcp "127.0.0.1:$PORT" --listen-unix "$SOCK" >> "$LOG" 2>&1 &
-    echo "$!" > "$PID_FILE"
-    local i
-    for i in $(seq 1 80); do
-        if health; then
-            log "started pid=$(pid_of) (healthz ok)"
-            return 0
-        fi
-        if ! is_running; then
-            log "启动失败：进程已退出，见 $LOG"
-            rm -f "$PID_FILE" 2>/dev/null || true
-            return 1
-        fi
-        sleep 0.25
-    done
-    log "启动超时：pid=$(pid_of) 仍在但 /healthz 不通"
+fail() {
+    local msg="FusionPlay：$1"
+    log "$msg" || true
+    printf '%s\n' "$msg" >&2
+    if [ -n "${TRIM_TEMP_LOGFILE:-}" ]; then printf '%s\n' "$msg" > "$TRIM_TEMP_LOGFILE"; fi
     return 1
 }
 
+prepare() {
+    mkdir -p "$VAR" "$PKGHOME" && [ -w "$VAR" ] && [ -w "$PKGHOME" ] ||
+        { fail "应用账户无法写入 $VAR 或 $PKGHOME，请检查应用存储权限。"; return 1; }
+    if [ -f "$BIN" ] && [ ! -x "$BIN" ]; then chmod +x "$BIN" 2>/dev/null || true; fi
+    local actual
+    if ! actual=$("$BIN" --version 2>&1); then
+        fail "后台程序无法执行，请检查 FPK 架构、运行库和执行权限。$actual"
+        return 1
+    fi
+    # Compare the installed payload with the package identified by fnOS.
+    # The old pre-upgrade hook only calls stop, never prepare.
+    local expected
+    if [ -n "${TRIM_APPVER:-}" ] && [ "$actual" != "$TRIM_APPVER" ]; then
+        fail "应用中心版本 $TRIM_APPVER 与已安装后台 $actual 不一致，请核对所选 FPK。"; return 1
+    fi
+    expected=$(sed -n 's/^version=//p' "$APP/BUILD-INFO") &&
+        [ -n "$expected" ] && [ "$actual" = "$expected" ] ||
+        { fail "安装文件版本不一致，后台为 $actual，包记录为 ${expected:-缺失}。"; return 1; }
+}
+
+pid_of() {
+    local pid
+    [ -f "$PID_FILE" ] && IFS= read -r pid < "$PID_FILE" && [[ "$pid" =~ ^[1-9][0-9]*$ ]] &&
+        printf '%s' "$pid"
+}
+# Compare the kernel's executable identity. argv can contain this path as
+# an unrelated argument; a PID can also have been recycled since shutdown.
+bin_path=$(readlink -f -- "$BIN")
+owns_pid() {
+    local pid="$1" exe
+    [[ "$pid" =~ ^[1-9][0-9]*$ ]] || return 1
+    exe=$(readlink "/proc/$pid/exe" 2>/dev/null) || return 1
+    [[ "${exe% (deleted)}" == "$bin_path" ]]
+}
+our_pids() {
+    local pid
+    while read -r pid; do
+        if owns_pid "$pid"; then printf '%s\n' "$pid"; fi
+    done < <(pgrep -x fusionplay-fnos || true)
+}
+is_running() {
+    local pid
+    pid=$(pid_of) && owns_pid "$pid" && [ "/proc/$pid/exe" -ef "$BIN" ] &&
+        curl --noproxy '*' -fsS --max-time 2 --unix-socket "$SOCK" http://localhost/healthz >/dev/null 2>&1 &&
+        curl --noproxy '*' -fsS --max-time 2 "http://127.0.0.1:$PORT/healthz" >/dev/null 2>&1
+}
+port_busy() {
+    command -v ss >/dev/null && [ -n "$(ss -H -lnt "sport = :$PORT" 2>/dev/null)" ]
+}
 stop() {
-    local pid pids i
-    pid="$(pid_of)"
-    if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
-        log "stopping pid=$pid"
-        kill "$pid" 2>/dev/null || true
-        for i in $(seq 1 40); do
-            kill -0 "$pid" 2>/dev/null || break
-            sleep 0.2
-        done
-        kill -9 "$pid" 2>/dev/null || true
-    fi
-    # 兜底：命令行匹配本应用二进制的残留进程（只清自己的）
-    pids="$(our_pids)"
-    if [ -n "$pids" ]; then
-        # shellcheck disable=SC2086
-        kill $pids 2>/dev/null || true
-        sleep 0.5
-        pids="$(our_pids)"
-        # shellcheck disable=SC2086
-        [ -n "$pids" ] && kill -9 $pids 2>/dev/null || true
-    fi
-    rm -f "$PID_FILE" "$SOCK" 2>/dev/null || true
-    for i in $(seq 1 25); do
-        port_busy || break
+    local pid i
+    local -a pids
+    mapfile -t pids < <(our_pids)
+    for pid in "${pids[@]}"; do
+        if owns_pid "$pid"; then kill -TERM "$pid" 2>/dev/null || true; fi
+    done
+    for ((i=0; i<40; i++)); do
+        local alive=false
+        for pid in "${pids[@]}"; do if owns_pid "$pid"; then alive=true; break; fi; done
+        if ! "$alive"; then break; fi
         sleep 0.2
     done
-    log "stopped"
-    return 0
+    # Rescan to include any speaker worker launched just before shutdown.
+    mapfile -t pids < <(our_pids)
+    for pid in "${pids[@]}"; do
+        if owns_pid "$pid"; then kill -KILL "$pid" 2>/dev/null || true; fi
+    done
+    for ((i=0; i<20; i++)); do
+        [ -z "$(our_pids)" ] && break
+        sleep 0.1
+    done
+    if [ -n "$(our_pids)" ]; then fail "旧服务仍在运行，无法停止。请查看 $LOG。"; return 1; fi
+    rm -f -- "$PID_FILE" "$SOCK" || { fail "无法清理应用的 PID 或网关 Socket。"; return 1; }
+}
+start() {
+    is_running && return 0
+    prepare || return 1
+    [ -w "$APP" ] || { fail "应用账户无法在 $APP 创建网关 Socket。请检查应用目录权限。"; return 1; }
+    stop || return 1
+    if port_busy; then fail "端口 $PORT 已被其他服务占用，请释放端口后重新启用。"; return 1; fi
+    log "starting port=$PORT home=$HOME var=$VAR"
+    nohup "$BIN" --config "$PKGHOME/config.json" --state-dir "$VAR" --www "$WWW" \
+        --listen-tcp "127.0.0.1:$PORT" --listen-unix "$SOCK" </dev/null >>"$LOG" 2>&1 9>&- &
+    local pid=$! i
+    if ! printf '%s\n' "$pid" > "$PID_FILE"; then
+        stop; fail "无法保存 PID 到 $PID_FILE。"; return 1
+    fi
+    for ((i=0; i<80; i++)); do
+        if is_running; then log "started pid=$pid"; return 0; fi
+        kill -0 "$pid" 2>/dev/null || break
+        sleep 0.25
+    done
+    stop || return 1
+    fail "后台未能启动，请查看 $LOG 中的启动错误。"
 }
 
 case "${1:-}" in
-    start)   start ;;
-    stop)    stop ;;
-    restart) stop; start ;;
-    status)  if is_running; then exit 0; else exit 3; fi ;;
-    *)       echo "usage: $0 {start|stop|restart|status}" >&2; exit 1 ;;
+    prepare) prepare; exit $? ;;
+    status) if is_running; then exit 0; else exit 3; fi ;;
+    start|stop|restart) ;;
+    *) exit 1 ;;
+esac
+mkdir -p "$VAR" && { exec 9>>"$VAR/lifecycle.lock"; } &&
+    flock -w 45 9 || { fail "无法取得服务启停锁 $VAR/lifecycle.lock。"; exit 1; }
+case "$1" in
+    start) start ;;
+    stop) stop ;;
+    restart) stop && start ;;
 esac

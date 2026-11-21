@@ -1,0 +1,87 @@
+name: Cross-platform regression checks
+
+on:
+  pull_request:
+    paths:
+      - 'src/**'
+      - 'vendor/**'
+      - 'flutter/**'
+      - 'windows/**'
+      - 'fnos/**'
+      - 'installer/**'
+      - 'tools/sync_web_theme.py'
+      - 'VERSION'
+      - 'INSTALLER_VERSION'
+      - '.github/workflows/**'
+      - '.github/actions/**'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: shared-platform-checks-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+env:
+  RUSTUP_TOOLCHAIN: stable
+
+jobs:
+  player-and-fnos:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      CARGO_TARGET_DIR: ${{ github.workspace }}/target
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - run: sudo apt-get update && sudo apt-get install -y libasound2-dev
+      - run: cargo test --locked --manifest-path src/AirPlayReceiver.Core/Cargo.toml --all-targets
+      - run: cargo test --locked --manifest-path src/FusionPlay.MiPlaySdk/Cargo.toml --lib
+      - run: cargo test --locked --manifest-path fnos/backend/Cargo.toml --all-targets
+      - uses: ./.github/actions/setup-flutter
+      - run: python3 tools/sync_web_theme.py --check
+      - working-directory: flutter
+        run: |
+          flutter pub get --enforce-lockfile
+          flutter analyze --no-pub
+          flutter test --no-pub
+          flutter build web --release --no-pub --no-web-resources-cdn --pwa-strategy=none -t lib/backend/fnos/player.dart
+
+  windows:
+    # Match the VS 2022 generator supported by our pinned Flutter release.
+    runs-on: windows-2022
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cargo test --locked --manifest-path windows/backend/Cargo.toml --all-targets
+      - uses: ./.github/actions/setup-flutter
+      - working-directory: flutter
+        run: flutter pub get --enforce-lockfile
+      - working-directory: flutter
+        run: flutter build windows --debug --no-pub
+
+  android:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      FUSIONPLAY_ABIS: arm64-v8a
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android
+      - run: echo "CARGO_HOME=$HOME/.cargo" >> "$GITHUB_ENV"
+      - run: cargo install cargo-ndk --locked
+      - run: '"$ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager" "platforms;android-36" "build-tools;36.0.0" "ndk;28.2.13676358"'
+      - uses: ./.github/actions/setup-flutter
+      - working-directory: flutter
+        run: |
+          flutter pub get --enforce-lockfile
+          flutter build apk --debug --no-pub --target-platform android-arm64
+      - working-directory: flutter/android
+        run: bash gradlew :app:testDebugUnitTest

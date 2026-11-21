@@ -1226,7 +1226,13 @@ class AppViewModel(
             mediaUri = event.url,
         )
         lyricsLoadJob = scope.launch {
-            val lyrics = lyricsResolver.resolve(request)
+            val lyrics = lyricsResolver.resolve(request) { origin, outcome ->
+                diagnosticLogger.write("dlna", "lyrics_candidate", outcome,
+                    mapOf("epoch" to event.epoch, "origin" to origin.name.lowercase()))
+            }
+            diagnosticLogger.write("dlna", "lyrics_resolved", if (lyrics == null) "unavailable" else "success",
+                mapOf("epoch" to event.epoch, "origin" to lyrics?.origin?.name?.lowercase(),
+                    "lines" to (lyrics?.lines?.size ?: 0), "synced" to lyrics?.isSynchronized))
             _state.update { current ->
                 val playback = SourcePlaybackProjection.playback(
                     current,

@@ -19,6 +19,7 @@ use crate::state::SharedState;
 use crate::volume::{CurveKind, VolumeCurve};
 
 pub struct HttpApp {
+    pub instances: Option<Arc<crate::instances::SpeakerSupervisor>>,
     pub config_path: PathBuf,
     pub config: RwLock<Config>,
     pub state: SharedState,
@@ -32,14 +33,50 @@ pub struct HttpApp {
 }
 
 impl HttpApp {
-    pub fn save_config(&self, mut config: Config) -> Result<()> {
-        // Any write path (config PUT, calibration PUT, import) must migrate
-        // v1 exports before validation so a legacy global curve is copied to
-        // the devices instead of being silently dropped.
-        config.migrate();
-        config.validate()?;
-        config.save(&self.config_path)?;
-        *self.config.write().unwrap() = config;
+    /// Serialize a change against the current snapshot, including device
+    /// ownership changes and their corresponding process transitions.
+    fn update_config(&self, edit: impl FnOnce(&mut Config) -> Result<()>) -> Result<Config> {
+        let mut current = self.config.write().unwrap();
+        let mut next = current.clone();
+        edit(&mut next)?;
+        next.migrate();
+        next.validate()?;
+        let apply = |cfg: &Config| -> Result<()> {
+            self.engine.configure(cfg.audio.clone())?;
+            if let Some(supervisor) = &self.instances {
+                supervisor.apply(cfg)?;
+            }
+            if let Some(hosts) = self.protocols.lock().unwrap().as_ref() {
+                hosts.restart(cfg)?;
+            }
+            logging::set_level(&cfg.logging.level)
+        };
+        if let Err(error) = apply(&next).and_then(|()| next.save(&self.config_path)) {
+            if let Err(rollback) = apply(&current) {
+                tracing::error!("无法恢复先前的接收器配置：{rollback:#}");
+                return Err(error.context(format!("恢复先前配置时出错：{rollback:#}")));
+            }
+            return Err(error);
+        }
+        *current = next.clone();
+        Ok(next)
+    }
+
+    fn assign_output(&self, cfg: &mut Config, device_id: &str, owner: Option<&str>) -> Result<()> {
+        if let Some(other) = cfg.audio.instances.iter()
+            .find(|s| s.device_id == device_id && Some(s.id.as_str()) != owner)
+        {
+            anyhow::bail!("这只音箱已绑定「{}」", other.name);
+        }
+        if let Some(device) = cfg.audio.devices.iter_mut().find(|d| d.id == device_id) {
+            device.enabled = false;
+        } else {
+            let device = self.engine.devices().into_iter().find(|d| d.id == device_id)
+                .context("未找到此输出设备，请刷新设备列表")?;
+            cfg.audio.devices.push(crate::config::DeviceSetting {
+                id: device.id, name: device.name, enabled: false, ..Default::default()
+            });
+        }
         Ok(())
     }
 
@@ -65,7 +102,12 @@ pub fn start(
         let listener = std::os::unix::net::UnixListener::bind(&path)
             .with_context(|| format!("无法绑定 Unix socket {}", path.display()))?;
         use std::os::unix::fs::PermissionsExt;
-        let _ = std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o666));
+        let mode = if std::env::var_os(crate::instances::PORT_OFFSET).is_some() {
+            0o600
+        } else {
+            0o666 // fnOS unified gateway
+        };
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(mode))?;
         let app = Arc::clone(&app);
         handles.push(
             std::thread::Builder::new()
@@ -107,6 +149,27 @@ pub fn start(
 
 fn serve_unix(mut stream: std::os::unix::net::UnixStream, app: Arc<HttpApp>) -> Result<()> {
     let request = read_request(&mut stream)?;
+    if request.path == format!("{}/api/update/save", app.gateway_prefix) && request.method == "POST" {
+        let uid = request.uid.filter(|&uid| crate::update::authentic_user(&stream, uid));
+        if !request.update_json || uid.is_none() || std::env::var_os(crate::instances::PORT_OFFSET).is_some() {
+            return write_response(&mut stream, 403, "text/plain; charset=utf-8", "请通过飞牛统一网关登录后再选择保存目录".as_bytes(), &[]);
+        }
+        stream.set_write_timeout(Some(std::time::Duration::from_secs(10)))?;
+        stream.write_all(b"HTTP/1.1 200 OK\r\nContent-Type: application/x-ndjson; charset=utf-8\r\nCache-Control: no-store\r\nX-Accel-Buffering: no\r\nConnection: close\r\n\r\n")?;
+        let mut event = |value: Value| -> Result<()> {
+            writeln!(&mut stream, "{value}")?;
+            stream.flush()?;
+            Ok(())
+        };
+        let result = crate::update::save(uid.unwrap(), &request.body, |bytes, total| event(json!({"bytes":bytes,"total":total})));
+        return match result {
+            Ok(path) => event(json!({"path":path})),
+            Err(e) => {
+                tracing::warn!("FPK 下载失败：{e:#}");
+                event(json!({"error":format!("{e:#}")}))
+            }
+        };
+    }
     handle(request, &mut |status, content_type, body, headers| {
         write_response(&mut stream, status, content_type, body, headers)
     }, app)
@@ -121,6 +184,8 @@ fn serve_tcp(mut stream: TcpStream, app: Arc<HttpApp>) -> Result<()> {
 }
 
 struct Request {
+    uid: Option<u32>,
+    update_json: bool,
     method: String,
     path: String,
     body: Vec<u8>,
@@ -150,8 +215,19 @@ fn read_request<S: Read>(stream: &mut S) -> Result<Request> {
     let method = first.next().unwrap_or("GET").to_string();
     let path = first.next().unwrap_or("/").to_string();
     let mut content_length = 0usize;
+    let mut uid = None;
+    let mut is_json = false;
+    let mut update_header = false;
     for line in lines {
         let Some((name, value)) = line.split_once(':') else { continue };
+        if name.eq_ignore_ascii_case("X-Trim-Userid") {
+            anyhow::ensure!(uid.is_none(), "重复的用户身份");
+            uid = value.trim().parse().ok();
+        } else if name.eq_ignore_ascii_case("Content-Type") {
+            is_json = value.trim().eq_ignore_ascii_case("application/json");
+        } else if name.eq_ignore_ascii_case("X-FusionPlay-Update") {
+            update_header = value.trim() == "1";
+        }
         if name.trim().eq_ignore_ascii_case("content-length") {
             content_length = value.trim().parse().unwrap_or(0);
         }
@@ -168,7 +244,7 @@ fn read_request<S: Read>(stream: &mut S) -> Result<Request> {
         body.extend_from_slice(&chunk[..read]);
     }
     body.truncate(content_length);
-    Ok(Request { method, path, body })
+    Ok(Request { method, path, body, uid, update_json: is_json && update_header })
 }
 
 fn find_subslice(haystack: &[u8], needle: &[u8]) -> Option<usize> {
@@ -188,9 +264,12 @@ fn write_response<S: Write>(
         301 => "Moved Permanently",
         307 => "Temporary Redirect",
         400 => "Bad Request",
+        403 => "Forbidden",
         404 => "Not Found",
         405 => "Method Not Allowed",
+        409 => "Conflict",
         500 => "Internal Server Error",
+        503 => "Service Unavailable",
         _ => "OK",
     };
     let mut head = format!(
@@ -221,6 +300,9 @@ fn respond_error(
     status: u16,
     message: &str,
 ) -> Result<()> {
+    if status >= 500 {
+        tracing::error!(status, %message, "HTTP 请求失败");
+    }
     let body = serde_json::to_vec(&json!({"ok": false, "error": message}))?;
     respond(status, "application/json; charset=utf-8", &body, &[])
 }
@@ -230,6 +312,65 @@ fn request_json(request: &Request) -> Result<Value> {
         return Ok(json!({}));
     }
     serde_json::from_slice(&request.body).context("请求体不是合法 JSON")
+}
+
+/// Send a gateway/supervisor-selected route to a private worker. The caller
+/// constructs the route and no client-supplied headers are forwarded.
+pub(crate) fn request_worker(
+    socket: &Path,
+    method: &str,
+    route: &str,
+    body: &[u8],
+) -> Result<(u16, String, Vec<u8>)> {
+    use std::os::unix::net::UnixStream;
+    use std::time::Duration;
+    let mut stream = UnixStream::connect(socket)?;
+    let timeout = Some(Duration::from_secs(if method == "PUT" { 15 } else { 5 }));
+    stream.set_read_timeout(timeout)?;
+    stream.set_write_timeout(timeout)?;
+    write!(stream, "{method} {route} HTTP/1.1\r\nHost: localhost\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n", body.len())?;
+    stream.write_all(body)?;
+
+    // Worker HTTP always sends a length and closes the socket. Bound the
+    // response even for cover art; preserve raw image bytes without decoding.
+    let limit = 16 * 1024 * 1024;
+    let mut bytes = Vec::new();
+    stream.take(limit + 1).read_to_end(&mut bytes)?;
+    anyhow::ensure!(bytes.len() as u64 <= limit, "实例响应过大");
+    let end = find_subslice(&bytes, b"\r\n\r\n").context("实例响应不完整")?;
+    let mut lines = std::str::from_utf8(&bytes[..end])?.split("\r\n");
+    let status = lines.next().and_then(|line| line.split_whitespace().nth(1))
+        .context("缺少响应状态")?.parse::<u16>()?;
+    let mut length = None;
+    let mut mime = "application/octet-stream".to_owned();
+    for line in lines {
+        let Some((key, value)) = line.split_once(':') else { continue };
+        if key.eq_ignore_ascii_case("Content-Length") {
+            length = Some(value.trim().parse::<usize>()?);
+        } else if key.eq_ignore_ascii_case("Content-Type") {
+            mime = value.trim().to_owned();
+        }
+    }
+    let payload = bytes.split_off(end + 4);
+    anyhow::ensure!(Some(payload.len()) == length, "实例响应长度不符");
+    Ok((status, mime, payload))
+}
+
+fn forward_instance(
+    app: &HttpApp,
+    id: &str,
+    method: &str,
+    route: &str,
+    body: &[u8],
+    respond: &mut dyn FnMut(u16, &str, &[u8], &[(&str, &str)]) -> Result<()>,
+) -> Result<()> {
+    let reply = app.instances.as_ref().and_then(|supervisor| supervisor.socket(id))
+        .context("实例未启动")
+        .and_then(|socket| request_worker(&socket, method, route, body));
+    match reply {
+        Ok((status, mime, bytes)) => respond(status, &mime, &bytes, &[]),
+        Err(err) => respond_error(respond, 503, &format!("输出实例暂不可用：{err}")),
+    }
 }
 
 fn handle(
@@ -243,7 +384,9 @@ fn handle(
         if path == app.gateway_prefix {
             // fnOS gateway does not strip the prefix; the UI must load with a
             // trailing slash so its relative asset URLs resolve.
-            let location = format!("{}/", app.gateway_prefix);
+            let query = request.path.split_once('?').map(|(_, q)| q);
+            let mut location = format!("{}/", app.gateway_prefix);
+            if let Some(query) = query { location.push('?'); location.push_str(query); }
             return respond(307, "text/plain", b"", &[("Location", location.as_str())]);
         }
         if let Some(rest) = path.strip_prefix(&format!("{}/", app.gateway_prefix)) {
@@ -254,9 +397,107 @@ fn handle(
         path = "/".into();
     }
     let method = request.method.clone();
-    let request = std::sync::Arc::new(request);
     let method = method.as_str();
+    if let Some(scoped) = path.strip_prefix("/api/instances/") {
+        let Some((id, target)) = scoped.split_once('/') else {
+            return respond_error(respond, 404, "未知实例接口");
+        };
+        if method == "PUT" && target == "binding" {
+            #[derive(serde::Deserialize)]
+            struct Binding { name: String, device_id: String }
+            #[derive(serde::Deserialize)]
+            struct Edit { name: String, device_id: String, original: Binding }
+            let result = serde_json::from_slice::<Edit>(&request.body).map_err(anyhow::Error::from)
+                .and_then(|edit| app.update_config(|cfg| {
+                    let index = cfg.audio.instances.iter().position(|room| room.id == id)
+                        .context("独立实例已移除，请刷新音箱列表")?;
+                    let room = &cfg.audio.instances[index];
+                    anyhow::ensure!(room.name == edit.original.name && room.device_id == edit.original.device_id,
+                        "此实例的名称或输出已改变，请重新加载");
+                    app.assign_output(cfg, &edit.device_id, Some(id))?;
+                    let room = &mut cfg.audio.instances[index];
+                    room.name = edit.name.trim().to_owned();
+                    room.device_id = edit.device_id;
+                    Ok(())
+                }));
+            return match result {
+                Ok(_) => respond_json(respond, json!({"id":id})),
+                Err(error) => respond_error(respond, 409, &error.to_string()),
+            };
+        }
+        if method == "PUT" && target == "curve" {
+            #[derive(serde::Deserialize)]
+            struct Edit { device_id: String, curve: VolumeCurve, original: VolumeCurve }
+            let result = serde_json::from_slice::<Edit>(&request.body).map_err(anyhow::Error::from)
+                .and_then(|edit| app.update_config(|cfg| {
+                    let dedicated = cfg.audio.instances.iter()
+                        .any(|room| room.id == id && room.device_id == edit.device_id);
+                    let device = cfg.audio.devices.iter_mut().find(|d| d.id == edit.device_id)
+                        .context("输出设备已移除")?;
+                    anyhow::ensure!(dedicated || (id == "default" && device.enabled),
+                        "音箱绑定已改变，请重新打开实例");
+                    anyhow::ensure!(device.curve == edit.original,
+                        "曲线已在其他页面更新，请重新加载");
+                    edit.curve.validate().map_err(anyhow::Error::msg)?;
+                    device.curve = edit.curve;
+                    Ok(())
+                }));
+            return match result {
+                Ok(_) => respond_json(respond, json!({"ok":true})),
+                Err(error) => respond_error(respond, 409, &error.to_string()),
+            };
+        }
+        let route = match (method, target) {
+            ("GET", "status") | ("POST", "player") => format!("/api/{target}"),
+            ("GET", art) if art.strip_prefix("artwork/").is_some_and(artwork_filename) => format!("/{art}"),
+            _ => return respond_error(respond, 404, "未知实例接口"),
+        };
+        if id != "default" {
+            let cfg = app.config.read().unwrap();
+            if !cfg.audio.instances.iter().any(|instance| instance.id == id) {
+                return respond_error(respond, 404, "输出实例不存在");
+            }
+            return forward_instance(&app, id, method, &route, &request.body, respond);
+        }
+        if !app.config.read().unwrap().has_primary() {
+            return respond_error(respond, 404, "默认接收器未分配输出");
+        }
+        path = route;
+    }
     match (method, path.as_str()) {
+        ("POST", "/api/instances") => {
+            #[derive(serde::Deserialize)]
+            struct Create { name: String, device_id: String }
+            let id = format!("speaker-{:x}", std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)?.as_nanos());
+            let result = serde_json::from_slice::<Create>(&request.body).map_err(anyhow::Error::from)
+                .and_then(|create| app.update_config(|cfg| {
+                    app.assign_output(cfg, &create.device_id, None)?;
+                    cfg.audio.instances.push(crate::config::SpeakerInstance {
+                        id: id.clone(), name: create.name.trim().to_owned(), device_id: create.device_id
+                    });
+                    Ok(())
+                }));
+            return match result {
+                Ok(_) => respond_json(respond, json!({"id":id})),
+                Err(error) => respond_error(respond, 409, &error.to_string()),
+            };
+        }
+        ("GET", "/api/instances") => {
+            let cfg = app.config.read().unwrap();
+            let mut devices = cfg.audio.devices.iter().filter(|device| device.enabled);
+            let first = devices.next().map(|device| &device.id);
+            let sole_output = if devices.next().is_none() { first } else { None };
+            let mut instances = Vec::new();
+            let default = if cfg.has_primary() {
+                instances.push(json!({"id":"default","name":cfg.receiver.name,"device_id":sole_output}));
+                "default"
+            } else {
+                cfg.audio.instances.first().map(|s| s.id.as_str()).unwrap_or("default")
+            };
+            instances.extend(cfg.audio.instances.iter().map(|s| json!(s)));
+            respond_json(respond, json!({"default": default,"instances": instances}))
+        }
         ("GET", "/healthz") => respond_json(&mut *respond, json!({
             "status": "ok",
             "version": crate::VERSION,
@@ -276,6 +517,8 @@ fn handle(
                     "miplay": runtime.miplay,
                 },
                 "current_source": runtime.current_source,
+                "player_commands": runtime.player_commands(),
+                "receiver_name": config.receiver.name,
                 "media": runtime.media,
                 "sender_volume": runtime.sender_volume,
                 "devices": engine.devices,
@@ -293,23 +536,79 @@ fn handle(
         }
         ("GET", "/api/config") => respond_json(&mut *respond, json!(app.snapshot())),
         ("PUT", "/api/config") => match request_json(&request).and_then(|value| {
-            let mut incoming: Config = serde_json::from_value(value).context("配置字段不合法")?;
-            incoming.migrate();
-            incoming.validate()?;
-            app.save_config(incoming.clone())?;
-            app.engine.configure(incoming.audio.clone())?;
-            if let Some(hosts) = app.protocols.lock().unwrap().clone() {
-                hosts.restart(&incoming)?;
-            }
-            Ok(incoming)
+            let incoming: Config = serde_json::from_value(value).context("配置字段不合法")?;
+            app.update_config(|cfg| { *cfg = incoming; Ok(()) })
         }) {
-            Ok(config) => respond_json(&mut *respond, json!({"ok": true, "config": config})),
-            Err(error) => respond_error(&mut *respond, 400, &format!("{error:#}")),
+            Ok(config) => respond_json(respond, json!({"ok": true, "config": config})),
+            Err(error) => respond_error(respond, 400, &format!("{error:#}")),
         },
+        ("PUT", "/api/outputs") => {
+            use crate::config::AudioSettings;
+            #[derive(serde::Deserialize)]
+            struct Edit { original: AudioSettings, audio: AudioSettings }
+            let edit: Edit = match serde_json::from_slice(&request.body) {
+                Ok(edit) => edit,
+                Err(error) => return respond_error(respond, 400, &error.to_string()),
+            };
+            match app.update_config(|config| {
+                anyhow::ensure!(config.audio == edit.original, "音箱配置已改变，请重新加载后编辑");
+                config.audio = edit.audio;
+                Ok(())
+            }) {
+                Ok(config) => respond_json(respond, json!({"audio":config.audio})),
+                Err(error) => respond_error(respond, 409, &format!("{error:#}")),
+            }
+        }
+        ("PATCH", "/api/config") => {
+            #[derive(serde::Deserialize)]
+            #[serde(deny_unknown_fields)]
+            struct SettingsPatch {
+                name: Option<String>,
+                airplay: Option<bool>,
+                dlna: Option<bool>,
+                miplay: Option<bool>,
+                device_type: Option<String>,
+                interface: Option<String>,
+                pin: Option<String>,
+            }
+            let result = serde_json::from_slice::<SettingsPatch>(&request.body)
+                .context("设置字段不合法")
+                .and_then(|patch| app.update_config(|config| {
+                    use crate::config::MIPLAY_DEVICE_TYPES;
+                    if let Some(name) = patch.name { config.receiver.name = name.trim().into(); }
+                    if let Some(enabled) = patch.airplay { config.protocols.airplay.enabled = enabled; }
+                    if let Some(enabled) = patch.dlna { config.protocols.dlna.enabled = enabled; }
+                    if let Some(enabled) = patch.miplay { config.protocols.miplay.enabled = enabled; }
+                    if let Some(device_type) = patch.device_type {
+                        anyhow::ensure!(MIPLAY_DEVICE_TYPES.contains(&device_type.as_str()), "无效的妙播设备类型");
+                        config.protocols.miplay.device_type = device_type;
+                    }
+                    if let Some(interface) = patch.interface { config.receiver.interface = interface; }
+                    if let Some(pin) = patch.pin { config.receiver.pin = (!pin.is_empty()).then_some(pin); }
+                    Ok(())
+                }));
+            match result {
+                Ok(config) => respond_json(respond, json!({"config": config})),
+                Err(error) => respond_error(respond, 400, &format!("{error:#}")),
+            }
+        }
+        ("POST", "/api/player") => {
+            let result = request_json(&request).and_then(|body| {
+                let source = body["source"].as_str().context("缺少播放来源")?;
+                let command = body["command"].as_str().context("缺少命令")?;
+                app.protocols.lock().unwrap().as_ref().context("接收器未运行")?
+                    .player_command(source, command, body["value"].as_u64().unwrap_or(0))
+            });
+            match result {
+                Ok(()) => respond_json(respond, json!({"accepted":true})),
+                Err(err) => respond_error(respond, 409, &err.to_string()),
+            }
+        }
         ("GET", "/api/devices") => respond_json(&mut *respond, json!({"devices": app.engine.devices()})),
         ("POST", "/api/devices/refresh") => {
-            let config = app.snapshot();
+            let config = app.config.read().unwrap();
             let result = app.engine.configure(config.audio.clone());
+            drop(config);
             match result {
                 Ok(()) => respond_json(&mut *respond, json!({"ok": true, "devices": app.engine.devices()})),
                 Err(error) => respond_error(&mut *respond, 500, &format!("{error:#}")),
@@ -318,6 +617,10 @@ fn handle(
         ("POST", "/api/devices/test") => match request_json(&request) {
             Ok(value) => {
                 let id = value.get("id").and_then(|v| v.as_str()).unwrap_or("");
+                let cfg = app.config.read().unwrap();
+                if let Some(owner) = cfg.audio.instances.iter().find(|speaker| speaker.device_id == id) {
+                    return forward_instance(&app, &owner.id, method, "/api/devices/test", &request.body, respond);
+                }
                 match app.engine.test_tone(id) {
                     Ok(()) => respond_json(&mut *respond, json!({"ok": true})),
                     Err(error) => respond_error(&mut *respond, 400, &format!("{error:#}")),
@@ -335,9 +638,8 @@ fn handle(
                 "devices": config.audio.devices,
             }))
         }
-        ("PUT", "/api/calibration") => match request_json(&request) {
-            Ok(value) => {
-                let mut config = app.snapshot();
+        ("PUT", "/api/calibration") => match request_json(&request).and_then(|value| {
+            app.update_config(|config| {
                 if let Some(percent) = value.get("global_attenuation_percent").and_then(|v| v.as_f64()) {
                     config.audio.global_attenuation_percent = percent as f32;
                 }
@@ -351,14 +653,14 @@ fn handle(
                     match serde_json::from_value::<VolumeCurve>(curve.clone()) {
                         Ok(parsed) => {
                             if let Err(error) = parsed.validate() {
-                                return respond_error(&mut *respond, 400, &error);
+                                anyhow::bail!("{error}");
                             }
                             for device in &mut config.audio.devices {
                                 device.curve = parsed.clone();
                             }
                         }
                         Err(error) => {
-                            return respond_error(&mut *respond, 400, &format!("curve 不合法：{error}"));
+                            anyhow::bail!("curve 不合法：{error}");
                         }
                     }
                 }
@@ -386,35 +688,31 @@ fn handle(
                             match serde_json::from_value::<VolumeCurve>(curve.clone()) {
                                 Ok(parsed) => {
                                     if let Err(error) = parsed.validate() {
-                                        return respond_error(&mut *respond, 400, &format!("设备 {id} 的曲线不合法：{error}"));
+                                        anyhow::bail!("设备 {id} 的曲线不合法：{error}");
                                     }
                                     device.curve = parsed;
                                 }
                                 Err(error) => {
-                                    return respond_error(&mut *respond, 400, &format!("设备 {id} 的曲线不合法：{error}"));
+                                    anyhow::bail!("设备 {id} 的曲线不合法：{error}");
                                 }
                             }
                         }
                     }
                     if !unknown.is_empty() {
-                        return respond_error(&mut *respond, 400, &format!("未知设备：{}", unknown.join(", ")));
+                        anyhow::bail!("未知设备：{}", unknown.join(", "));
                     }
                 }
-                match app.save_config(config.clone()) {
-                    Ok(()) => match app.engine.configure(config.audio.clone()) {
-                        Ok(()) => respond_json(&mut *respond, json!({
-                            "ok": true,
-                            "config_version": config.config_version,
-                            "global_attenuation_percent": config.audio.global_attenuation_percent,
-                            "muted": config.audio.muted,
-                            "devices": config.audio.devices,
-                        })),
-                        Err(error) => respond_error(&mut *respond, 500, &format!("{error:#}")),
-                    },
-                    Err(error) => respond_error(&mut *respond, 400, &format!("{error:#}")),
-                }
-            }
-            Err(error) => respond_error(&mut *respond, 400, &format!("{error:#}")),
+                Ok(())
+            })
+        }) {
+            Ok(config) => respond_json(respond, json!({
+                "ok": true,
+                "config_version": config.config_version,
+                "global_attenuation_percent": config.audio.global_attenuation_percent,
+                "muted": config.audio.muted,
+                "devices": config.audio.devices,
+            })),
+            Err(error) => respond_error(respond, 400, &format!("{error:#}")),
         },
         ("POST", "/api/calibration/preview") => match request_json(&request) {
             Ok(value) => {
@@ -455,6 +753,16 @@ fn handle(
             }
             Err(error) => respond_error(&mut *respond, 400, &format!("{error:#}")),
         },
+        ("GET", "/api/update/check") => match crate::update::check() {
+            Ok(info) => respond_json(respond, info),
+            Err(e) => respond_error(respond, 503, &format!("{e:#}")),
+        },
+        ("POST", "/api/update/save") => respond_error(respond, 403, "请通过飞牛桌面或统一网关选择 NAS 保存目录"),
+        ("GET", "/api/logs/export") => {
+            let file = logging::path().context("日志未初始化")?;
+            let report = logging::export_report(file.parent().context("日志目录无效")?, &app.snapshot().audio.instances);
+            respond_json(respond, json!({"report": report}))
+        }
         ("GET", "/api/logs") => {
             let requested = request
                 .path
@@ -469,48 +777,23 @@ fn handle(
             let lines = requested.clamp(1, 500);
             respond_json(&mut *respond, json!({"lines": logging::recent_lines(lines), "requested": requested}))
         }
-        ("POST", "/api/logs/level") => match request_json(&request) {
-            Ok(value) => {
-                let level = value.get("level").and_then(|v| v.as_str()).unwrap_or("info");
-                let mut config = app.snapshot();
-                config.logging.level = level.to_string();
-                match logging::set_level(level) {
-                    Ok(()) => {
-                        let _ = app.save_config(config);
-                        respond_json(&mut *respond, json!({"ok": true, "level": logging::level_name()}))
-                    }
-                    Err(error) => respond_error(&mut *respond, 500, &format!("{error:#}")),
-                }
-            }
-            Err(error) => respond_error(&mut *respond, 400, &format!("{error:#}")),
+        ("POST", "/api/logs/level") => match request_json(&request).and_then(|value| {
+            app.update_config(|cfg| {
+                cfg.logging.level = value.get("level").and_then(Value::as_str).unwrap_or("info").into();
+                Ok(())
+            })
+        }) {
+            Ok(_) => respond_json(respond, json!({"ok":true,"level":logging::level_name()})),
+            Err(error) => respond_error(respond, 400, &format!("{error:#}")),
         },
         ("GET", "/api/export") => respond_json(&mut *respond, json!({"ok": true, "config": app.snapshot()})),
-        ("POST", "/api/import") => match request_json(&request) {
-            Ok(value) => {
-                let incoming = match value.get("config") {
-                    Some(config) => serde_json::from_value::<Config>(config.clone()),
-                    None => serde_json::from_value::<Config>(value),
-                };
-                match incoming.context("配置字段不合法") {
-                    Ok(mut config) => {
-                        config.migrate();
-                        match app.save_config(config.clone()) {
-                        Ok(()) => match app.engine.configure(config.audio.clone()) {
-                            Ok(()) => {
-                                if let Some(hosts) = app.protocols.lock().unwrap().clone() {
-                                    let _ = hosts.restart(&config);
-                                }
-                                respond_json(&mut *respond, json!({"ok": true, "config": config}))
-                            }
-                            Err(error) => respond_error(&mut *respond, 500, &format!("{error:#}")),
-                        },
-                            Err(error) => respond_error(&mut *respond, 400, &format!("{error:#}")),
-                        }
-                    }
-                    Err(error) => respond_error(&mut *respond, 400, &format!("{error:#}")),
-                }
-            }
-            Err(error) => respond_error(&mut *respond, 400, &format!("{error:#}")),
+        ("POST", "/api/import") => match request_json(&request).and_then(|mut value| {
+            let incoming: Config = serde_json::from_value(value.get_mut("config").map(Value::take).unwrap_or(value))
+                .context("配置字段不合法")?;
+            app.update_config(|cfg| { *cfg = incoming; Ok(()) })
+        }) {
+            Ok(config) => respond_json(respond, json!({"ok": true, "config": config})),
+            Err(error) => respond_error(respond, 400, &format!("{error:#}")),
         },
         ("GET", "/api/diagnostics") => {
             let alsa = crate::audio::alsa::diagnostics();
@@ -532,9 +815,23 @@ fn handle(
                 "log_path": logging::path().map(|p| p.display().to_string()),
             }))
         }
+        ("GET", artwork) if artwork.starts_with("/artwork/") => {
+            let name = &artwork["/artwork/".len()..];
+            if !artwork_filename(name) {
+                return respond(404, "text/plain", b"not found", &[]);
+            }
+            serve_static(name, respond, &crate::protocols::state_dir().join("artwork"))
+        }
         ("GET", _) => serve_static(&path, respond, &app.www_dir),
         _ => respond_error(&mut *respond, 405, "不支持的请求方法"),
     }
+}
+
+/// Only the content-addressed image names emitted by the AirPlay core.
+pub(crate) fn artwork_filename(name: &str) -> bool {
+    let Some((stem, ext)) = name.rsplit_once('.') else { return false };
+    matches!(ext, "png" | "jpg") && stem.strip_prefix("cover-art-")
+        .is_some_and(|hash| hash.len() == 16 && hash.bytes().all(|b| b.is_ascii_hexdigit()))
 }
 
 fn serve_static(
@@ -551,10 +848,12 @@ fn serve_static(
     match std::fs::read(&file) {
         Ok(body) => {
             let content_type = match file.extension().and_then(|e| e.to_str()) {
+                Some("wasm") => "application/wasm",
                 Some("html") => "text/html; charset=utf-8",
                 Some("js") => "application/javascript; charset=utf-8",
                 Some("css") => "text/css; charset=utf-8",
                 Some("svg") => "image/svg+xml",
+                Some("jpg") => "image/jpeg",
                 Some("png") => "image/png",
                 Some("ico") => "image/x-icon",
                 Some("json") => "application/json; charset=utf-8",
@@ -583,5 +882,37 @@ pub fn curve_label(kind: CurveKind) -> &'static str {
         CurveKind::Soft => "soft",
         CurveKind::Balanced => "balanced",
         CurveKind::Custom => "custom",
+    }
+}
+
+#[cfg(test)]
+mod instance_proxy_tests {
+    use super::*;
+    use std::os::unix::net::UnixListener;
+
+    #[test]
+    fn worker_proxy_preserves_binary_art_and_player_error_status() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("worker.sock");
+        let listener = UnixListener::bind(&path).unwrap();
+        let handle = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let request = read_request(&mut stream).unwrap();
+            assert_eq!(request.path, "/artwork/cover-art-aaaaaaaaaaaaaaaa.jpg");
+            write_response(&mut stream, 200, "image/jpeg", &[0xff, 0xd8, 0xff], &[]).unwrap();
+            drop(stream);
+            let (mut stream, _) = listener.accept().unwrap();
+            let request = read_request(&mut stream).unwrap();
+            assert_eq!(request.method, "POST");
+            assert_eq!(request.path, "/api/player");
+            assert_eq!(&request.body, br#"{"source":"airplay"}"#);
+            write_response(&mut stream, 409, "application/json", br#"{"ok":false}"#, &[]).unwrap();
+        });
+        let art = request_worker(&path, "GET", "/artwork/cover-art-aaaaaaaaaaaaaaaa.jpg", &[]).unwrap();
+        assert_eq!(art, (200, "image/jpeg".into(), vec![0xff, 0xd8, 0xff]));
+        let result = request_worker(&path, "POST", "/api/player", br#"{"source":"airplay"}"#).unwrap();
+        assert_eq!(result.0, 409);
+        assert_eq!(result.2, br#"{"ok":false}"#);
+        handle.join().unwrap();
     }
 }

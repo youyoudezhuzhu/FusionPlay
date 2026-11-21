@@ -1,26 +1,3 @@
 #!/bin/bash
-# uninstall_init — 卸载前停止服务并清理进程/PID/socket。
-# 数据目录（$TRIM_PKGVAR / $TRIM_PKGHOME）默认保留，见 uninstall_callback 与 README。
-set -u
-
-SELF_DIR="$(cd "$(dirname "$0")" && pwd)"
-APP="${TRIM_APPDEST:-/var/apps/fusionplay-fnos/target}"
-VAR="${TRIM_PKGVAR:-/vol1/@appdata/fusionplay-fnos}"
-BIN="$APP/bin/fusionplay-fnos"
-
-log() { echo "$(date '+%Y-%m-%d %H:%M:%S') - $1" >> "$VAR/uninstall.log" 2>/dev/null || true; }
-
-log "uninstall_init：停止服务"
-
-for c in "$SELF_DIR/main" "$SELF_DIR/../cmd/main" "/var/apps/${TRIM_APPNAME:-fusionplay-fnos}/cmd/main"; do
-    if [ -f "$c" ]; then
-        /bin/bash "$c" stop >/dev/null 2>&1 || true
-        break
-    fi
-done
-# 兜底：只清理本应用二进制路径的残留进程
-pkill -f -- "$BIN" 2>/dev/null || true
-rm -f "$VAR/app.pid" "$APP/fusionplay-fnos.sock" 2>/dev/null || true
-
-log "uninstall_init：已停止"
-exit 0
+# Stop the application while its executable is still installed.
+exec /bin/bash "$(dirname "$0")/main" stop

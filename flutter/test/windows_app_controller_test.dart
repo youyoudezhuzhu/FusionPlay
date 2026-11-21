@@ -4,8 +4,8 @@ import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:fusionplay_android_flutter/backend/app_controller.dart';
-import 'package:fusionplay_android_flutter/backend/native_app_controller.dart';
-import 'package:fusionplay_android_flutter/backend/windows_app_controller.dart';
+import 'package:fusionplay_android_flutter/backend/android/native_app_controller.dart';
+import 'package:fusionplay_android_flutter/backend/windows/windows_app_controller.dart';
 import 'package:fusionplay_android_flutter/models/app_state.dart';
 
 /// In-memory [SidecarTransport] used to drive the controller without a real

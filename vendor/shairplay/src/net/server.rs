@@ -225,7 +225,7 @@ impl HttpServer {
         // Bind remaining listeners on the same port (no auto-sensing)
         let mut listeners = vec![first];
         for &addr in &addrs[1..] {
-            match bind_listener(addr, actual_port, false).await {
+            match self.bind_additional_listener(addr, actual_port).await {
                 Ok(l) => listeners.push(l),
                 Err(e) => tracing::warn!(%addr, "Failed to bind additional listener: {e}"),
             }
@@ -247,6 +247,20 @@ impl HttpServer {
         }
 
         Ok(actual_port)
+    }
+
+    async fn bind_additional_listener(&self, addr: IpAddr, port: u16) -> Result<TcpListener, NetworkError> {
+        #[cfg(target_os = "linux")]
+        if self.bind_config.bind_addrs.is_empty() && addr == IpAddr::V6(Ipv6Addr::UNSPECIFIED) {
+            // The default IPv4 wildcard already owns this port. A Linux IPv6
+            // socket accepts both families by default and would conflict.
+            let socket = tokio::net::TcpSocket::new_v6()?;
+            socket2::SockRef::from(&socket).set_only_v6(true)?;
+            socket.set_reuseaddr(true)?;
+            socket.bind(SocketAddr::new(addr, port))?;
+            return Ok(socket.listen(1024)?);
+        }
+        bind_listener(addr, port, false).await
     }
 
     /// Whether the server is currently accepting connections.

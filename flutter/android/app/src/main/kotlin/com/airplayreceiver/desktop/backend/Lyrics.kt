@@ -15,6 +15,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
 enum class LyricsOrigin {
+    AIRPLAY_TITLE,
     EMBEDDED,
     METADATA_URI,
     SIDECAR_URI,
@@ -495,7 +496,10 @@ fun interface LyricsContentLoader {
 class OfflineLyricsResolver(
     private val loader: LyricsContentLoader = JvmLyricsContentLoader(),
 ) {
-    suspend fun resolve(request: LyricsRequest): LyricsDocument? {
+    suspend fun resolve(
+        request: LyricsRequest,
+        report: (LyricsOrigin, String) -> Unit = { _, _ -> },
+    ): LyricsDocument? {
         val embedded = request.embeddedText
             ?.takeIf(String::isNotBlank)
             ?.let { value ->
@@ -504,15 +508,19 @@ class OfflineLyricsResolver(
                     origin = LyricsOrigin.EMBEDDED,
                 )
             }
+        if (!request.embeddedText.isNullOrBlank()) {
+            report(LyricsOrigin.EMBEDDED, if (embedded == null) "parse_empty" else "parsed")
+        }
         if (embedded?.isSynchronized == true) {
             return embedded
         }
 
+        val explicit = resolveMetadataUri(request.metadataUri, request.mediaUri)
+        if (!request.metadataUri.isNullOrBlank() && explicit == null) {
+            report(LyricsOrigin.METADATA_URI, "invalid_uri")
+        }
         val candidates = buildList {
-            resolveMetadataUri(
-                raw = request.metadataUri,
-                mediaUri = request.mediaUri,
-            )?.let { add(it to LyricsOrigin.METADATA_URI) }
+            explicit?.let { add(it to LyricsOrigin.METADATA_URI) }
             deriveSidecarLyricsUri(request.mediaUri)
                 ?.let { add(it to LyricsOrigin.SIDECAR_URI) }
         }.distinctBy { (uri, _) -> uri.normalize().toASCIIString() }
@@ -522,14 +530,24 @@ class OfflineLyricsResolver(
                 loader.load(uri)
             } catch (exception: CancellationException) {
                 throw exception
+            } catch (error: LyricsLoadFailure) {
+                report(origin, error.reason)
+                continue
             } catch (_: Exception) {
-                null
-            } ?: continue
-            LrcParser.parse(
+                report(origin, "read_error")
+                continue
+            }
+            if (loaded == null) {
+                report(origin, "unavailable")
+                continue
+            }
+            val parsed = LrcParser.parse(
                 value = loaded.text,
                 origin = origin,
                 sourceUri = loaded.uri.toASCIIString(),
-            )?.let { return it }
+            )
+            report(origin, if (parsed == null) "parse_empty" else "parsed")
+            if (parsed != null) return parsed
         }
         return embedded
     }
@@ -544,9 +562,9 @@ class OfflineLyricsResolver(
             mediaUri: String?,
         ): URI? {
             val candidate = raw?.trim()?.takeIf(String::isNotEmpty) ?: return null
-            val parsed = runCatching { URI(candidate) }.getOrNull() ?: return null
+            val parsed = runCatching { URI(candidate.replace(" ", "%20")) }.getOrNull() ?: return null
             val base = mediaUri
-                ?.let { runCatching { URI(it) }.getOrNull() }
+                ?.let { runCatching { URI(it.replace(" ", "%20")) }.getOrNull() }
                 ?.takeIf(URI::isAbsolute)
                 ?: return null
             val resolved = if (parsed.isAbsolute) {
@@ -632,6 +650,8 @@ class OfflineLyricsResolver(
     }
 }
 
+private class LyricsLoadFailure(val reason: String) : java.io.IOException(reason)
+
 class JvmLyricsContentLoader(
     private val maxBytes: Int = DEFAULT_MAX_BYTES,
 ) : LyricsContentLoader {
@@ -660,13 +680,21 @@ class JvmLyricsContentLoader(
             )
         }
         try {
-            if (connection.responseCode !in 200..299) {
-                return null
+            val status = connection.responseCode
+            if (status !in 200..299) throw LyricsLoadFailure("http_$status")
+            if (connection.contentLength > maxBytes) throw LyricsLoadFailure("too_large")
+            val bytes = connection.inputStream.use { input ->
+                val output = java.io.ByteArrayOutputStream()
+                val buffer = ByteArray(8192)
+                while (true) {
+                    val count = input.read(buffer)
+                    if (count < 0) break
+                    if (output.size() + count > maxBytes) throw LyricsLoadFailure("too_large")
+                    output.write(buffer, 0, count)
+                }
+                output.toByteArray()
             }
-            val bytes = connection.inputStream.use { it.readBytes() }
-            if (bytes.isEmpty() || bytes.size > maxBytes) {
-                return null
-            }
+            if (bytes.isEmpty()) throw LyricsLoadFailure("empty_body")
             val declaredCharset = (connection.contentType ?: "")
                 .substringAfter("charset=", "")
                 .substringBefore(';')

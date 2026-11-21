@@ -40,10 +40,21 @@ abstract class FusionPlayController extends ChangeNotifier {
 
   /// Checks for an in-app update.
   ///
-  /// Defaults to "unavailable"; only Android overrides this (see
+  /// Defaults to "unavailable"; platform controllers override this (see
   /// [AndroidUpdateService]).
   Future<UpdateCheckResult> checkForUpdate() async =>
       const UpdateCheckResult(status: UpdateCheckStatus.unavailable);
+
+  SaveUpdate? get saveUpdate => null;
+
+  Future<void> downloadUpdate(String key, DownloadProgress progress) =>
+      Future.error(UnsupportedError('当前平台不支持在线更新'));
+
+  Future<UpdateInstallResult> installDownloadedUpdate(String key) async =>
+      const UpdateInstallResult(
+        status: UpdateInstallStatus.error,
+        message: '当前平台不支持在线更新',
+      );
 
   /// Downloads and starts the system installer for an available update.
   ///

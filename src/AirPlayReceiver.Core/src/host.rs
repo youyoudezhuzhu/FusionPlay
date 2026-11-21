@@ -62,6 +62,9 @@ impl std::fmt::Debug for Settings {
 #[derive(Debug, Deserialize)]
 struct UiCommand {
     command: String,
+    epoch: Option<u64>,
+    uri: Option<String>,
+    decoder_id: Option<u64>,
     #[serde(default)]
     request_id: Option<String>,
     #[serde(default)]
@@ -448,6 +451,18 @@ async fn wait_for_ui_commands(
                 &command_name,
                 &result,
             );
+            continue;
+        }
+        if matches!(command_name.as_str(), "dlna_audio_ready" | "dlna_audio_finished") {
+            if let (Some(controller), Some(epoch), Some(uri)) =
+                (&dlna_controller, command.epoch, command.uri.as_deref())
+            {
+                if command_name == "dlna_audio_ready" {
+                    controller.audio_decoder_ready(epoch, uri, command.decoder_id);
+                } else if let Some(id) = command.decoder_id {
+                    controller.audio_decoder_finished(epoch, uri, id);
+                }
+            }
             continue;
         }
         if command_name == "video_state" {

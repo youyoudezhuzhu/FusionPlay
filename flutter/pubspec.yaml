@@ -4,12 +4,13 @@ homepage: https://github.com/youyoudezhuzhu/FusionPlay
 repository: https://github.com/youyoudezhuzhu/FusionPlay
 issue_tracker: https://github.com/youyoudezhuzhu/FusionPlay/issues
 publish_to: none
-version: 1.7.2+10702
+version: 1.7.10+10710
 
 environment:
   sdk: ^3.8.0
 
 dependencies:
+  file_selector_windows: ^0.9.3+4
   flutter:
     sdk: flutter
   flutter_svg: 2.2.3

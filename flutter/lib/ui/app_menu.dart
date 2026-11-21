@@ -294,6 +294,7 @@ class FusionMorphOverlay extends StatefulWidget {
     required this.onClosed,
     this.onTransitionCompleted,
     this.settingsMaxWidth = 560,
+    this.settingsMinWidth = 0,
     this.forceFallback = false,
   });
 
@@ -310,8 +311,9 @@ class FusionMorphOverlay extends StatefulWidget {
   final VoidCallback onClosed;
   final ValueChanged<MorphStage>? onTransitionCompleted;
 
-  /// Upper bound of the settings panel width (still clamped to half screen).
+  /// Preferred panel width bounds, limited by the available screen width.
   final double settingsMaxWidth;
+  final double settingsMinWidth;
   final bool forceFallback;
 
   @override
@@ -321,8 +323,8 @@ class FusionMorphOverlay extends StatefulWidget {
 class _FusionMorphOverlayState extends State<FusionMorphOverlay>
     with SingleTickerProviderStateMixin {
   static const settingsRadius = 28.0;
-  static const menuTint = Color(0x7014171C);
-  static const settingsTint = Color(0x8814191F);
+  static const menuTint = Color(0x32141722);
+  static const settingsTint = Color(0x42141925);
 
   late final AnimationController _controller = AnimationController(vsync: this);
 
@@ -350,7 +352,9 @@ class _FusionMorphOverlayState extends State<FusionMorphOverlay>
   void didUpdateWidget(covariant FusionMorphOverlay oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.stage != widget.stage ||
-        oldWidget.anchorRect != widget.anchorRect) {
+        oldWidget.anchorRect != widget.anchorRect ||
+        (widget.stage == MorphStage.menu &&
+            widget.menuItems.length != oldWidget.menuItems.length)) {
       final target = widget.stage;
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (!mounted || widget.stage != target) return;
@@ -415,7 +419,10 @@ class _FusionMorphOverlayState extends State<FusionMorphOverlay>
 
   Rect _settingsRect(Size size) {
     const side = 16.0;
-    final width = math.min(widget.settingsMaxWidth, size.width * .5);
+    final width = math.min(
+      math.max(0.0, size.width - 2 * side),
+      (size.width * .5).clamp(widget.settingsMinWidth, widget.settingsMaxWidth),
+    ).toDouble();
     final height = math.max(120.0, size.height - side * 2);
     return Rect.fromLTWH(size.width - side - width, side, width, height);
   }
@@ -518,12 +525,9 @@ class _FusionMorphOverlayState extends State<FusionMorphOverlay>
               level: GlassLevel.panel,
               interactive: false,
               borderRadius: radius,
-              blurSigma: settingsAmount > .5 ? 24 : 20,
+              blurSigma: 20 + 4 * settingsAmount,
               tint: tint,
-              forceFallback: true,
-              refraction: 0,
-              specular: .18,
-              thickness: 8,
+              forceFallback: widget.forceFallback,
               tintGradient: settingsAmount > .35
                   ? const LinearGradient(
                       begin: Alignment.topLeft,

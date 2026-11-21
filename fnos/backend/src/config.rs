@@ -118,9 +118,15 @@ impl Default for MiPlaySwitch {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct AudioSettings {
+    /// Independent receiver processes. Legacy output groups still mirror the main stream.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub instances: Vec<SpeakerInstance>,
+    /// Named sets of ALSA device IDs sharing the active receiver stream.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub output_groups: Vec<OutputGroup>,
     /// Master mix rate. The engine runs at this rate and resamples per device.
     pub sample_rate: u32,
     /// Global calibration attenuation, 0–100 % (100 = no extra attenuation).
@@ -137,6 +143,8 @@ pub struct AudioSettings {
 impl Default for AudioSettings {
     fn default() -> Self {
         Self {
+            instances: Vec::new(),
+            output_groups: Vec::new(),
             sample_rate: 48_000,
             global_attenuation_percent: 100.0,
             curve: VolumeCurve::default(),
@@ -146,7 +154,21 @@ impl Default for AudioSettings {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct SpeakerInstance {
+    /// Stable URL and on-disk identity, independent of display name or device.
+    pub id: String,
+    pub name: String,
+    pub device_id: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct OutputGroup {
+    pub name: String,
+    pub devices: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct DeviceSetting {
     /// Stable ALSA id, e.g. `hw:CARD=ultra,DEV=0`.
@@ -195,6 +217,22 @@ impl Default for LoggingSettings {
 }
 
 impl Config {
+    pub fn has_primary(&self) -> bool {
+        self.audio.instances.is_empty() || self.audio.devices.iter().any(|d| d.enabled)
+    }
+
+    /// When all devices belong to named speakers, the parent only serves the
+    /// gateway. Keep saved protocol preferences for later re-enabling it.
+    pub(crate) fn primary_config(&self) -> Config {
+        let mut effective = self.clone();
+        if !self.has_primary() {
+            effective.protocols.airplay.enabled = false;
+            effective.protocols.dlna.enabled = false;
+            effective.protocols.miplay.enabled = false;
+        }
+        effective
+    }
+
     pub fn load(path: &Path) -> Result<Self> {
         match std::fs::read_to_string(path) {
             Ok(text) => {
@@ -272,6 +310,32 @@ impl Config {
         }
         if !(0.0..=100.0).contains(&self.audio.global_attenuation_percent) {
             anyhow::bail!("全局衰减必须在 0–100%");
+        }
+        let mut outputs = std::collections::HashSet::new();
+        for output in &self.audio.devices {
+            anyhow::ensure!(!output.id.trim().is_empty() && outputs.insert(output.id.as_str()),
+                "输出设备的标识不能为空或重复");
+        }
+        let mut ids = std::collections::HashSet::new();
+        let mut receiver_names = std::collections::HashSet::from([self.receiver.name.trim().to_lowercase()]);
+        let mut owners: std::collections::HashSet<_> = self.audio.devices.iter()
+            .filter(|device| device.enabled).map(|device| device.id.as_str()).collect();
+        for speaker in &self.audio.instances {
+            anyhow::ensure!(!speaker.id.is_empty() && speaker.id.len() <= 40
+                && speaker.id != "default" && speaker.id.bytes().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == b'-')
+                && ids.insert(&speaker.id), "音箱实例标识无效或重复");
+            anyhow::ensure!(!speaker.name.trim().is_empty() && receiver_names.insert(speaker.name.trim().to_lowercase()),
+                "每个音箱实例都需要不同的接收名称");
+            anyhow::ensure!(outputs.contains(speaker.device_id.as_str()), "音箱实例指定的输出设备尚未配置");
+            anyhow::ensure!(owners.insert(&speaker.device_id),
+                "输出设备已被另一个接收器占用或未指定");
+        }
+        let mut names = std::collections::HashSet::new();
+        for group in &self.audio.output_groups {
+            anyhow::ensure!(!group.name.trim().is_empty() && names.insert(group.name.trim()),
+                "输出方案名称不能为空或重复");
+            anyhow::ensure!(!group.devices.is_empty() && group.devices.iter().all(|id| !id.is_empty()),
+                "输出方案至少需要一个音箱");
         }
         if !self.audio.curve.is_default() {
             self.audio.curve.validate().map_err(anyhow::Error::msg)?;

@@ -7,8 +7,12 @@
 //! The interface is specified in `docs/WINDOWS_ARCHITECTURE.md`.
 
 pub mod app;
+#[path = "../../../src/shared_update/mod.rs"]
+pub mod shared_update;
 pub mod audio;
 pub mod dlna_player;
+#[path = "../../../src/shared_logging/mod.rs"]
+mod shared_logging;
 pub mod logging;
 pub mod protocols;
 pub mod session;
@@ -23,4 +27,12 @@ pub use ui_protocol::{AppStateView, PlaybackView, RemoteControlView, SettingsVie
 
 /// Product version reported by `--version`, the `ready` event and the Windows
 /// version resource. Keep in sync with the repository `VERSION` file.
-pub const VERSION: &str = env!("CARGO_PKG_VERSION");
+pub const VERSION: &str = env!("FUSIONPLAY_PRODUCT_VERSION");
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn sidecar_version_matches_the_packaged_product() {
+        assert_eq!(super::VERSION, include_str!("../../../VERSION").trim());
+    }
+}

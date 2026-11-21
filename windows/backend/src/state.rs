@@ -14,6 +14,7 @@
 //! * **metadata continuity** — a `now_playing`/`cover_art` event with missing
 //!   optional fields keeps the previous title/cover instead of clearing it.
 
+use fusionplay_miplay_sdk::track::TrackCredit;
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::{Duration, Instant};
 
@@ -78,6 +79,7 @@ impl SourceKey {
 /// Cached per-source playback + remote-control snapshot.
 #[derive(Debug, Clone, Default)]
 struct SourceSnapshot {
+    miplay_track_id: Option<String>,
     playback: PlaybackView,
     remote_control: RemoteControlView,
 }
@@ -86,7 +88,7 @@ impl SourceSnapshot {
     fn fresh(playback: PlaybackView) -> Self {
         Self {
             playback,
-            remote_control: RemoteControlView::default(),
+            ..Self::default()
         }
     }
 }
@@ -343,10 +345,9 @@ impl Inner {
         } else {
             RemoteControlView::default()
         };
-        self.sources[source.index()] = SourceSnapshot {
-            playback,
-            remote_control,
-        };
+        let snapshot = self.snapshot_mut(source);
+        snapshot.playback = playback;
+        snapshot.remote_control = remote_control;
         self.mark_selected(source);
         if self.active.is_none() {
             self.foreground = Some(source);
@@ -360,6 +361,7 @@ impl Inner {
         }
         let title = field_str(event, &["title", "track", "name"]);
         let artist = field_str(event, &["artist", "album_artist", "albumArtist"]);
+        let lyric = field_str(event, &["lyric_line"]);
         let album = field_str(event, &["album"]);
         let duration =
             field_u64(event, &["duration_ms", "durationMs"]).filter(|duration| *duration > 0);
@@ -367,6 +369,7 @@ impl Inner {
         if title.is_none()
             && artist.is_none()
             && album.is_none()
+            && lyric.is_none()
             && duration.is_none()
             && epoch.is_none()
         {
@@ -374,11 +377,16 @@ impl Inner {
         }
 
         let previous = self.snapshot(source).playback.clone();
-        let track_changed = matches!(
-            (&title, &previous.title),
-            (Some(new_title), Some(old_title)) if new_title != old_title
-        );
+        let track_changed = field_bool(event, &["track_changed"]).unwrap_or_else(|| {
+            matches!(
+                (&title, &previous.title),
+                (Some(new_title), Some(old_title)) if new_title != old_title
+            )
+        });
         let mut playback = previous;
+        if track_changed || lyric.is_some() {
+            playback.lyrics = lyric;
+        }
         if track_changed {
             playback.title = title;
             playback.artist = artist;
@@ -586,6 +594,8 @@ impl Inner {
                 .or_else(|| previous.artist.clone().filter(|_| same_media)),
             album: field_str(event, &["album"])
                 .or_else(|| previous.album.clone().filter(|_| same_media)),
+            lyrics: field_str(event, &["lyrics_text"])
+                .or_else(|| previous.lyrics.filter(|_| same_media)),
             cover_art: artwork.or_else(|| previous.cover_art.clone().filter(|_| same_media)),
             media_url: Some(url.clone()),
             media_kind: Some(
@@ -616,6 +626,7 @@ impl Inner {
         self.sources[SourceKey::Dlna.index()] = SourceSnapshot {
             playback,
             remote_control,
+            ..SourceSnapshot::default()
         };
         self.mark_selected(SourceKey::Dlna);
         self.refresh_projection(SourceKey::Dlna);
@@ -772,9 +783,37 @@ impl Inner {
         {
             let snapshot = self.snapshot_mut(SourceKey::MiPlay);
             snapshot.playback.protocol = Some(MIPLAY_PROTOCOL.to_owned());
-            let track_changed = title
-                .as_deref()
-                .is_some_and(|new_title| snapshot.playback.title.as_deref() != Some(new_title));
+            let incoming = TrackCredit {
+                id: track_id.as_deref(),
+                title: title.as_deref(),
+                artist: artist.as_deref(),
+            };
+            let track_changed = incoming.changed_from(&TrackCredit {
+                id: snapshot.miplay_track_id.as_deref(),
+                title: snapshot
+                    .playback
+                    .title
+                    .as_deref()
+                    .filter(|s| *s != MIPLAY_PLACEHOLDER_TITLE),
+                artist: snapshot.playback.artist.as_deref(),
+            });
+            if track_changed {
+                snapshot.miplay_track_id = None;
+                snapshot.playback.title = None;
+                snapshot.playback.artist = None;
+                snapshot.playback.album = None;
+                snapshot.playback.lyrics = None;
+                snapshot.playback.cover_art = None;
+                snapshot.playback.duration_ms = None;
+                snapshot.playback.track_identity = None;
+                snapshot.playback.track_change_direction = None;
+            }
+            if let Some(id) = incoming.sender_id() {
+                snapshot.miplay_track_id = Some(id.to_owned());
+            }
+            if let Some(lyrics) = field_str(event, &["lyrics"]) {
+                snapshot.playback.lyrics = Some(lyrics);
+            }
             if title.is_some() {
                 snapshot.playback.title = title;
             }
@@ -795,9 +834,21 @@ impl Inner {
             } else if let Some(position) = position {
                 snapshot.playback.position_ms = position;
             }
-            if let Some(title) = snapshot.playback.title.clone() {
-                let identity =
-                    miplay_track_identity(&title, source_name.as_deref().or(track_id.as_deref()));
+            let identity = if let Some(id) = &snapshot.miplay_track_id {
+                Some(format!("miplay:id:{id}"))
+            } else if source_name.is_some()
+                || track_changed
+                || snapshot.playback.track_identity.is_none()
+            {
+                snapshot
+                    .playback
+                    .title
+                    .as_deref()
+                    .map(|title| miplay_track_identity(title, source_name.as_deref()))
+            } else {
+                None
+            };
+            if let Some(identity) = identity {
                 if snapshot.playback.track_identity.as_deref() != Some(identity.as_str()) {
                     snapshot.playback.track_change_direction = None;
                 }
@@ -1801,6 +1852,69 @@ mod tests {
     }
 
     #[test]
+    fn receiver_lyrics_reach_the_wire_and_follow_the_track() {
+        let state = state();
+        state.ingest_core_event(&json!({
+            "type": "now_playing", "source": "airplay", "epoch": 1,
+            "title": "晴天", "artist": "周杰伦", "lyric_line": "第一行"
+        }));
+        state.ingest_core_event(&json!({"type":"stream_started", "source":"airplay", "epoch":1}));
+        state.ingest_core_event(
+            &json!({"type":"progress", "source":"airplay", "epoch":1, "position_ms":42000}),
+        );
+        state.ingest_core_event(&json!({
+            "type":"now_playing", "source":"airplay", "epoch":1,
+            "title":"晴天", "lyric_line":"第二行", "track_changed":false
+        }));
+        let wire = serde_json::to_value(state.view()).unwrap();
+        assert_eq!(wire["playback"]["lyrics"], "第二行");
+        assert_eq!(wire["playback"]["positionMs"], 42000);
+        state.ingest_core_event(&json!({
+            "type":"now_playing", "source":"airplay", "epoch":1, "title":"晴天", "track_changed":true
+        }));
+        assert!(state.view().playback.lyrics.is_none());
+
+        state.ingest_core_event(&json!({"type":"source_takeover", "source":"dlna", "epoch":2}));
+        state.ingest_core_event(&json!({
+            "type":"dlna_media", "url":"http://speaker/one", "lyrics_text":"[00:03.25]DLNA"
+        }));
+        state.ingest_core_event(&json!({"type":"dlna_media", "url":"http://speaker/one"}));
+        assert_eq!(
+            state.view().playback.lyrics.as_deref(),
+            Some("[00:03.25]DLNA")
+        );
+        state.ingest_core_event(&json!({"type":"dlna_media", "url":"http://speaker/two"}));
+        assert!(state.view().playback.lyrics.is_none());
+    }
+
+    #[test]
+    fn miplay_partial_updates_keep_credits_until_the_sender_changes_song() {
+        let state = state();
+        state.ingest_miplay_event(&json!({
+            "event":"media_info", "track_id":"track-a", "title":"Loop", "artist":"Artist",
+            "artwork":"first.jpg", "position_ms":14000
+        }));
+        let identity = state.view().playback.track_identity;
+        state.ingest_miplay_event(&json!({
+            "event":"media_info", "track_id":"metadata:partial", "lyrics":"[00:01]{A}"
+        }));
+        let view = state.view().playback;
+        assert_eq!(view.track_identity, identity);
+        assert_eq!(view.artist.as_deref(), Some("Artist"));
+        assert_eq!(view.lyrics.as_deref(), Some("[00:01]{A}"));
+        assert_eq!(view.position_ms, 14000);
+        state.ingest_miplay_event(&json!({
+            "event":"media_info", "track_id":"track-b", "title":"Loop"
+        }));
+        let next = state.view().playback;
+        assert_ne!(next.track_identity, identity);
+        assert!(next.lyrics.is_none());
+        assert!(next.cover_art.is_none());
+        assert!(next.artist.is_none());
+        assert_eq!(next.position_ms, 0);
+    }
+
+    #[test]
     fn source_takeover_switches_protocol_and_scopes_epochs() {
         let state = state();
         state.ingest_core_event(&json!({"type": "stream_started", "epoch": 1}));
@@ -2010,7 +2124,7 @@ mod tests {
         assert_eq!(view.playback.duration_ms, Some(325_000));
         assert_eq!(
             view.playback.track_identity.as_deref(),
-            Some("miplay:起风了|xiaomi")
+            Some("miplay:id:t-1")
         );
 
         state.ingest_miplay_event(&json!({

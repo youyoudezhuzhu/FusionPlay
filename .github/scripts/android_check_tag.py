@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Validate the Android release tag and expose version metadata to the workflow.
 
-The Android release flow is tag-driven: pushing ``android-v<versionName>`` (for
-example ``android-v1.3.4``) builds and publishes the APK. The tag must match the
+The Android release flow is tag-driven: pushing ``v<versionName>`` (for
+example ``v1.3.4``) builds and publishes all platform installers. The tag must match the
 repository root ``VERSION`` file exactly, otherwise the APK, GitHub Release,
 update manifest and Pages download page would disagree about the version.
 
@@ -11,11 +11,11 @@ Outputs written to ``$GITHUB_OUTPUT`` (and printed for humans):
     version      1.3.4
     version_code 10304
     is_release   true|false
-    tag          android-v1.3.4 (empty for branch pushes)
+    tag          v1.3.4 (empty for branch pushes)
 
 Usage:
     python3 .github/scripts/android_check_tag.py --ref "$GITHUB_REF"
-    python3 .github/scripts/android_check_tag.py --ref refs/tags/android-v1.3.4
+    python3 .github/scripts/android_check_tag.py --ref refs/tags/v1.3.4
 """
 
 from __future__ import annotations
@@ -25,7 +25,7 @@ import os
 import re
 import sys
 
-TAG_PREFIX = "android-v"
+TAG_PREFIX = "v"
 VERSION_PATTERN = re.compile(r"^(\d+)\.(\d+)\.(\d+)$")
 
 
@@ -47,7 +47,7 @@ def version_code(version: str) -> int:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--ref", required=True, help="Value of github.ref, e.g. refs/tags/android-v1.3.4")
+    parser.add_argument("--ref", required=True, help="Value of github.ref, e.g. refs/tags/v1.3.4")
     parser.add_argument("--version-file", default="VERSION", help="Repository VERSION file path")
     parser.add_argument(
         "--github-output",

@@ -74,7 +74,10 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
-use symphonia::core::audio::{Channels, Position};
+#[path = "../../../src/shared_audio/stereo.rs"]
+mod stereo;
+use stereo::Converter;
+use symphonia::core::audio::Channels;
 use symphonia::core::codecs::audio::{
     AudioCodecParameters, AudioDecoderOptions, well_known::{CODEC_ID_AAC, CODEC_ID_MP3},
 };
@@ -89,11 +92,6 @@ use symphonia::core::units::{Duration as MediaDuration, Time, Timestamp};
 
 use rustls::pki_types::ServerName;
 use rustls::{ClientConfig, ClientConnection, RootCertStore, StreamOwned};
-use rubato::audioadapter_buffers::direct::InterleavedSlice;
-use rubato::{
-    calculate_cutoff, Async, FixedAsync, Resampler, SincInterpolationParameters,
-    SincInterpolationType, WindowFunction,
-};
 
 use crate::audio::AudioEngine;
 use crate::session::{Arbiter, Lease, Source};
@@ -102,6 +100,10 @@ use crate::state::SharedState;
 /// The unified engine's master mix format.
 const TARGET_RATE: u32 = 48_000;
 const TARGET_CHANNELS: usize = 2;
+/// Keep the file decoder ahead of playback without filling the 300 ms device ring.
+const PCM_LEAD: Duration = Duration::from_millis(60);
+const PCM_BATCH_FRAMES: usize = TARGET_RATE as usize / 50;
+const CONTROL_POLL: Duration = Duration::from_millis(10);
 
 /// Default connect/read timeout for DLNA HTTP transfers. LAN media servers are
 /// expected to answer quickly; a stalled server must fail instead of hanging.
@@ -149,9 +151,6 @@ const MAX_CONSECUTIVE_DECODE_ERRORS: u32 = 32;
 /// How often the shared state is refreshed during playback (UI-friendly).
 const STATE_UPDATE_INTERVAL: Duration = Duration::from_millis(250);
 
-/// Input chunk size (frames) handed to the rubato resampler at a time.
-const RESAMPLE_CHUNK_FRAMES: usize = 1024;
-
 // ---------------------------------------------------------------------------
 // Public API
 // ---------------------------------------------------------------------------
@@ -159,9 +158,13 @@ const RESAMPLE_CHUNK_FRAMES: usize = 1024;
 /// Metadata attached to a DLNA media start. Mirrors the fields of
 /// `airplay_receiver_core::CoreEvent::DlnaMedia` so the event can be forwarded
 /// without losing title/duration information.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, serde::Deserialize)]
 pub struct DlnaTrack<'a> {
+    #[serde(rename = "url")]
     pub uri: &'a str,
+    pub epoch: Option<u64>,
+    pub decoder_id: Option<u64>,
+    pub lyrics_text: Option<&'a str>,
     pub title: Option<&'a str>,
     pub artist: Option<&'a str>,
     pub album: Option<&'a str>,
@@ -172,8 +175,10 @@ pub struct DlnaTrack<'a> {
     pub bits_per_sample: Option<u16>,
     pub channels: Option<u16>,
     pub upnp_class: Option<&'a str>,
+    #[serde(default)]
     pub media_kind: &'a str,
     pub duration_ms: Option<u64>,
+    #[serde(default)]
     pub start_position_ms: u64,
 }
 
@@ -197,8 +202,10 @@ pub struct DlnaStats {
 
 /// Currently playing track: stop token plus the pending seek request that the
 /// decode loop applies (format seek, or a reopened range/discard stream).
-struct CurrentPlayback {
-    token: Arc<AtomicBool>,
+pub(crate) struct CurrentPlayback {
+    abort: AbortHandle,
+    core_epoch: Option<u64>,
+    decoder_id: Option<u64>,
     seek: Arc<Mutex<Option<u64>>>,
 }
 
@@ -208,9 +215,11 @@ pub struct DlnaPlayer {
     engine: Arc<AudioEngine>,
     arbiter: Arc<Arbiter>,
     state: SharedState,
-    /// Stop token + seek request of the currently playing track. A new track
-    /// replaces it; `stop()` and the arbiter suspend hook raise the token.
-    current: Mutex<Option<CurrentPlayback>>,
+    /// Reserved before opening the URI so control events can interrupt startup.
+    current: Mutex<Option<Arc<CurrentPlayback>>>,
+    paused: AtomicBool,
+    decoded: AtomicBool,
+    core_commands: Mutex<Option<tokio::sync::mpsc::UnboundedSender<String>>>,
     timeout_ms: AtomicU64,
     stats: Mutex<Option<DlnaStats>>,
     /// P2-1: opt-in auto-advance hook. The 1.3.x DLNA control plane is
@@ -225,28 +234,39 @@ impl DlnaPlayer {
         arbiter: Arc<Arbiter>,
         state: SharedState,
     ) -> Arc<Self> {
-        let player = Arc::new(Self {
+        Arc::new(Self {
             engine,
-            arbiter: Arc::clone(&arbiter),
+            arbiter,
             state,
             current: Mutex::new(None),
+            paused: AtomicBool::new(false),
+            decoded: AtomicBool::new(false),
+            core_commands: Mutex::new(None),
             timeout_ms: AtomicU64::new(DEFAULT_TIMEOUT.as_millis() as u64),
             stats: Mutex::new(None),
             auto_advance: AtomicBool::new(false),
-        });
-        // When AirPlay/MiPlay takes over, the arbiter calls this hook outside
-        // its lock. It raises our stop token so even a source blocked in a
-        // socket read returns quickly (the read timeout remains the backstop).
-        let weak = Arc::downgrade(&player);
-        arbiter.set_suspend_hook(
-            Source::Dlna,
-            Arc::new(move |_lease| {
-                if let Some(player) = weak.upgrade() {
-                    player.stop();
-                }
-            }),
-        );
-        player
+        })
+    }
+
+    pub(crate) fn bind_core(&self, tx: tokio::sync::mpsc::UnboundedSender<String>) {
+        *self.core_commands.lock().unwrap() = Some(tx);
+    }
+
+    fn announce_decoded(&self, track: &DlnaTrack<'_>, abort: &AbortHandle) {
+        let mut state = self.state.state.write().unwrap();
+        if abort.aborted() { return; }
+        self.decoded.store(true, Ordering::Release);
+        if self.paused.load(Ordering::Acquire) {
+            state.dlna.state = "paused".into();
+        } else {
+            state.dlna.state = "playing".into();
+        }
+        drop(state);
+        if let (Some(epoch), Some(tx)) = (track.epoch, self.core_commands.lock().unwrap().as_ref()) {
+            let _ = tx.send(serde_json::json!({
+                "command": "dlna_audio_ready", "epoch": epoch, "uri": track.uri, "decoder_id": track.decoder_id
+            }).to_string());
+        }
     }
 
     /// Override connect/read timeout (tests and slow NAS tuning).
@@ -259,11 +279,25 @@ impl DlnaPlayer {
         Duration::from_millis(self.timeout_ms.load(Ordering::Acquire).max(1))
     }
 
-    /// Stop the currently playing DLNA track, if any. Safe to call from any
-    /// thread (including arbiter suspend hooks).
+    pub fn set_paused(&self, paused: bool) {
+        self.rate_event(None, paused);
+    }
+
+    pub(crate) fn rate_event(&self, epoch: Option<u64>, paused: bool) {
+        let playback = self.current.lock().unwrap();
+        let Some(active) = playback.as_ref() else { return };
+        let mut runtime = self.state.state.write().unwrap();
+        if active.abort.aborted() || epoch.is_some() && epoch != active.core_epoch { return; }
+        self.paused.store(paused, Ordering::Release);
+        if paused { self.engine.flush(Source::Dlna); }
+        runtime.dlna.state = if paused { "paused" }
+            else if self.decoded.load(Ordering::Acquire) { "playing" }
+            else { "buffering" }.into();
+    }
+
     pub fn stop(&self) {
         if let Some(current) = self.current.lock().unwrap().as_ref() {
-            current.token.store(true, Ordering::Release);
+            current.abort.stop.store(true, Ordering::Release);
         }
     }
 
@@ -305,65 +339,100 @@ impl DlnaPlayer {
     /// Start playback for a DLNA media URI with AVTransport metadata. Blocking;
     /// call from a worker thread.
     pub fn play_track(&self, track: &DlnaTrack<'_>) -> Result<()> {
-        // A new track supersedes the previous one played by this player.
-        self.stop();
-        let token = Arc::new(AtomicBool::new(false));
-        let seek = Arc::new(Mutex::new(None));
-        *self.current.lock().unwrap() = Some(CurrentPlayback {
-            token: Arc::clone(&token),
-            seek: Arc::clone(&seek),
-        });
-
-        let result = self.run_track(track, &token, &seek);
-
-        let mut current = self.current.lock().unwrap();
-        if current
-            .as_ref()
-            .is_some_and(|running| Arc::ptr_eq(&running.token, &token))
-        {
-            *current = None;
-        }
-        drop(current);
-        result
+        let playback = self.begin_track(track)?;
+        self.run_track(track, &playback)
     }
 
-    fn run_track(
-        &self,
-        track: &DlnaTrack<'_>,
-        token: &Arc<AtomicBool>,
-        seek_slot: &Arc<Mutex<Option<u64>>>,
-    ) -> Result<()> {
-        // Reject bad/unsupported input before touching the arbiter or network.
+    // Reserve the lease on the event thread. A following Stop/Pause/Seek or
+    // another Play now takes effect even if the decoder thread has not run.
+    pub(crate) fn begin_track(&self, track: &DlnaTrack<'_>) -> Result<Arc<CurrentPlayback>> {
+        let mut slot = self.current.lock().unwrap();
         if let Err(error) = validate_track(track) {
+            if let Some(previous) = slot.take() {
+                self.cancel(&previous);
+            }
             self.record_failure(&format!("DLNA 媒体被拒绝：{error:#}"));
+            self.notify_finished(track);
             return Err(error);
         }
+        let mut state = self.state.state.write().unwrap();
+        if let Some(previous) = slot.as_ref() {
+            previous.abort.stop.store(true, Ordering::Release);
+        }
+        let claim = self.arbiter.claim(Source::Dlna, "media");
+        if slot.is_some() || claim.suspended.is_some() { self.engine.flush(Source::Dlna); }
+        let playback = Arc::new(CurrentPlayback {
+            abort: AbortHandle { stop: Arc::new(AtomicBool::new(false)), arbiter: self.arbiter.clone(), lease: claim.lease },
+            core_epoch: track.epoch,
+            decoder_id: track.decoder_id,
+            seek: Arc::new(Mutex::new(None)),
+        });
+        self.paused.store(false, Ordering::Release);
+        self.decoded.store(false, Ordering::Release);
+        *slot = Some(playback.clone());
+        state.select_source(Some(Source::Dlna));
+        state.dlna.state = "buffering".into();
+        state.dlna.detail = format!("正在连接 DLNA 媒体：{}", display_title(track));
+        state.media = Default::default();
+        state.media.title = Some(display_title(track));
+        state.media.artist = track.artist.map(str::to_owned);
+        state.media.album = track.album.map(str::to_owned);
+        state.media.cover_url = track.artwork_url.map(str::to_owned);
+        state.media.lyrics_text = track.lyrics_text.map(str::to_owned);
+        state.media.duration_ms = track.duration_ms;
+        state.media.position_ms = Some(track.start_position_ms);
+        Ok(playback)
+    }
 
+    fn cancel(&self, active: &CurrentPlayback) {
+        active.abort.stop.store(true, Ordering::Release);
+        let mut runtime = self.state.state.write().unwrap();
+        if self.arbiter.release(active.abort.lease) && runtime.current_source.as_deref() == Some("dlna") {
+            self.engine.flush(Source::Dlna);
+            runtime.select_source(None);
+        }
+    }
+
+    pub(crate) fn refresh_metadata(&self, track: &DlnaTrack<'_>) {
+        let slot = self.current.lock().unwrap();
+        let Some(active) = slot.as_ref() else { return };
+        let mut runtime = self.state.state.write().unwrap();
+        if active.abort.aborted() || active.core_epoch != track.epoch || active.decoder_id != track.decoder_id {
+            return;
+        }
+        runtime.media.title = Some(display_title(track));
+        runtime.media.artist = track.artist.map(str::to_owned);
+        runtime.media.album = track.album.map(str::to_owned);
+        runtime.media.cover_url = track.artwork_url.map(str::to_owned);
+        runtime.media.lyrics_text = track.lyrics_text.map(str::to_owned);
+        runtime.media.duration_ms = track.duration_ms.or(runtime.media.duration_ms);
+    }
+
+    pub(crate) fn worker_failed(&self, active: &Arc<CurrentPlayback>, track: &DlnaTrack<'_>, error: &std::io::Error) {
+        let mut slot = self.current.lock().unwrap();
+        if slot.as_ref().is_some_and(|current| Arc::ptr_eq(current, active)) {
+            *slot = None;
+            self.cancel(active);
+            self.record_failure(&format!("无法启动 DLNA 解码线程：{error}"));
+            self.notify_finished(track);
+        }
+    }
+
+    fn notify_finished(&self, track: &DlnaTrack<'_>) {
+        if let (Some(id), Some(tx)) = (track.decoder_id, self.core_commands.lock().unwrap().as_ref()) {
+            let _ = tx.send(serde_json::json!({"command":"dlna_audio_finished", "epoch":track.epoch,
+                "decoder_id":id, "uri":track.uri}).to_string());
+        }
+    }
+
+    pub(crate) fn run_track(&self, track: &DlnaTrack<'_>, playback_slot: &Arc<CurrentPlayback>) -> Result<()> {
+        let abort = &playback_slot.abort;
+        let seek_slot = &playback_slot.seek;
+        let lease = abort.lease;
+        let epoch = lease.epoch;
         let timeout = self.timeout();
         let started = Instant::now();
         let title = display_title(track);
-
-        let claim = self.arbiter.claim(Source::Dlna, track.uri);
-        let lease = claim.lease;
-        let epoch = lease.epoch;
-        let abort = AbortHandle {
-            stop: Arc::clone(token),
-            arbiter: Arc::clone(&self.arbiter),
-            lease,
-        };
-
-        self.state.set_current_source(Some(Source::Dlna));
-        {
-            let mut state = self.state.state.write().unwrap();
-            state.dlna.state = "buffering".into();
-            state.dlna.detail = format!("正在连接 DLNA 媒体：{title}");
-            state.media.title = Some(title.clone());
-            state.media.artist = track.artist.map(str::to_string);
-            state.media.album = track.album.map(str::to_string);
-            state.media.cover_url = track.artwork_url.map(str::to_string);
-            state.media.duration_ms = track.duration_ms;
-            state.media.position_ms = Some(track.start_position_ms);
-        }
 
         // Fetch + decode. A seek the current format/source cannot apply in place
         // returns `SeekFallback`; this outer loop then reopens the stream at a
@@ -385,7 +454,7 @@ impl DlnaPlayer {
             };
             let outcome = match opened {
                 Ok(opened) => {
-                    self.decode_and_play(opened, track, &abort, epoch, started, request, seek_slot)
+                    self.decode_and_play(opened, track, abort, epoch, started, request, seek_slot)
                 }
                 Err(error) => Err(error),
             };
@@ -457,20 +526,37 @@ impl DlnaPlayer {
         // itself looks like a takeover. If another source stole the lease,
         // `release` is a no-op and `current_source` belongs to that source —
         // leave it alone.
-        let reason = abort.end_reason();
-        let still_owner = self.arbiter.accepts(lease);
-        let new_source = self.arbiter.current().map(|current| current.source);
-        // Flushing drops the device rings. Always flush when we still own the
-        // engine, and also when AirPlay/MiPlay took over so stale DLNA audio
-        // does not leak into the new source. Never flush a new DLNA track's
-        // freshly queued PCM.
-        if still_owner || new_source != Some(Source::Dlna) {
-            self.engine.flush(Source::Dlna);
+        let mut slot = self.current.lock().unwrap();
+        if !slot.as_ref().is_some_and(|active| Arc::ptr_eq(active, playback_slot)) {
+            return Ok(());
         }
-        if still_owner && self.arbiter.release(lease) {
-            // Only clear the shared source if *this* lease was still current;
-            // a takeover racing with the release must not clobber its source.
-            self.state.set_current_source(None);
+        *slot = None;
+        let reason = abort.end_reason();
+        if reason == EndReason::Completed { self.notify_finished(track); }
+        if let Ok((summary, _)) = &playback {
+            let output = self.engine.status();
+            tracing::info!(
+                target: "dlna",
+                end_reason = ?reason,
+                source_rate = summary.source_rate,
+                pcm_rate = TARGET_RATE,
+                media_ms = summary.position_ms(0),
+                wall_ms = started.elapsed().as_millis() as u64,
+                ring_dropped_frames = output.dropped_frames,
+                "DLNA PCM 播放统计"
+            );
+        }
+        let still_owner = self.arbiter.accepts(lease);
+        {
+            let mut state = self.state.state.write().unwrap();
+            if still_owner && self.arbiter.release(lease) {
+                if state.current_source.as_deref() == Some("dlna") {
+                    if reason != EndReason::Completed || playback.is_err() {
+                        self.engine.flush(Source::Dlna);
+                    }
+                    state.select_source(None);
+                }
+            }
         }
         let elapsed = started.elapsed();
 
@@ -489,7 +575,7 @@ impl DlnaPlayer {
                     let mut state = self.state.state.write().unwrap();
                     state.dlna.state = "idle".into();
                     state.dlna.detail = detail;
-                    if reason == EndReason::Completed {
+                    if reason == EndReason::Completed && state.current_source.is_none() {
                         state.media.position_ms =
                             Some(summary.position_ms(final_position_base_ms));
                     }
@@ -524,7 +610,7 @@ impl DlnaPlayer {
                 Ok(())
             }
             Err(error) => {
-                self.record_failure(&format!("DLNA 播放失败（{}）：{error:#}", track.uri));
+                self.record_failure(&format!("DLNA 播放失败：{error:#}"));
                 self.store_stats(track, None, elapsed, Some(format!("{error:#}")));
                 Err(error)
             }
@@ -533,10 +619,11 @@ impl DlnaPlayer {
     }
 
     fn record_failure(&self, message: &str) {
-        self.state.record_error(message.to_string());
+        let message = crate::shared_logging::redact(message);
+        self.state.record_error(message.as_ref());
         let mut state = self.state.state.write().unwrap();
         state.dlna.state = "error".into();
-        state.dlna.detail = message.to_string();
+        state.dlna.detail = message.into_owned();
     }
 
     fn store_stats(
@@ -662,6 +749,7 @@ impl DlnaPlayer {
         let mut pcm: Vec<f32> = Vec::new();
         let mut consecutive_errors = 0u32;
         let mut last_state_update = Instant::now();
+        let mut clock = PcmClock::new(self, abort, seek_slot);
         let mut announced_playing = false;
         let mut position_base_ms = request.base_ms;
         let mut skip_frames =
@@ -680,6 +768,11 @@ impl DlnaPlayer {
         loop {
             if abort.aborted() {
                 break;
+            }
+            if self.paused.load(Ordering::Acquire) {
+                clock.next = None;
+                std::thread::sleep(CONTROL_POLL);
+                continue;
             }
             if let Some(target_ms) = take_pending_seek(seek_slot) {
                 match format.seek(
@@ -701,6 +794,7 @@ impl DlnaPlayer {
                         self.engine.flush(Source::Dlna);
                         summary.decoded_frames = 0;
                         summary.output_frames = 0;
+                        clock.next = None;
                         position_base_ms = actual_ms;
                         skip_frames = 0;
                         announced_playing = true;
@@ -711,7 +805,7 @@ impl DlnaPlayer {
                             actual_ms,
                             "DLNA seek 使用格式时间 seek"
                         );
-                        self.publish_progress(track, &summary, &bytes, started, position_base_ms);
+                        self.publish_progress(abort, track, &summary, &bytes, started, position_base_ms);
                         continue;
                     }
                     Err(error) => {
@@ -800,6 +894,7 @@ impl DlnaPlayer {
                     // Surface the real source format for the UI/diagnostics. The
                     // engine always receives 48 kHz stereo, so show both sides.
                     let mut state = self.state.state.write().unwrap();
+                    if abort.aborted() { break; }
                     state.media.detail_codec = Some(format!(
                         "{codec_name} · {} · {} 声道 → 48 kHz stereo",
                         format_rate(rate),
@@ -842,16 +937,15 @@ impl DlnaPlayer {
                 skip_frames = 0;
             }
 
-            summary.push_frames(&self.engine, epoch, &pcm);
+            clock.push(&mut summary, epoch, &pcm);
 
             if !announced_playing {
                 announced_playing = true;
-                let mut state = self.state.state.write().unwrap();
-                state.dlna.state = "playing".into();
+                self.announce_decoded(track, abort);
             }
             if last_state_update.elapsed() >= STATE_UPDATE_INTERVAL {
                 last_state_update = Instant::now();
-                self.publish_progress(track, &summary, &bytes, started, position_base_ms);
+                self.publish_progress(abort, track, &summary, &bytes, started, position_base_ms);
             }
         }
 
@@ -860,12 +954,21 @@ impl DlnaPlayer {
             pcm.clear();
             converter.finish(&mut pcm)?;
             if !pcm.is_empty() && !abort.aborted() {
-                summary.push_frames(&self.engine, epoch, &pcm);
+                clock.push(&mut summary, epoch, &pcm);
             }
         }
 
+        clock.finish();
+        if let Some(target_ms) = take_pending_seek(seek_slot).filter(|_| !abort.aborted()) {
+            return Ok(DecodeOutcome::SeekFallback {
+                target_ms,
+                byte_seekable,
+                content_length,
+                duration_ms: probed_duration_ms,
+            });
+        }
         summary.bytes_read = bytes.load(Ordering::Relaxed);
-        self.publish_progress(track, &summary, &bytes, started, position_base_ms);
+        self.publish_progress(abort, track, &summary, &bytes, started, position_base_ms);
         Ok(DecodeOutcome::Finished {
             summary,
             position_base_ms,
@@ -931,6 +1034,7 @@ impl DlnaPlayer {
         let mut timestamp: u64 = 0;
         let mut consecutive_errors = 0u32;
         let mut last_state_update = Instant::now();
+        let mut clock = PcmClock::new(self, abort, seek_slot);
         let mut announced_playing = false;
         let position_base_ms = request.base_ms;
         let mut skip_frames =
@@ -948,6 +1052,11 @@ impl DlnaPlayer {
         loop {
             if abort.aborted() {
                 break;
+            }
+            if self.paused.load(Ordering::Acquire) {
+                clock.next = None;
+                std::thread::sleep(CONTROL_POLL);
+                continue;
             }
             if let Some(target_ms) = take_pending_seek(seek_slot) {
                 tracing::info!(
@@ -1019,6 +1128,7 @@ impl DlnaPlayer {
                 summary.source_channels = planes;
                 {
                     let mut state = self.state.state.write().unwrap();
+                    if abort.aborted() { break; }
                     state.media.detail_codec = Some(format!(
                         "{}(flv) · {} · {} 声道 → 48 kHz stereo",
                         info.codec.as_str().to_ascii_lowercase(),
@@ -1055,16 +1165,15 @@ impl DlnaPlayer {
                 skip_frames = 0;
             }
 
-            summary.push_frames(&self.engine, epoch, &pcm);
+            clock.push(&mut summary, epoch, &pcm);
 
             if !announced_playing {
                 announced_playing = true;
-                let mut state = self.state.state.write().unwrap();
-                state.dlna.state = "playing".into();
+                self.announce_decoded(track, abort);
             }
             if last_state_update.elapsed() >= STATE_UPDATE_INTERVAL {
                 last_state_update = Instant::now();
-                self.publish_progress(track, &summary, &bytes, started, position_base_ms);
+                self.publish_progress(abort, track, &summary, &bytes, started, position_base_ms);
             }
         }
 
@@ -1072,12 +1181,21 @@ impl DlnaPlayer {
             pcm.clear();
             converter.finish(&mut pcm)?;
             if !pcm.is_empty() && !abort.aborted() {
-                summary.push_frames(&self.engine, epoch, &pcm);
+                clock.push(&mut summary, epoch, &pcm);
             }
         }
 
+        clock.finish();
+        if let Some(target_ms) = take_pending_seek(seek_slot).filter(|_| !abort.aborted()) {
+            return Ok(DecodeOutcome::SeekFallback {
+                target_ms,
+                byte_seekable: false,
+                content_length: None,
+                duration_ms: track.duration_ms,
+            });
+        }
         summary.bytes_read = bytes.load(Ordering::Relaxed);
-        self.publish_progress(track, &summary, &bytes, started, position_base_ms);
+        self.publish_progress(abort, track, &summary, &bytes, started, position_base_ms);
         Ok(DecodeOutcome::Finished {
             summary,
             position_base_ms,
@@ -1086,6 +1204,7 @@ impl DlnaPlayer {
 
     fn publish_progress(
         &self,
+        abort: &AbortHandle,
         track: &DlnaTrack<'_>,
         summary: &PlaySummary,
         bytes: &Arc<AtomicU64>,
@@ -1102,9 +1221,12 @@ impl DlnaPlayer {
         );
         {
             let mut state = self.state.state.write().unwrap();
+            if abort.aborted() || self.paused.load(Ordering::Acquire) { return; }
             state.dlna.state = "playing".into();
             state.dlna.detail = detail;
-            state.media.position_ms = Some(summary.position_ms(position_base_ms));
+            if state.current_source.as_deref() == Some("dlna") {
+                state.media.position_ms = Some(summary.position_ms(position_base_ms));
+            }
         }
         let stats = DlnaStats {
             uri: track.uri.to_string(),
@@ -1196,6 +1318,79 @@ fn estimate_seek_target(
         byte,
         time_ms: estimated_ms.min(target_ms),
     })
+}
+
+/// Pace local/HTTP audio against monotonic time. Blocking ALSA writes happen
+/// on another thread and cannot slow down this producer.
+struct PcmClock<'a> {
+    player: &'a DlnaPlayer,
+    abort: &'a AbortHandle,
+    seek: &'a Mutex<Option<u64>>,
+    next: Option<Instant>,
+}
+
+impl<'a> PcmClock<'a> {
+    fn new(player: &'a DlnaPlayer, abort: &'a AbortHandle, seek: &'a Mutex<Option<u64>>) -> Self {
+        Self {
+            player,
+            abort,
+            seek,
+            next: None,
+        }
+    }
+
+    fn push(&mut self, summary: &mut PlaySummary, epoch: u64, pcm: &[f32]) {
+        for chunk in pcm.chunks(PCM_BATCH_FRAMES * TARGET_CHANNELS) {
+            if !self.wait(PCM_LEAD) {
+                return;
+            }
+            // Serialize a PCM write with pause/takeover even if the clock woke
+            // just before the control event acquired the state lock.
+            let _state = loop {
+                let guard = self.player.state.state.read().unwrap();
+                if guard.current_source.as_deref() != Some("dlna") || self.abort.aborted()
+                    || self.seek.lock().unwrap().is_some() { return; }
+                if !self.player.paused.load(Ordering::Acquire) { break guard; }
+                drop(guard);
+                if !self.wait(PCM_LEAD) { return; }
+            };
+            let now = Instant::now();
+            // Rebase after a stalled read instead of dumping overdue audio
+            // into the device queue to catch up.
+            let next = self.next.unwrap_or(now).max(now);
+            summary.push_frames(&self.player.engine, epoch, chunk);
+            let frames = chunk.len() / TARGET_CHANNELS;
+            self.next = Some(next + Duration::from_secs_f64(frames as f64 / TARGET_RATE as f64));
+        }
+    }
+
+    fn finish(&mut self) {
+        // Give the output worker time to consume the remaining lead before
+        // run_track releases the lease and clears the device rings.
+        self.wait(Duration::ZERO);
+    }
+
+    fn wait(&mut self, lead: Duration) -> bool {
+        loop {
+            if self.abort.aborted() || self.seek.lock().unwrap().is_some() {
+                return false;
+            }
+            if self.player.paused.load(Ordering::Acquire) {
+                self.next = None;
+                std::thread::sleep(CONTROL_POLL);
+                continue;
+            }
+            let remaining = self.next
+                .map(|next| {
+                    next.saturating_duration_since(Instant::now()).saturating_sub(lead)
+                })
+                .unwrap_or_default();
+            if remaining.is_zero() {
+                return true;
+            }
+            std::thread::sleep(remaining.min(CONTROL_POLL));
+        }
+    }
 }
 
 #[derive(Default)]
@@ -1999,6 +2194,7 @@ struct HttpEstablished {
     /// Total resource length in bytes (Content-Length or Content-Range total).
     content_length: Option<u64>,
     range_supported: bool,
+    etag: Option<String>,
     content_type: Option<String>,
 }
 
@@ -2203,6 +2399,7 @@ fn establish_http(
         };
 
         let content_type = response.header("content-type").map(str::to_string);
+        let etag = response.header("etag").map(str::to_owned);
         let HttpHead {
             reader,
             headers: _,
@@ -2221,6 +2418,7 @@ fn establish_http(
             position,
             content_length,
             range_supported,
+            etag,
             content_type,
         });
     }
@@ -2392,6 +2590,17 @@ enum ChunkedPhase {
     Trailers,
 }
 
+#[derive(Debug)]
+struct ShortHttpBody(u64);
+
+impl std::fmt::Display for ShortHttpBody {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(formatter, "DLNA 下载中断：Content-Length 仍差 {} 字节未收到（服务器提前关闭连接）", self.0)
+    }
+}
+
+impl std::error::Error for ShortHttpBody {}
+
 /// Streaming HTTP body: decodes `Content-Length`, chunked and connection-close
 /// framing on demand. Holds O(1) memory regardless of media size.
 struct HttpBody {
@@ -2459,13 +2668,15 @@ impl Read for HttpBody {
                         return Ok(0);
                     }
                     let want = buffer.len().min(remaining as usize);
-                    let read = self.read_some(&mut buffer[..want])?;
+                    let read = match self.read_some(&mut buffer[..want]) {
+                        Err(error) if matches!(error.kind(), io::ErrorKind::UnexpectedEof
+                            | io::ErrorKind::ConnectionReset | io::ErrorKind::BrokenPipe) => 0,
+                        result => result?,
+                    };
                     if read == 0 {
                         return Err(io::Error::new(
                             io::ErrorKind::InvalidData,
-                            format!(
-                                "DLNA 下载中断：Content-Length 仍差 {remaining} 字节未收到（服务器提前关闭连接）"
-                            ),
+                            ShortHttpBody(remaining),
                         ));
                     }
                     self.kind = BodyKind::Length(remaining - read as u64);
@@ -2581,6 +2792,8 @@ struct HttpSource {
     /// Absolute media byte position of the next byte `body` will return.
     position: u64,
     range_supported: bool,
+    etag: Option<String>,
+    resume_attempted: bool,
     context: HttpContext,
     bytes: Arc<AtomicU64>,
 }
@@ -2594,6 +2807,7 @@ impl HttpSource {
             position,
             content_length,
             range_supported,
+            etag,
             content_type: _,
         } = established;
         let body = HttpBody {
@@ -2610,6 +2824,8 @@ impl HttpSource {
             content_length,
             position,
             range_supported,
+            etag,
+            resume_attempted: false,
             context,
             bytes,
         }
@@ -2627,7 +2843,7 @@ impl HttpSource {
         let mut buffer = [0u8; 16 * 1024];
         while remaining > 0 {
             let want = buffer.len().min(remaining as usize);
-            let read = self.body.read(&mut buffer[..want])?;
+            let read = self.read(&mut buffer[..want])?;
             if read == 0 {
                 return Err(io::Error::new(
                     io::ErrorKind::UnexpectedEof,
@@ -2635,7 +2851,6 @@ impl HttpSource {
                 ));
             }
             remaining -= read as u64;
-            self.position += read as u64;
         }
         Ok(())
     }
@@ -2657,6 +2872,7 @@ impl HttpSource {
             position,
             content_length,
             range_supported,
+            etag,
             content_type: _,
         } = established;
         let health_bytes = Arc::clone(&self.bytes);
@@ -2672,6 +2888,7 @@ impl HttpSource {
         self.context = context;
         self.content_length = content_length.or(self.content_length);
         self.range_supported = range_supported;
+        self.etag = etag;
         if position == target {
             self.position = target;
             return Ok(());
@@ -2692,6 +2909,36 @@ impl HttpSource {
         Err(io::Error::other(format!(
             "DLNA Range 响应起始位置异常（请求 {target}，响应 {position}）"
         )))
+    }
+
+    /// Keep the decoder positioned on the next byte after a premature EOF.
+    /// A full 200 response, a different object size or a changed ETag cannot
+    /// safely be spliced into the existing decoder stream.
+    fn resume_body(&mut self) -> Result<()> {
+        let position = self.position;
+        let length = self.content_length.context("DLNA 媒体总长度未知")?;
+        anyhow::ensure!(position > 0 && position < length, "DLNA 续读偏移无效");
+        let response = establish_http(
+            &self.context.url,
+            self.context.timeout,
+            &self.context.abort,
+            Some(position),
+            Some(self.context.user_agent.clone()),
+        )?;
+        anyhow::ensure!(
+            response.position == position && response.content_length == Some(length)
+                && matches!(response.body_kind, BodyKind::Length(bytes) if bytes == length - position),
+            "DLNA 服务器未返回匹配的 206 字节范围"
+        );
+        anyhow::ensure!(
+            self.etag.is_none() || response.etag == self.etag,
+            "DLNA 媒体在续读时已变更"
+        );
+        let mut resumed = Self::new(response, Arc::clone(&self.bytes));
+        resumed.resume_attempted = true;
+        *self = resumed;
+        tracing::info!(target: "dlna", position, length, "DLNA HTTP 已按字节偏移续读");
+        Ok(())
     }
 
     /// Compute a seek target from a [`SeekFrom`], validating it against the
@@ -2728,7 +2975,23 @@ impl HttpSource {
 
 impl Read for HttpSource {
     fn read(&mut self, buffer: &mut [u8]) -> io::Result<usize> {
-        let read = self.body.read(buffer)?;
+        let read = match self.body.read(buffer) {
+            Err(error) if !self.resume_attempted
+                && error.get_ref().is_some_and(|cause| cause.is::<ShortHttpBody>())
+                && !self.context.abort.aborted()
+                && self.position > 0 =>
+            {
+                self.resume_attempted = true;
+                if let Err(resume_error) = self.resume_body() {
+                    let message = format!("{resume_error:#}");
+                    let safe = crate::shared_logging::redact(&message);
+                    tracing::warn!(target: "dlna", position = self.position, error = %safe, "DLNA HTTP 续读失败");
+                    return Err(error);
+                }
+                self.body.read(buffer)?
+            }
+            result => result?,
+        };
         self.position += read as u64;
         Ok(read)
     }
@@ -2833,329 +3096,6 @@ impl AbortHandle {
         } else {
             EndReason::Completed
         }
-    }
-}
-
-// ---------------------------------------------------------------------------
-// Downmix + 48 kHz resample pipeline
-// ---------------------------------------------------------------------------
-
-/// Converts decoded source audio into the engine's 48 kHz stereo f32 format.
-///
-/// Multi-channel input is *mixed* (ITU-style coefficients for positioned
-/// layouts, a conservative L/R/centre heuristic for layouts without positions)
-/// rather than dropping channels.
-struct Converter {
-    source_rate: u32,
-    planes: usize,
-    downmix: Downmix,
-    resampler: Option<StreamResampler>,
-    stereo: Vec<f32>,
-}
-
-impl Converter {
-    fn new(source_rate: u32, channels: &Channels, planes: usize) -> Result<Self> {
-        Ok(Self {
-            source_rate,
-            planes: planes.max(1),
-            downmix: Downmix::new(channels, planes),
-            resampler: if source_rate == TARGET_RATE {
-                None
-            } else {
-                Some(StreamResampler::new(source_rate)?)
-            },
-            stereo: Vec::new(),
-        })
-    }
-
-    fn convert(&mut self, interleaved: &[f32], out: &mut Vec<f32>) -> Result<()> {
-        let frames = interleaved.len() / self.planes;
-        self.stereo.clear();
-        if self.downmix.is_direct() {
-            self.stereo
-                .extend_from_slice(&interleaved[..frames * TARGET_CHANNELS]);
-        } else {
-            self.stereo.reserve(frames * TARGET_CHANNELS);
-            for frame in interleaved.chunks_exact(self.planes) {
-                let [left, right] = self.downmix.mix(frame);
-                self.stereo.push(left);
-                self.stereo.push(right);
-            }
-        }
-        out.clear();
-        match self.resampler.as_mut() {
-            Some(resampler) => resampler.push(&self.stereo, out)?,
-            None => out.extend_from_slice(&self.stereo),
-        }
-        Ok(())
-    }
-
-    fn finish(&mut self, out: &mut Vec<f32>) -> Result<()> {
-        out.clear();
-        match self.resampler.as_mut() {
-            Some(resampler) => resampler.finish(out),
-            None => Ok(()),
-        }
-    }
-}
-
-/// Channel layout aware stereo downmixer. Coefficients follow the common ITU-R
-/// BS.775 style matrix (centre/surround at -3 dB, LFE at -6 dB), then each side
-/// is normalised so a full-scale multi-channel frame cannot clip.
-struct Downmix {
-    direct: bool,
-    taps: Vec<(usize, f32, f32)>,
-}
-
-impl Downmix {
-    fn new(channels: &Channels, planes: usize) -> Self {
-        const S: f32 = 0.707_106_77;
-
-        let mut taps: Vec<(usize, f32, f32)> = Vec::new();
-        match channels {
-            Channels::Positioned(positions) => {
-                let mut channel_index = 0usize;
-                for bit in 0..64u32 {
-                    let flag = positions.bits() & (1u64 << bit);
-                    if flag == 0 {
-                        continue;
-                    }
-                    let position = Position::from_bits_truncate(flag);
-                    let (left, right) = position_gains(position, S);
-                    taps.push((channel_index, left, right));
-                    channel_index += 1;
-                }
-            }
-            _ => {
-                taps = fallback_gains(planes);
-            }
-        }
-
-        if taps.len() != planes && planes > 0 {
-            // Layout/plane mismatch (unusual codec configuration): fall back to
-            // an index-based mix so no audio channel is silently dropped.
-            taps = fallback_gains(planes);
-        }
-
-        let (mut sum_left, mut sum_right) =
-            taps.iter().fold((0.0f32, 0.0f32), |(left, right), (_, tap_left, tap_right)| {
-                (left + tap_left, right + tap_right)
-            });
-        // A one-sided layout (mono, or a single speaker position) must not mute
-        // the opposite channel: duplicate the covered side instead.
-        if sum_left <= f32::EPSILON && sum_right > f32::EPSILON {
-            for tap in taps.iter_mut() {
-                tap.1 = tap.2;
-            }
-            sum_left = sum_right;
-        } else if sum_right <= f32::EPSILON && sum_left > f32::EPSILON {
-            for tap in taps.iter_mut() {
-                tap.2 = tap.1;
-            }
-            sum_right = sum_left;
-        }
-        if sum_left > f32::EPSILON {
-            for tap in taps.iter_mut() {
-                tap.1 /= sum_left;
-            }
-        }
-        if sum_right > f32::EPSILON {
-            for tap in taps.iter_mut() {
-                tap.2 /= sum_right;
-            }
-        }
-
-        let identity = planes == TARGET_CHANNELS
-            && taps.len() == TARGET_CHANNELS
-            && (taps[0].0, taps[0].1, taps[0].2) == (0, 1.0, 0.0)
-            && (taps[1].0, taps[1].1, taps[1].2) == (1, 0.0, 1.0);
-        Downmix {
-            direct: identity,
-            taps,
-        }
-    }
-
-    fn is_direct(&self) -> bool {
-        self.direct
-    }
-
-    fn mix(&self, frame: &[f32]) -> [f32; TARGET_CHANNELS] {
-        let mut left = 0.0f32;
-        let mut right = 0.0f32;
-        for &(index, tap_left, tap_right) in &self.taps {
-            let sample = frame.get(index).copied().unwrap_or(0.0);
-            left += sample * tap_left;
-            right += sample * tap_right;
-        }
-        [left.clamp(-1.0, 1.0), right.clamp(-1.0, 1.0)]
-    }
-}
-
-fn position_gains(position: Position, surround: f32) -> (f32, f32) {
-    const LEFT: Position = Position::FRONT_LEFT
-        .union(Position::SIDE_LEFT)
-        .union(Position::REAR_LEFT)
-        .union(Position::FRONT_LEFT_CENTER)
-        .union(Position::TOP_FRONT_LEFT)
-        .union(Position::TOP_REAR_LEFT)
-        .union(Position::TOP_SIDE_LEFT)
-        .union(Position::BOTTOM_FRONT_LEFT);
-    const RIGHT: Position = Position::FRONT_RIGHT
-        .union(Position::SIDE_RIGHT)
-        .union(Position::REAR_RIGHT)
-        .union(Position::FRONT_RIGHT_CENTER)
-        .union(Position::TOP_FRONT_RIGHT)
-        .union(Position::TOP_REAR_RIGHT)
-        .union(Position::TOP_SIDE_RIGHT)
-        .union(Position::BOTTOM_FRONT_RIGHT);
-    const LFE: Position = Position::LFE1.union(Position::LFE2);
-
-    if position == Position::FRONT_LEFT || position == Position::FRONT_LEFT_WIDE {
-        return (1.0, 0.0);
-    }
-    if position == Position::FRONT_RIGHT || position == Position::FRONT_RIGHT_WIDE {
-        return (0.0, 1.0);
-    }
-    if position.intersects(LFE) {
-        // LFE content is mixed in quietly to keep bass energy on stereo rigs.
-        return (0.5, 0.5);
-    }
-    let left = position.intersects(LEFT);
-    let right = position.intersects(RIGHT);
-    if left && !right {
-        (surround, 0.0)
-    } else if right && !left {
-        (0.0, surround)
-    } else {
-        // Centre, stereo-of-both-sides, and unknown positions all contribute
-        // equally to L/R (the coefficients are already normalised).
-        (surround, surround)
-    }
-}
-
-/// Index-based mix for layouts symphonia does not describe with positions.
-fn fallback_gains(planes: usize) -> Vec<(usize, f32, f32)> {
-    const S: f32 = 0.707_106_77;
-    match planes {
-        0 => Vec::new(),
-        1 => vec![(0, 1.0, 1.0)],
-        2 => vec![(0, 1.0, 0.0), (1, 0.0, 1.0)],
-        _ => {
-            let mut taps = vec![(0, 1.0, 0.0), (1, 0.0, 1.0)];
-            let surround = S / (planes - 2) as f32;
-            for index in 2..planes {
-                taps.push((index, surround, surround));
-            }
-            taps
-        }
-    }
-}
-
-/// Streaming resampler (rubato sinc) from an arbitrary source rate to 48 kHz.
-struct StreamResampler {
-    inner: Async<f32>,
-    /// Number of input frames the resampler wants per call (FixedAsync::Input).
-    chunk: usize,
-    ratio: f64,
-    pending: Vec<f32>,
-    /// Resampler group delay, trimmed from the head so positions/timestamps
-    /// stay honest and playback does not start with a silent gap.
-    delay_frames: usize,
-}
-
-impl StreamResampler {
-    fn new(source_rate: u32) -> Result<Self> {
-        let ratio = TARGET_RATE as f64 / source_rate.max(1) as f64;
-        const SINC_LEN: usize = 128;
-        const OVERSAMPLING: usize = 128;
-        let f_cutoff: f32 = calculate_cutoff(SINC_LEN, WindowFunction::BlackmanHarris2);
-        let params = SincInterpolationParameters {
-            sinc_len: SINC_LEN,
-            f_cutoff,
-            interpolation: SincInterpolationType::Linear,
-            oversampling_factor: OVERSAMPLING,
-            window: WindowFunction::BlackmanHarris2,
-        };
-        let inner = Async::<f32>::new_sinc(
-            ratio,
-            1.1,
-            &params,
-            RESAMPLE_CHUNK_FRAMES,
-            TARGET_CHANNELS,
-            FixedAsync::Input,
-        )
-        .map_err(|error| {
-            anyhow!("无法初始化重采样器（{source_rate} Hz → {TARGET_RATE} Hz）：{error}")
-        })?;
-        let chunk = inner.input_frames_next();
-        let delay_frames = inner.output_delay();
-        Ok(Self {
-            inner,
-            chunk,
-            ratio,
-            pending: Vec::with_capacity(RESAMPLE_CHUNK_FRAMES * TARGET_CHANNELS),
-            delay_frames,
-        })
-    }
-
-    fn push(&mut self, input: &[f32], out: &mut Vec<f32>) -> Result<()> {
-        self.pending.extend_from_slice(input);
-        while self.pending.len() >= self.chunk * TARGET_CHANNELS {
-            self.process_chunk(&mut *out)?;
-        }
-        Ok(())
-    }
-
-    fn process_chunk(&mut self, out: &mut Vec<f32>) -> Result<()> {
-        let frames = (self.pending.len() / TARGET_CHANNELS).min(self.chunk);
-        let adapter = InterleavedSlice::new(
-            &self.pending[..frames * TARGET_CHANNELS],
-            TARGET_CHANNELS,
-            frames,
-        )
-        .map_err(|error| anyhow!("重采样输入缓冲无效：{error}"))?;
-        let translated = self
-            .inner
-            .process(&adapter, 0, None)
-            .map_err(|error| anyhow!("重采样失败（{frames} 帧）：{error}"))?;
-        let mut data = translated.take_data();
-        self.trim_delay(&mut data);
-        out.extend_from_slice(&data);
-        self.pending.drain(..frames * TARGET_CHANNELS);
-        Ok(())
-    }
-
-    /// Flush the buffered tail: zero-pad the final partial chunk, resample it,
-    /// and keep only the frames that correspond to real input.
-    fn finish(&mut self, out: &mut Vec<f32>) -> Result<()> {
-        let frames = self.pending.len() / TARGET_CHANNELS;
-        if frames == 0 {
-            return Ok(());
-        }
-        let mut padded = vec![0.0f32; self.chunk * TARGET_CHANNELS];
-        padded[..frames * TARGET_CHANNELS].copy_from_slice(&self.pending);
-        let adapter = InterleavedSlice::new(&padded, TARGET_CHANNELS, self.chunk)
-            .map_err(|error| anyhow!("重采样尾部缓冲无效：{error}"))?;
-        let translated = self
-            .inner
-            .process(&adapter, 0, None)
-            .map_err(|error| anyhow!("重采样尾部刷新失败：{error}"))?;
-        let mut data = translated.take_data();
-        self.trim_delay(&mut data);
-        let keep_frames = ((frames as f64) * self.ratio).ceil() as usize;
-        let keep_samples = (keep_frames * TARGET_CHANNELS).min(data.len());
-        out.extend_from_slice(&data[..keep_samples]);
-        self.pending.clear();
-        Ok(())
-    }
-
-    fn trim_delay(&mut self, data: &mut Vec<f32>) {
-        if self.delay_frames == 0 {
-            return;
-        }
-        let drop_frames = self.delay_frames.min(data.len() / TARGET_CHANNELS);
-        data.drain(..drop_frames * TARGET_CHANNELS);
-        self.delay_frames -= drop_frames;
     }
 }
 
@@ -3353,53 +3293,5 @@ mod tests {
         assert_eq!(uri_file_name("http://nas/"), None);
     }
 
-    #[test]
-    fn downmix_duplicates_mono_without_dropping_channels() {
-        let mono = Channels::Positioned(Position::FRONT_LEFT);
-        let downmix = Downmix::new(&mono, 1);
-        assert!(!downmix.is_direct());
-        let [left, right] = downmix.mix(&[0.5]);
-        assert!((left - 0.5).abs() < 1e-6, "left={left}");
-        assert!((right - 0.5).abs() < 1e-6, "right={right}");
-    }
 
-    #[test]
-    fn downmix_passes_stereo_through_untouched() {
-        let stereo = Channels::Positioned(Position::FRONT_LEFT | Position::FRONT_RIGHT);
-        let downmix = Downmix::new(&stereo, 2);
-        assert!(downmix.is_direct());
-        assert_eq!(downmix.mix(&[0.25, -0.5]), [0.25, -0.5]);
-    }
-
-    #[test]
-    fn downmix_mixes_centre_surround_and_lfe_into_stereo() {
-        let layout = Position::FRONT_LEFT
-            | Position::FRONT_RIGHT
-            | Position::FRONT_CENTER
-            | Position::LFE1
-            | Position::REAR_LEFT
-            | Position::REAR_RIGHT;
-        let downmix = Downmix::new(&Channels::Positioned(layout), 6);
-        // Front-left only must not leak into the right channel.
-        let [left, right] = downmix.mix(&[1.0, 0.0, 0.0, 0.0, 0.0, 0.0]);
-        assert!(left > 0.2, "left={left}");
-        assert!(right.abs() < 1e-6, "right={right}");
-        // A centre-only frame must reach both speakers equally.
-        let [left, right] = downmix.mix(&[0.0, 0.0, 1.0, 0.0, 0.0, 0.0]);
-        assert!(left > 0.1 && right > 0.1, "L={left} R={right}");
-        assert!((left - right).abs() < 1e-6);
-        // No full-scale frame may clip after mixing.
-        let [left, right] = downmix.mix(&[1.0, 1.0, 1.0, 1.0, 1.0, 1.0]);
-        assert!(left <= 1.0 && right <= 1.0);
-        assert!(left > 0.3 && right > 0.3);
-    }
-
-    #[test]
-    fn downmix_fallback_uses_all_channels_for_unknown_layouts() {
-        let downmix = Downmix::new(&Channels::Discrete(6), 6);
-        assert!(!downmix.is_direct());
-        let [left, right] = downmix.mix(&[0.5, 0.5, 0.5, 0.5, 0.5, 0.5]);
-        assert!(left > 0.2 && right > 0.2, "L={left} R={right}");
-        assert!((left - right).abs() < 1e-6);
-    }
 }

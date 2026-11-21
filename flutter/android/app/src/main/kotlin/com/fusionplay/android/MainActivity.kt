@@ -38,12 +38,13 @@ class MainActivity : FlutterActivity() {
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
-        (application as FusionPlayFlutterApplication).runtime.attach(flutterEngine.dartExecutor.binaryMessenger)
+        val app = application as FusionPlayFlutterApplication
+        app.runtime.attach(flutterEngine.dartExecutor.binaryMessenger)
         navigationKeyChannel = MethodChannel(
             flutterEngine.dartExecutor.binaryMessenger,
             NAVIGATION_KEY_CHANNEL,
         )
-        updateManager = UpdateManager(applicationContext).also {
+        updateManager = UpdateManager(applicationContext, app.diagnosticLogger).also {
             it.attach(flutterEngine.dartExecutor.binaryMessenger)
         }
     }

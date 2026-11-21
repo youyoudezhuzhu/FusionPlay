@@ -93,7 +93,7 @@ class FusionPlayRuntime(
     private val mediaSourceArbiter = MediaSourceArbiter()
     private val coreLifecycleMutex = Mutex()
     private val miPlayLifecycleMutex = Mutex()
-    private val networkPlayer = NativeNetworkPlayer(context) { message ->
+    private val networkPlayer = NativeNetworkPlayer(context, diagnosticLogger) { message ->
         viewModel.reportExternalLog("网络媒体播放失败：$message", isError = true)
     }
     private val closed = AtomicBoolean(false)
@@ -102,7 +102,7 @@ class FusionPlayRuntime(
     private var lastDesiredCoreConfiguration: CoreReceiverConfiguration? = null
     private var lastDesiredMiPlayConfiguration: MiPlayReceiverConfiguration? = null
     private var appliedMiPlayConfiguration: MiPlayReceiverConfiguration? = null
-    private var lastPublishedArtwork: String? = null
+    private var lastPublishedArtwork: Triple<String?, Long?, String?>? = null
     private var lastPublishedMetadata: MediaMetadataProjection? = null
     private var lastPublishedPlaying: Boolean? = null
     private var lastPublishedCapabilities: MediaCapabilitiesProjection? = null
@@ -209,6 +209,15 @@ class FusionPlayRuntime(
     }
 
     private fun onMethodCall(call: MethodCall, result: MethodChannel.Result) {
+        if (call.method == "reportPlayerError") {
+            val text = call.string("value")
+            diagnosticLogger.write("flutter", "player_exception", "failure", mapOf(
+                "message" to text.substringBefore('\n'),
+                "stack_trace" to text.substringAfter('\n', ""),
+            ))
+            result.success(null)
+            return
+        }
         if (call.method == "state") {
             result.success(stateMap(viewModel.state.value))
             return
@@ -267,7 +276,7 @@ class FusionPlayRuntime(
             }.fold(
                 onSuccess = result::success,
                 onFailure = { error ->
-                    reportError("前后端调用失败", error)
+                    reportError("前后端调用失败（${call.method}）", error)
                     result.error("fusionplay_runtime", error.message, null)
                 },
             )
@@ -318,7 +327,6 @@ class FusionPlayRuntime(
 
     private suspend fun pauseSourceForTakeover(
         source: MediaSource,
-        remoteAlreadySuspended: Boolean = false,
     ) {
         val playback = viewModel.playbackForSource(source)
         if (networkPlayer.source == source) {
@@ -331,22 +339,14 @@ class FusionPlayRuntime(
             )
             networkPlayer.pause()
         }
-        if (remoteAlreadySuspended && source != MediaSource.XIAOMI_MIPLAY) {
-            viewModel.markSourcePaused(source)
-            return
-        }
-        when (source) {
-            MediaSource.XIAOMI_MIPLAY -> {
-                xiaomiTakeoverGate.arm(playback.isPlaying)
-                runCatching { bridge.suspendXiaomiOutput() }
-                    .onFailure { reportError("小米妙播本机输出暂停失败", it) }
-                runCatching { bridge.pauseXiaomi() }
-                    .onFailure { reportError("小米妙播暂停失败", it) }
-            }
-            MediaSource.AIRPLAY -> if (playback.mediaUrl == null) {
-                runCatching { viewModel.sendPlayback(PlaybackCommand.PAUSE) }
-            }
-            MediaSource.DLNA -> runCatching { viewModel.sendPlayback(PlaybackCommand.PAUSE) }
+        // Native takeover already suspended the previous AirPlay/DLNA lease.
+        // A foreground PAUSE here can target the newly projected receiver.
+        if (source == MediaSource.XIAOMI_MIPLAY) {
+            xiaomiTakeoverGate.arm(playback.isPlaying)
+            runCatching { bridge.suspendXiaomiOutput() }
+                .onFailure { reportError("小米妙播本机输出暂停失败", it) }
+            runCatching { bridge.pauseXiaomi() }
+                .onFailure { reportError("小米妙播暂停失败", it) }
         }
         if (
             source != MediaSource.XIAOMI_MIPLAY ||
@@ -359,7 +359,6 @@ class FusionPlayRuntime(
 
     private suspend fun activatePlaybackSource(
         source: MediaSource,
-        previousAlreadySuspendedByCore: Boolean = false,
         projectSource: Boolean = true,
     ) {
         if (source != MediaSource.XIAOMI_MIPLAY) {
@@ -374,7 +373,7 @@ class FusionPlayRuntime(
             transition.previous
                 ?.takeUnless { it == MediaSource.XIAOMI_MIPLAY }
                 ?.let {
-                pauseSourceForTakeover(it, previousAlreadySuspendedByCore)
+                pauseSourceForTakeover(it)
             }
         }
         if (projectSource) viewModel.activateSourceProjection(source)
@@ -793,7 +792,9 @@ class FusionPlayRuntime(
     }
 
     private suspend fun handleXiaomiEvent(event: WindowsBridgeXiaomiEvent) {
-        event.toVolumePercentOrNull()?.let { percent ->
+        event.toVolumePercentOrNull()?.takeIf {
+            SourceTakeoverPolicy.acceptsDeviceVolume(viewModel.state.value.activeMediaSource, MediaSource.XIAOMI_MIPLAY)
+        }?.let { percent ->
             if (!FusionPlayMediaChannel.setSystemMediaVolumePercent(percent)) {
                 viewModel.reportExternalLog("无法将被控端媒体音量同步到 $percent%。", isError = true)
             }
@@ -837,7 +838,6 @@ class FusionPlayRuntime(
                                 if (resumed.isSuccess) {
                                     activatePlaybackSource(
                                         MediaSource.XIAOMI_MIPLAY,
-                                        previousAlreadySuspendedByCore = true,
                                     )
                                 }
                             }
@@ -926,7 +926,8 @@ class FusionPlayRuntime(
                 }
             }
             is AppEvent.Volume -> if (
-                event.source == null || event.source.equals(CORE_SOURCE_AIRPLAY, ignoreCase = true)
+                (event.source == null || event.source.equals(CORE_SOURCE_AIRPLAY, ignoreCase = true)) &&
+                SourceTakeoverPolicy.acceptsDeviceVolume(viewModel.state.value.activeMediaSource, MediaSource.AIRPLAY)
             ) {
                 // iPhone AirPlay 2 sends SET_PARAMETER volume here. Map it to
                 // the real Android media volume exactly like MiPlay.
@@ -1121,8 +1122,10 @@ class FusionPlayRuntime(
             )
         }
         val artwork = playback.coverArt
-        if (artwork != lastPublishedArtwork) {
-            lastPublishedArtwork = artwork
+        val dlna = state.activeMediaSource == MediaSource.DLNA
+        val artworkKey = Triple(artwork, playback.sourceEpoch.takeIf { dlna }, playback.mediaUrl.takeIf { dlna })
+        if (artworkKey != lastPublishedArtwork) {
+            lastPublishedArtwork = artworkKey
             artworkJob?.cancel()
             artworkJob = scope.launch {
                 if (artwork.isNullOrBlank()) {
