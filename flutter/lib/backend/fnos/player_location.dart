@@ -4,7 +4,7 @@ class SpeakerPlayerLocation {
   SpeakerPlayerLocation(this.page);
 
   final Uri page;
-  static final _validId = RegExp(r'^[a-z0-9][a-z0-9-]*$');
+  static final _validId = RegExp(r'^[a-z0-9-]{1,40}$');
 
   bool get pinned => page.queryParameters.containsKey('instance');
   String get id => page.queryParameters['instance'] ?? '';

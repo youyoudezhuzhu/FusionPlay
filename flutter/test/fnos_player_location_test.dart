@@ -3,7 +3,7 @@ import 'package:fusionplay_android_flutter/backend/fnos/player_location.dart';
 
 void main() {
   final base = Uri.parse('https://nas/app/fusionplay-fnos/player/index.html');
-  for (final id in ['default', 'studio']) {
+  for (final id in ['default', 'studio', '-studio']) {
     test(
       '$id bookmark keeps status, controls, cover and settings on that speaker',
       () {
@@ -38,7 +38,7 @@ void main() {
   });
 
   test('malformed bookmarks never reach the default player', () {
-    for (final id in ['', '..', '../default', 'a/b']) {
+    for (final id in ['', '..', '../default', 'a/b', 'x' * 41]) {
       final location = SpeakerPlayerLocation(
         base.replace(queryParameters: {'instance': id}),
       );

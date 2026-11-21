@@ -4,6 +4,14 @@
 > 原则：复用 `src/AirPlayReceiver.Core` / `src/FusionPlay.MiPlaySdk`；只为"外部 PCM 输出"加最小钩子；
 > 所有 fnOS 代码放 `fnos/`；不改 Android 行为、不改 Android CI。
 
+## 音箱实例与播放页
+
+父进程提供统一网关和实例目录。主接收器可向多只音箱输出同一条音流。每个独立音箱使用同一可执行文件启动子进程，拥有自己的协议身份、曲目、控制通道、解码器、仲裁器以及 ALSA 输出。妙播的 PCM 回调是进程级的，分进程保证它只写入当前音箱的音频引擎。下图描述一个接收器内部的数据流。
+
+- `GET /api/instances` 返回可用播放器标识、显示名、设备和默认目标。网页将选定目标写入地址栏。
+- `GET /api/instances/<id>/status`、`POST /api/instances/<id>/player` 和 `GET /api/instances/<id>/artwork/<filename>` 共用同一实例标识。父进程通过私有 Unix socket 转发独立音箱请求。
+- `audio.instances` 保存稳定 ID、投送名称和声卡分配。配置校验拒绝同一设备重复分配；工作进程重启后从各自的数据目录恢复身份。额外音箱使用独立妙播控制与媒体发现端口，AirPlay 使用本地时钟回退，跨音箱播放进度可以独立变化。
+
 ## 1. 进程与数据流
 
 ```
