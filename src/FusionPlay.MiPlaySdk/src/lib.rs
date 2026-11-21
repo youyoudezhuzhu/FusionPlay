@@ -11,8 +11,9 @@ pub mod legacy_lan;
 pub mod lyra;
 pub mod media;
 pub mod protocol;
+pub mod track;
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use discovery::{MiPlayAdvertisement, idm_short_id};
 use lyra::{LyraControlServer, start_lyra_server};
 pub use media::EventEmitter;
@@ -63,6 +64,50 @@ use serde_json::json;
 use std::net::Ipv4Addr;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+
+/// Each fnOS speaker runs in a separate process. Discovery still uses the
+/// protocol's standard multicast ports. Only the unicast endpoints differ.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct ReceiverPorts {
+    control: u16,
+    lyra: u16,
+}
+
+impl ReceiverPorts {
+    const DEFAULT: Self = Self {
+        control: protocol::CONTROL_PORT,
+        lyra: lyra::LYRA_COMMAND_PORT,
+    };
+
+    fn for_offset(offset: u16) -> Result<Self> {
+        let lyra = Self::DEFAULT.lyra.checked_add(offset)
+            .context("MiPlay receiver port offset too large")?;
+        Ok(Self {
+            control: Self::DEFAULT.control + offset,
+            lyra,
+        })
+    }
+}
+
+static PROCESS_PORTS: std::sync::OnceLock<ReceiverPorts> = std::sync::OnceLock::new();
+
+fn receiver_ports() -> ReceiverPorts {
+    PROCESS_PORTS.get().copied().unwrap_or(ReceiverPorts::DEFAULT)
+}
+
+fn configure_receiver_ports() -> Result<()> {
+    let offset = match std::env::var("FUSIONPLAY_RECEIVER_PORT_OFFSET") {
+        Ok(raw) => raw.parse::<u16>().context("invalid FUSIONPLAY_RECEIVER_PORT_OFFSET")?,
+        Err(std::env::VarError::NotPresent) => 0,
+        Err(error) => return Err(error.into()),
+    };
+    let ports = ReceiverPorts::for_offset(offset)?;
+    anyhow::ensure!(
+        *PROCESS_PORTS.get_or_init(|| ports) == ports,
+        "cannot change MiPlay ports in a running process"
+    );
+    Ok(())
+}
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 #[repr(u8)]
@@ -299,6 +344,7 @@ pub struct MiPlayReceiver {
 
 impl MiPlayReceiver {
     pub fn start(config: ReceiverConfig, events: EventEmitter) -> Result<Self> {
+        configure_receiver_ports()?;
         let volume_percent = Arc::new(AtomicU32::new(config.initial_volume_percent.min(100)));
         let shutdown = Arc::new(AtomicBool::new(false));
         let identity = DeviceIdentity {

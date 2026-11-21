@@ -68,6 +68,7 @@ impl DmrService {
         device_key: [u8; 6],
         events: Arc<EventSink>,
         arbiter: Arc<PlaybackArbiter>,
+        initial_volume: u8,
     ) -> Result<Self> {
         // Prefer a dual-stack listener so IPv6 control points can fetch the
         // description/SCPD; fall back to IPv4-only when the host has no IPv6.
@@ -100,10 +101,11 @@ impl DmrService {
         let device_uuid = stable_device_uuid(device_key);
         let udn = format!("uuid:{device_uuid}");
         let gena = Arc::new(GenaHub::default());
-        let controller = Arc::new(DmrController::new(
+        let controller = Arc::new(DmrController::with_initial_volume(
             Arc::clone(&events),
             Arc::clone(&gena),
             Arc::clone(&arbiter),
+            initial_volume,
         ));
         let weak_controller = Arc::downgrade(&controller);
         arbiter.register_suspender(MediaSource::Dlna, move |lease| {
@@ -253,6 +255,7 @@ struct DmrState {
     rate: f32,
     ready: bool,
     renderer_active: bool,
+    decoder_id: u64,
     lease: Option<MediaLease>,
     last_update: Instant,
     volume: u8,
@@ -275,6 +278,7 @@ impl Default for DmrState {
             rate: 0.0,
             ready: false,
             renderer_active: false,
+            decoder_id: 0,
             lease: None,
             last_update: Instant::now(),
             volume: 100,
@@ -322,21 +326,43 @@ pub struct DmrController {
 }
 
 impl DmrController {
+    #[cfg(test)]
     fn new(events: Arc<EventSink>, gena: Arc<GenaHub>, arbiter: Arc<PlaybackArbiter>) -> Self {
+        Self::with_initial_volume(events, gena, arbiter, 100)
+    }
+
+    fn with_initial_volume(
+        events: Arc<EventSink>,
+        gena: Arc<GenaHub>,
+        arbiter: Arc<PlaybackArbiter>,
+        initial_volume: u8,
+    ) -> Self {
         Self {
-            state: Mutex::new(DmrState::default()),
+            state: Mutex::new(DmrState { volume: initial_volume.min(100), ..DmrState::default() }),
             events,
             gena,
             arbiter,
         }
     }
 
-    pub fn update_playback_state(
+    #[cfg(test)]
+    fn update_playback_state(
         &self,
         position_ms: Option<u64>,
         duration_ms: Option<u64>,
         rate: Option<f32>,
         ready: Option<bool>,
+    ) {
+        self.update_renderer_state(position_ms, duration_ms, rate, ready, None);
+    }
+
+    pub(crate) fn update_renderer_state(
+        &self,
+        position_ms: Option<u64>,
+        duration_ms: Option<u64>,
+        rate: Option<f32>,
+        ready: Option<bool>,
+        epoch: Option<u64>,
     ) {
         let should_notify = {
             let Ok(mut state) = self.state.lock() else {
@@ -345,7 +371,10 @@ impl DmrController {
             if !state.renderer_active
                 || !state
                     .lease
-                    .is_some_and(|lease| self.arbiter.is_current(lease))
+                    .is_some_and(|lease| {
+                        self.arbiter.is_current(lease)
+                            && epoch.is_none_or(|epoch| lease.epoch() == epoch)
+                    })
             {
                 return;
             }
@@ -362,9 +391,15 @@ impl DmrController {
             if let Some(ready) = ready {
                 state.ready = ready;
             }
-            if let Some(rate) = rate.filter(|value| value.is_finite()) {
+            // Tagged Android feedback describes the decoder. Buffering must
+            // not reset the transport's last explicit Play or Pause command.
+            if let Some(rate) = rate.filter(|value| value.is_finite() && epoch.is_none()) {
                 state.rate = rate.max(0.0);
-                state.transport_state = if !state.ready {
+            }
+            if ready.is_some() || rate.is_some_and(|value| value.is_finite()) {
+                state.transport_state = if epoch.is_some() && state.rate == 0.0 {
+                    TransportState::PausedPlayback
+                } else if !state.ready {
                     TransportState::Transitioning
                 } else if state.rate > 0.0 {
                     TransportState::Playing
@@ -378,6 +413,52 @@ impl DmrController {
         if should_notify {
             self.notify_transport();
         }
+    }
+
+    /// The fnOS decoder has produced PCM. Keep a pause that arrived while
+    /// buffering, and ignore an acknowledgement from a replaced decoder.
+    pub(crate) fn audio_decoder_ready(&self, epoch: u64, uri: &str, decoder_id: Option<u64>) {
+        {
+            let Ok(mut state) = self.state.lock() else { return };
+            if decoder_id.is_some_and(|id| id != state.decoder_id)
+                || !state.renderer_active || state.current_uri.as_deref() != Some(uri)
+                || !state.lease.is_some_and(|l| l.epoch() == epoch && self.arbiter.is_current(l))
+            {
+                return;
+            }
+            state.ready = true;
+            if state.transport_state != TransportState::Transitioning {
+                return;
+            }
+            state.transport_state = if state.rate > 0.0 {
+                TransportState::Playing
+            } else {
+                TransportState::PausedPlayback
+            };
+            state.last_update = Instant::now();
+        }
+        self.notify_transport();
+    }
+
+    /// Local EOF or a decoder failure ends this render. Keep the selected URI
+    /// available for a fresh Play, including replay of the exact same URL.
+    pub(crate) fn audio_decoder_finished(&self, epoch: u64, uri: &str, decoder_id: u64) {
+        {
+            let Ok(mut state) = self.state.lock() else { return };
+            if !state.renderer_active || state.decoder_id != decoder_id
+                || state.current_uri.as_deref() != Some(uri)
+                || !state.lease.is_some_and(|l| l.epoch() == epoch && self.arbiter.is_current(l))
+            {
+                return;
+            }
+            state.renderer_active = false;
+            state.ready = false;
+            state.rate = 0.0;
+            state.position_ms = 0;
+            state.transport_state = TransportState::Stopped;
+            state.last_update = Instant::now();
+        }
+        self.notify_transport();
     }
 
     /// Handles commands that target the locally rendered DLNA session.
@@ -478,14 +559,14 @@ impl DmrController {
                     .renderer_active
                     .then_some(state.lease.filter(|lease| self.arbiter.is_current(*lease)))
                     .flatten();
-                Some((state.metadata.clone(), state.position_ms, active_lease))
+                Some((state.metadata.clone(), state.position_ms, active_lease, state.decoder_id))
             } else {
                 None
             }
         };
-        if let Some((metadata, position_ms, active_lease)) = refreshed_metadata {
+        if let Some((metadata, position_ms, active_lease, decoder_id)) = refreshed_metadata {
             if let Some(lease) = active_lease {
-                self.emit_selected_media(lease, uri, &metadata, position_ms);
+                self.emit_selected_media(lease, uri, &metadata, position_ms, decoder_id, true);
             }
             self.notify_transport();
             self.notify_connection();
@@ -549,13 +630,31 @@ impl DmrController {
             .state
             .lock()
             .map_err(|_| anyhow!("DLNA playback state is unavailable"))?;
+        self.validate_owner(&state, peer)
+    }
+
+    fn validate_owner(&self, state: &DmrState, peer: IpAddr) -> Result<()> {
         if state.current_uri.is_none() {
+            self.log_control_rejection("no_media_selected", state.owner_peer, peer);
             bail!("DLNA media URI has not been set");
         }
         if state.owner_peer.is_some_and(|owner| owner != peer) {
+            self.log_control_rejection("owner_mismatch", state.owner_peer, peer);
             bail!("DLNA command belongs to a different control point");
         }
         Ok(())
+    }
+
+    fn log_control_rejection(&self, reason: &str, owner: Option<IpAddr>, peer: IpAddr) {
+        let family = |address: IpAddr| if address.is_ipv4() { "ipv4" } else { "ipv6" };
+        let owner_family = owner.map(family).unwrap_or("none");
+        let peer_family = family(peer);
+        self.events.emit(CoreEvent::Log {
+            level: "info",
+            message: &format!(
+                "DLNA AVTransport rejected: reason={reason} owner_family={owner_family} requester_family={peer_family}"
+            ),
+        });
     }
 
     fn owned_current_lease(&self, peer: IpAddr) -> Result<MediaLease> {
@@ -563,9 +662,7 @@ impl DmrController {
             .state
             .lock()
             .map_err(|_| anyhow!("DLNA playback state is unavailable"))?;
-        if state.owner_peer.is_some_and(|owner| owner != peer) {
-            bail!("DLNA command belongs to a different control point");
-        }
+        self.validate_owner(&state, peer)?;
         state
             .lease
             .filter(|lease| self.arbiter.is_current(*lease))
@@ -610,6 +707,10 @@ impl DmrController {
         }
         if let Some(lease) = lease {
             self.events.emit(CoreEvent::NowPlaying {
+                packet_summary: None,
+                lyric_line: None,
+                track_changed: None,
+                track_id: None,
                 source: "dlna",
                 epoch: lease.epoch(),
                 title: None,
@@ -824,7 +925,7 @@ impl DmrController {
                 .ok_or_else(|| anyhow!("DLNA media selection changed before Play"))?;
             (lease, Some(transition))
         };
-        let (emit_media, uri, metadata, position_ms) = {
+        let (emit_media, uri, metadata, position_ms, decoder_id) = {
             let mut state = self
                 .state
                 .lock()
@@ -835,6 +936,7 @@ impl DmrController {
                 .ok_or_else(|| anyhow!("尚未设置 DLNA 媒体地址"))?;
             state.settle_clock();
             let emit_media = !state.renderer_active;
+            if emit_media { state.decoder_id = state.decoder_id.wrapping_add(1); }
             state.renderer_active = true;
             state.lease = Some(lease);
             state.transport_state = if state.ready {
@@ -844,11 +946,11 @@ impl DmrController {
             };
             state.rate = 1.0;
             state.last_update = Instant::now();
-            (emit_media, uri, state.metadata.clone(), state.position_ms)
+            (emit_media, uri, state.metadata.clone(), state.position_ms, state.decoder_id)
         };
 
         if emit_media {
-            self.emit_selected_media(lease, &uri, &metadata, position_ms);
+            self.emit_selected_media(lease, &uri, &metadata, position_ms, decoder_id, false);
         }
         self.emit_remote_control_available();
         self.events.emit(CoreEvent::DlnaRate {
@@ -871,6 +973,8 @@ impl DmrController {
         uri: &str,
         metadata: &MediaMetadata,
         position_ms: u64,
+        decoder_id: u64,
+        metadata_only: bool,
     ) {
         let media_kind = media_kind(
             uri,
@@ -878,6 +982,9 @@ impl DmrController {
             metadata.upnp_class.as_deref(),
         );
         self.events.emit(CoreEvent::DlnaMedia {
+            decoder_id,
+            metadata_only,
+            didl_fields: didl_field_names(&metadata.raw),
             source: "dlna",
             epoch: lease.epoch(),
             url: uri,
@@ -898,6 +1005,10 @@ impl DmrController {
             lyrics_uri: metadata.lyrics_uri.as_deref(),
         });
         self.events.emit(CoreEvent::NowPlaying {
+                packet_summary: None,
+            lyric_line: None,
+            track_changed: None,
+            track_id: None,
             source: "dlna",
             epoch: lease.epoch(),
             title: metadata.title.as_deref(),
@@ -1070,21 +1181,22 @@ impl DmrController {
     }
 
     fn seek(&self, position_ms: u64) -> Result<()> {
-        self.seek_inner(position_ms)
+        self.seek_inner(position_ms, None)
     }
 
     fn seek_from(&self, peer: IpAddr, position_ms: u64) -> Result<()> {
-        self.ensure_owner(peer)?;
-        self.seek_inner(position_ms)
+        self.seek_inner(position_ms, Some(peer))
     }
 
-    fn seek_inner(&self, position_ms: u64) -> Result<()> {
+    fn seek_inner(&self, position_ms: u64, peer: Option<IpAddr>) -> Result<()> {
         let (position_ms, duration_ms, lease) = {
             let mut state = self
                 .state
                 .lock()
                 .map_err(|_| anyhow!("DLNA 播放状态不可用"))?;
-            if state.current_uri.is_none() {
+            if let Some(peer) = peer {
+                self.validate_owner(&state, peer)?;
+            } else if state.current_uri.is_none() {
                 bail!("尚未设置 DLNA 媒体地址");
             }
             let lease = state.lease.filter(|lease| self.arbiter.is_current(*lease));
@@ -2468,6 +2580,21 @@ async fn handle_http_connection(
         }
     };
     let response = route_http_request(&request, peer, &context);
+    if request.path == "/upnp/control/avtransport"
+        && let Some(action) = request.headers.get("soapaction").and_then(|value| parse_soap_action(value))
+        && matches!(action.as_str(), "Play" | "Pause" | "Seek" | "Stop" | "SetAVTransportURI")
+    {
+        let mut message = format!("DLNA AVTransport {action}: HTTP {}", response.status);
+        if response.status >= 400
+            && let Some(code) = std::str::from_utf8(&response.body).ok()
+                .and_then(|body| extract_xml_text(body, "errorCode"))
+                .and_then(|code| code.parse::<u16>().ok())
+        {
+            use std::fmt::Write;
+            let _ = write!(message, " UPnP {code}");
+        }
+        context.controller.events.emit(CoreEvent::Log { level: "info", message: &message });
+    }
     write_http_response(&mut stream, response).await
 }
 
@@ -3258,6 +3385,51 @@ fn validate_media_uri(uri: &str) -> Result<()> {
     Ok(())
 }
 
+// Inspect the input independently of the supported DIDL aliases. Only export
+// bounded XML names, never text, attribute values, tokens or resource URLs.
+fn didl_field_names(xml: &str) -> String {
+    use quick_xml::{Reader, events::Event};
+    use std::collections::BTreeSet;
+
+    let mut reader = Reader::from_str(xml);
+    let mut names = BTreeSet::new();
+    let mut size = 0;
+    // quick-xml 0.41 exposes XML names as bytes and 0.42 as UTF-8 text.
+    let mut add = |name: &[u8], attribute: bool| {
+        if name.len() > 48 || !name.iter().all(|b| b.is_ascii_alphanumeric() || b"_:.-".contains(b)) {
+            return false;
+        }
+        let field = format!("{}{}", if attribute { "@" } else { "" }, String::from_utf8_lossy(name));
+        if !names.contains(&field) {
+            size += field.len() + 1;
+            if names.len() >= 48 || size > 900 { return false; }
+            names.insert(field);
+        }
+        true
+    };
+    let status = 'scan: loop {
+        match reader.read_event() {
+            Ok(Event::Start(tag) | Event::Empty(tag)) => {
+                if !add(tag.name().as_ref().as_ref(), false) { break "limited"; }
+                for attr in tag.attributes() {
+                    let Ok(attr) = attr else { break 'scan "invalid"; };
+                    if !add(attr.key.as_ref().as_ref(), true) { break 'scan "limited"; }
+                }
+            }
+            Ok(Event::Eof) => break "complete",
+            Err(_) => break "invalid",
+            _ => {}
+        }
+    };
+    format!("{status}:{}", names.into_iter().collect::<Vec<_>>().join(","))
+}
+
+#[test]
+fn didl_inventory_excludes_values_and_cdata_markup() {
+    let xml = r#"<item xmlns:v="secret"><v:krc v:src="private"><![CDATA[<private/>]]></v:krc><res/></item>"#;
+    assert_eq!(didl_field_names(xml), "complete:@v:src,@xmlns:v,item,res,v:krc");
+}
+
 #[cfg(test)]
 fn parse_didl_metadata(metadata: &str) -> MediaMetadata {
     parse_didl_metadata_for_uri(metadata, None)
@@ -3343,7 +3515,15 @@ fn parse_didl_metadata_for_uri(metadata: &str, preferred_uri: Option<&str>) -> M
         artist: extract_xml_text(metadata, "artist")
             .or_else(|| extract_xml_text(metadata, "creator")),
         album: extract_xml_text(metadata, "album"),
-        artwork_url: extract_xml_text(metadata, "albumArtURI"),
+        artwork_url: extract_xml_text(metadata, "albumArtURI")
+            .filter(|uri| !uri.trim().is_empty())
+            .or_else(|| {
+                extract_xml_elements(metadata, "res").into_iter().find_map(|(tag, uri)| {
+                    (!uri.trim().is_empty()
+                        && resource_mime_type(&tag).is_some_and(|mime| mime.to_ascii_lowercase().starts_with("image/")))
+                        .then_some(uri)
+                })
+            }),
         mime_type,
         bitrate_bps,
         sample_rate,
@@ -4160,6 +4340,21 @@ mod tests {
         )
     }
 
+    #[test]
+    fn rendering_control_starts_at_the_hosts_media_volume() {
+        let events = Arc::new(EventSink::new());
+        let arbiter = Arc::new(PlaybackArbiter::new(Arc::clone(&events)));
+        let controller = DmrController::with_initial_volume(
+            events,
+            Arc::new(GenaHub::default()),
+            arbiter,
+            25,
+        );
+        assert_eq!(controller.snapshot().unwrap().volume, 25);
+        assert!(initial_event_body(ServiceKind::RenderingControl, &controller)
+            .contains("val=&quot;25&quot;"));
+    }
+
     fn shared_controller() -> (Arc<DmrController>, Arc<PlaybackArbiter>) {
         let events = Arc::new(EventSink::new());
         let arbiter = Arc::new(PlaybackArbiter::new(Arc::clone(&events)));
@@ -4312,6 +4507,7 @@ mod tests {
 
         let parsed = parse_didl_metadata_for_uri(metadata, Some("https://example.test/current"));
         assert_eq!(parsed.mime_type.as_deref(), Some("audio/flac"));
+        assert_eq!(parsed.artwork_url.as_deref(), Some("https://example.test/cover.jpg"));
         assert_eq!(parsed.bitrate_bps, Some(320_000));
         assert_eq!(parsed.sample_rate, Some(44_100));
         assert_eq!(parsed.bits_per_sample, Some(24));
@@ -4344,6 +4540,10 @@ mod tests {
             .iter()
             .find(|event| event["type"] == "dlna_media")
             .expect("an active metadata refresh must reach the UI quality projection");
+        assert_eq!(refreshed_media["metadata_only"], true);
+        let start = refreshed_events[..before_refresh].iter().find(|event| event["type"] == "dlna_media").unwrap();
+        assert_eq!(start["metadata_only"], false);
+        assert_eq!(refreshed_media["decoder_id"], start["decoder_id"]);
         assert_eq!(refreshed_media["url"], uri);
         assert_eq!(refreshed_media["title"], "Late metadata");
         assert_eq!(refreshed_media["content_type"], "audio/flac");
@@ -4353,6 +4553,43 @@ mod tests {
         assert_eq!(refreshed_media["channels"], 2);
         assert!(refreshed_media["start_position_ms"].as_u64().unwrap() >= 51_250);
         assert!(controller.snapshot().unwrap().position_ms >= 51_250);
+    }
+
+    #[test]
+    fn android_buffering_feedback_keeps_transport_intent_and_ignores_old_epochs() {
+        let (controller, _) = controller_with_events();
+        controller.set_transport_uri("https://example.test/music.mp3", "").unwrap();
+        controller.play().unwrap();
+        let epoch = controller.state.lock().unwrap().lease.unwrap().epoch();
+        controller.update_renderer_state(Some(90_000), None, Some(0.0), Some(false), Some(epoch + 1));
+        assert_eq!(controller.snapshot().unwrap().position_ms, 0);
+        controller.update_renderer_state(Some(0), None, Some(0.0), Some(false), Some(epoch));
+        controller.update_renderer_state(Some(0), None, Some(0.0), Some(true), Some(epoch));
+        assert_eq!(controller.snapshot().unwrap().transport_state, TransportState::Playing);
+        controller.pause().unwrap();
+        controller.update_renderer_state(Some(100), None, Some(1.0), Some(false), Some(epoch));
+        assert_eq!(controller.snapshot().unwrap().transport_state, TransportState::PausedPlayback);
+    }
+
+    #[test]
+    fn late_decoder_callbacks_cannot_stop_or_start_a_replay_of_the_same_uri() {
+        let (controller, _) = controller_with_events();
+        let uri = "https://example.test/replay.mp3";
+        controller.set_transport_uri(uri, "").unwrap();
+        controller.play().unwrap();
+        let (epoch, first) = {
+            let state = controller.state.lock().unwrap();
+            (state.lease.unwrap().epoch(), state.decoder_id)
+        };
+        controller.audio_decoder_finished(epoch, uri, first);
+        assert_eq!(controller.snapshot().unwrap().transport_state, TransportState::Stopped);
+        controller.play().unwrap();
+        controller.audio_decoder_ready(epoch, uri, Some(first));
+        controller.audio_decoder_finished(epoch, uri, first);
+        assert_eq!(controller.snapshot().unwrap().transport_state, TransportState::Transitioning);
+        let current = controller.state.lock().unwrap().decoder_id;
+        controller.audio_decoder_ready(epoch, uri, Some(current));
+        assert_eq!(controller.snapshot().unwrap().transport_state, TransportState::Playing);
     }
 
     #[test]
@@ -4953,6 +5190,28 @@ mod tests {
         assert_eq!(snapshot.transport_state, TransportState::Transitioning);
         assert_eq!(snapshot.position_ms, 0);
         assert_eq!(snapshot.current_uri, "https://example.test/owned.mp4");
+    }
+
+    #[test]
+    fn rejected_seek_distinguishes_address_family_mismatch_from_missing_media() {
+        let (controller, events) = controller_with_events();
+        let ipv4: IpAddr = "192.0.2.10".parse().unwrap();
+        let ipv6: IpAddr = "2001:db8::10".parse().unwrap();
+
+        assert!(controller.seek_from(ipv4, 30_000).is_err());
+        controller
+            .set_transport_uri_from("https://example.test/track.mp3", "", Some(ipv4))
+            .unwrap();
+        controller.play_from(ipv4).unwrap();
+        assert!(controller.seek_from(ipv6, 30_000).is_err());
+        controller.seek_from(ipv4, 30_000).unwrap();
+
+        let events = events.captured_events();
+        assert!(events.iter().any(|event| event["message"]
+            == "DLNA AVTransport rejected: reason=no_media_selected owner_family=none requester_family=ipv4"));
+        assert!(events.iter().any(|event| event["message"]
+            == "DLNA AVTransport rejected: reason=owner_mismatch owner_family=ipv4 requester_family=ipv6"));
+        assert_eq!(events.iter().filter(|event| event["type"] == "dlna_seek").count(), 1);
     }
 
     #[test]

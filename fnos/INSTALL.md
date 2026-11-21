@@ -1,20 +1,25 @@
 # FusionPlay fnOS 安装与验收指南
 
-面向最终用户/测试同学。安装包：`fusionplay-fnos.fpk`（appname `fusionplay-fnos`，当前 `0.2.5`，x86_64）。
+当前候选版本为 0.2.6。按照 NAS 的 CPU 架构选择一个 FPK。两个包的应用标识均为 `fusionplay-fnos`。
+
+| NAS 上的 `uname -m` | 安装包 | GitHub Actions artifact |
+| --- | --- | --- |
+| `x86_64` | `fusionplay-fnos.fpk` | `fusionplay-fnos-fpk` |
+| `aarch64` | `fusionplay-fnos-arm64.fpk` | `fusionplay-fnos-fpk-arm64` |
+
 构建、CI 与本地沙箱测试见 [fnos-build.md](fnos-build.md)；功能与限制见 [README.md](README.md)。
 
 ## 0. 前置条件
 
 | 项 | 要求 |
 |---|---|
-| NAS | 飞牛 fnOS，**x86_64** 机型（当前包 `platform = x86`，ARM 设备装不了） |
+| NAS | 飞牛 fnOS，x86_64 或 ARM64 机型 |
 | 权限 | fnOS 管理员账号（安装、授权 audio 组需要） |
 | 存储 | 至少一个可用存储空间（安装时需要选） |
 | 端口 | `18080` 未被占用（本应用只绑 `127.0.0.1`） |
 | 声卡 | 至少一块可用的 ALSA 播放设备（板载/HDMI/USB DAC） |
 
-下载产物：GitHub Actions artifact `fusionplay-fnos-fpk`，或 Release 页面的
-`fusionplay-fnos.fpk` 附件。下载后建议先校验：
+下载对应架构的包。以下命令以 x86_64 为例，ARM64 请使用 `fusionplay-fnos-arm64.fpk`。
 
 ```bash
 sha256sum fusionplay-fnos.fpk
@@ -25,33 +30,20 @@ tar tzf fusionplay-fnos.fpk | head        # 应看到 manifest / cmd/ / config/ 
 
 1. 打开 fnOS 桌面 → **应用中心** → **手动安装**。
 2. 弹窗顶部会显示已选中的存储空间（**默认已选中，不要再点它**，展开下拉会遮挡上传区）。
-3. 点「从电脑上传」，选择 `fusionplay-fnos.fpk`。
+3. 点「从电脑上传」，选择与 NAS 架构匹配的 FPK。
 4. 解析完成后会弹出「未经验证应用的安全提示」，按钮是 **取消 / 同意**（不是「安装」）→ 点 **同意**。
 5. 等待安装完成；应用图标会出现在桌面。
 
-## 2. 方式 B：CLI 安装
+## 2. 在 NAS 上用官方 CLI 本地测试
 
-本应用**没有向导**、**没有 `install_dep_apps`**，所以 CLI 可以直接安装：
+将 FPK 放到 NAS 上，在文件所在目录执行以下命令。已安装的应用使用相同应用标识及更高版本的包原地升级。[官方 appcenter-cli 文档](https://developer.fnnas.com/docs/cli/appcentercli)
 
 ```bash
-# 1) 把 fpk 传到 NAS 上用户可见目录（示例 /vol1/1000/workspace）
-trim-cli file upload /vol1/1000/workspace ./fusionplay-fnos.fpk --overwrite rename
-
-# 2) 先 dry-run 确认解析
-trim-cli app install-fpk --remote-path /vol1/1000/workspace/fusionplay-fnos.fpk \
-    --volume-id 1 --dry-run --yes
-
-# 3) 正式安装
-trim-cli app install-fpk --remote-path /vol1/1000/workspace/fusionplay-fnos.fpk \
-    --volume-id 1 --yes
-
-# 4) 查状态（app list 可能是缓存，以 status 的 version 为准）
-trim-cli app status fusionplay-fnos
+appcenter-cli install-fpk fusionplay-fnos.fpk
+appcenter-cli list
 ```
 
-> ⚠️ 上传重名文件时 trim-cli 会自动改名（`x.fpk` → `x_1.fpk`）。装机前用
-> `tar xzOf fusionplay-fnos.fpk manifest | grep version` 确认版本，别装错文件。
-> ⚠️ 同 appname + 同 version 重装会报 **errno 10236**：先卸载，或使用更高版本。
+如应用原先已停用并希望现在启用，可执行 `appcenter-cli start fusionplay-fnos`。
 
 ## 3. 安装后必做：授权音频权限（audio 组）
 
@@ -81,7 +73,7 @@ sudo -u fusionplay-fnos test -r /dev/snd/controlC0 && echo "audio ok" || echo "a
 ### 4.1 应用状态与服务
 
 ```bash
-trim-cli app status fusionplay-fnos          # status: running，version = 0.2.5
+appcenter-cli list
 sudo ss -lntp | grep 18080                   # 127.0.0.1:18080 有监听
 pgrep -af 'fusionplay-fnos/bin/fusionplay-fnos'   # 只有 1 个进程
 ```
@@ -90,7 +82,7 @@ pgrep -af 'fusionplay-fnos/bin/fusionplay-fnos'   # 只有 1 个进程
 
 ```bash
 curl -s http://127.0.0.1:18080/healthz
-# 期望：{"status":"ok","version":"0.2.5","uptime":...}
+# 期望：{"status":"ok","version":"0.2.6","uptime":...}
 
 # 走网关 socket（应用实际接法；路径经 /var/apps/.../target 软链）
 curl -s --unix-socket /var/apps/fusionplay-fnos/target/fusionplay-fnos.sock \
@@ -114,10 +106,8 @@ sudo avahi-browse -rt _raop._tcp   | head
 
 ### 4.4 桌面入口 / Web UI
 
-- 桌面点击 FusionPlay 图标，应打开中文管理面板（**概览 / 音频 / 接收 / 设置** 四页）。
-- 浏览器直接访问网关路径 `http://<NAS>:5666/app/fusionplay-fnos/`（需登录飞牛），应返回 200，
-  页面资源（`js/main.js`、`js/page-audio.js`、`style.css`）不 404。
-- 主题按钮应在「跟随系统 → 浅色 → 深色」间切换，所有卡片/输入/曲线同步换色。
+- 桌面点击 FusionPlay 图标应进入共享播放器。三点菜单打开设置，右下角飞牛菜单可切换音箱、管理输出或新建实例。
+- 访问旧书签 `#/settings` 应打开 Flutter 设置面板。`#/audio` 应打开音箱玻璃页面中的主接收器输出。旧脚本 `js/page-audio.js` 应返回 404。
 - 远程访问请认准桌面图标或 `/app/fusionplay-fnos/`；**不要**把 `http://<NAS>:18080` 当对外入口
   （端口只绑 loopback）。
 
@@ -128,7 +118,7 @@ sudo tail -n 100 /vol1/@appdata/fusionplay-fnos/fusionplay.log
 sudo tail -n 100 /vol1/@appdata/fusionplay-fnos/app.log
 ```
 
-期望：有 `FusionPlay fnOS 0.2.5 启动`、`HTTP 已启动`、`协议宿主已启动`；
+期望：有 `FusionPlay fnOS 0.2.6 启动`、`HTTP 已启动`、`协议宿主已启动`；
 没有反复重启/崩溃堆栈。日志超过 5 MiB 会原地保留尾部 1 MiB（inode 不变）。
 
 ### 4.6 数据与配置目录
@@ -148,7 +138,7 @@ sudo ls -l /vol1/@appdata/fusionplay-fnos/              # app.log、fusionplay.l
 - [ ] `sudo avahi-browse -rt _airplay._tcp` 能看到 `FusionPlay`（mDNS 广播正常）。
 - [ ] 控制中心音频输出列表里能看到 FusionPlay（默认名 `FusionPlay`，可在 UI 改）。
 - [ ] 首次连接可完成配对（临时配对，无 PIN）；再次连接无需重复配对。
-- [ ] 播放音乐：NAS 对应声卡出声；UI 概览显示当前音源 = AirPlay、曲名/歌手/封面。
+- [ ] 播放音乐：NAS 对应声卡出声；播放器显示当前音源 = AirPlay、曲名/歌手/封面。
 - [ ] 播放/暂停/切歌：NAS 端暂停与恢复、切歌跟随；UI 状态同步。
 - [ ] 发送端音量：拖手机音量条，NAS 输出响度随之变化（UI 显示 airplay_db）。
 - [ ] 断开 AirPlay 后，UI 返回空闲；再次投放可正常接管。
@@ -188,22 +178,11 @@ sudo ls -l /vol1/@appdata/fusionplay-fnos/              # app.log、fusionplay.l
 - [ ] 重启 NAS 后应用自动启动（应用中心 status=running，`/healthz` 通）。
 - [ ] `config.json` 中的设备/校准设置仍在。
 
-## 6. 升级验收
+## 6. 原地升级
 
-1. 记录升级前版本：`curl -s http://127.0.0.1:18080/healthz`。
-2. 应用中心上传**更高版本**的 fpk 并升级（同版本会 errno 10236）。
-3. 升级完成后：
-   ```bash
-   trim-cli app status fusionplay-fnos          # version = 新版本
-   curl -s http://127.0.0.1:18080/healthz       # version = 新版本
-   sudo ss -lntp | grep 18080                   # 监听进程启动时间 = 刚刚
-   sudo pgrep -af 'fusionplay-fnos/bin/fusionplay-fnos'   # 只有 1 个进程
-   ```
-4. 配置检查：`sudo cat /vol1/@apphome/fusionplay-fnos/config.json` 中设备/校准/接收器名未丢；
-   从 0.1.x 升级时，`config_version` 应变为 `2`，旧全局 `audio.curve` 已复制到每个设备的 `curve`。
-5. 功能抽测：AirPlay/DLNA 各投放一次、设备页正常。
-6. 若升级后打不开：查看应用中心提示（`TRIM_TEMP_LOGFILE`）与
-   `/vol1/@appdata/fusionplay-fnos/app.log`，必要时手动「启动」一次。
+在应用中心保留现有 FusionPlay，用相同应用标识、相同架构、更高版本的 FPK 做本地覆盖升级测试。当前候选版本为 0.2.6，x86_64 上一正式版本为 0.2.5，ARM64 从 0.2.6 开始。安装包校验、应用中心启用和用户数据目录各自独立。
+
+启用后打开播放器，或访问 `http://127.0.0.1:18080/healthz` 核对版本。检查接收器名称、音箱输出和校准值。升级前已停用的服务可在应用中心手动启用。配置沿用 `/var/apps/fusionplay-fnos/home/config.json`，运行数据沿用同目录树中的 `var/`。升级错误见应用中心提示和 `/var/apps/fusionplay-fnos/var/app.log`。[官方应用框架](https://developer.fnnas.com/docs/core-concepts/framework)
 
 ## 7. 卸载与残留检查
 
@@ -211,7 +190,7 @@ sudo ls -l /vol1/@appdata/fusionplay-fnos/              # app.log、fusionplay.l
 - 卸载后检查：
 
 ```bash
-trim-cli app status fusionplay-fnos          # 应返回 not found
+appcenter-cli list                          # 核对已安装列表
 sudo ss -lntp | grep 18080                   # 无输出
 pgrep -af 'fusionplay-fnos/bin/fusionplay-fnos'   # 无输出
 ls -d /var/apps/fusionplay-fnos /vol1/@appcenter/fusionplay-fnos 2>/dev/null  # 应不存在
@@ -231,10 +210,10 @@ sudo rm -rf /vol1/@apphome/fusionplay-fnos /vol1/@appdata/fusionplay-fnos \
 | 应用中心解析失败/拒绝安装 | 包不完整或版本非法（只接受 `x.y.z[-r]`） | 重新下载；`tar tzf` 校验；检查 manifest.version |
 | 安装完成但打不开 | audio 未授权导致 ALSA 初始化失败（后端会降级，但 UI 可能先报错） | 授权 audio 组后重启应用 |
 | 手机搜不到 FusionPlay | 运行环境带 `CI=1`（shairplay 跳过 mDNS）或 avahi/mDNS 未运行 | 去掉 `CI` 环境变量并重启应用；`sudo avahi-browse -rt _airplay._tcp` 验证 |
-| `errno 10236` | 同 appname + version 已安装 | 先卸载或换更高版本 |
+| `errno 10236` | 同 appname + version 已安装 | 核对已安装版本，选择更高版本的 FPK |
 | 启动后端口占用 | 18080 被其它进程占用 | `sudo ss -lntp \| grep 18080` 找到并停止占用者 |
 | CLI 被拒（wizard/dep） | 本包无向导无依赖，正常不会被拒；若出现请核对是否装错文件 | 用 `tar xzOf … manifest` 核对 appname/version |
-| 卸载后端口仍占用 | 旧进程残留 | `pkill -f /var/apps/fusionplay-fnos/target/bin/fusionplay-fnos`（先确认是本应用） |
+| 端口仍占用 | 服务残留或其他程序监听 | 用 `ss -lntp` 核实端口所有者，保留应用中心提示及日志 |
 
 ## 9. 回滚
 
@@ -247,3 +226,12 @@ sudo rm -rf /vol1/@apphome/fusionplay-fnos /vol1/@appdata/fusionplay-fnos \
 本应用以 **AGPL-3.0-only** 分发，包内包含完整许可证 `app/licenses/LICENSE` 与源码地址
 `app/licenses/SOURCE.txt`、`app/BUILD-INFO`（版本/commit/构建时间）。
 对应源码：<https://github.com/youyoudezhuzhu/FusionPlay>（tag/commit 见 BUILD-INFO）。
+
+### 保存在线更新包
+
+在播放器右上角或设置页点「检查更新」。有新版本时，选择 NAS 上的保存目录，并在飞牛文件选择器内确认授权。下载完成后，页面会显示 FPK 的完整路径。在「应用中心 → 手动安装」中选取该文件。x86_64 与 ARM64 接收各自架构的 FPK。
+
+此功能使用飞牛统一网关和个人目录授权。请通过飞牛桌面或同域网关访问，并选择当前账号可以读写的目录。飞牛官方标注文件授权接口从 fnOS 1.2.0401 和客户端 1.34.0 开始支持。旧系统仍可从项目 Releases 获取对应架构的 FPK。
+
+- [飞牛个人目录授权](https://developer.fnnas.com/api/authorization/user-access)
+- [飞牛文件权限检查](https://developer.fnnas.com/api/authorization/file-acl)

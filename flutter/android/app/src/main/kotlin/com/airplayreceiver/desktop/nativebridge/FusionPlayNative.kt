@@ -53,6 +53,7 @@ object FusionPlayNative : NativeCallback {
         name: String,
         statePath: String,
         outputDeviceId: String?,
+        initialVolumePercent: Int,
     ): String?
 
     @JvmStatic

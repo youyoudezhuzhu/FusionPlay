@@ -13,6 +13,10 @@ class FusionPlayFlutterApplication : Application() {
     lateinit var runtime: FusionPlayRuntime
         private set
 
+    private val cleanup = java.util.concurrent.Executors.newSingleThreadScheduledExecutor { task ->
+        Thread(task, "FusionPlay-log-cleanup").apply { isDaemon = true }
+    }
+
     private var previousCrashHandler: Thread.UncaughtExceptionHandler? = null
 
     override fun onCreate() {
@@ -20,6 +24,12 @@ class FusionPlayFlutterApplication : Application() {
         AndroidPaths.initialize(this)
         diagnosticLogger = FusionPlayDiagnosticLogger()
         installCrashHandler()
+        cleanup.scheduleWithFixedDelay({
+            runCatching {
+                diagnosticLogger.removeInactiveLogs()
+                FusionPlayLogExporter.maintain(this)
+            }.onFailure { android.util.Log.w("FusionPlay", "日志清理失败", it) }
+        }, 0, 1, java.util.concurrent.TimeUnit.HOURS)
         diagnosticLogger.write(
             component = "android_application",
             event = "lifecycle",
@@ -37,6 +47,7 @@ class FusionPlayFlutterApplication : Application() {
             event = "lifecycle",
             outcome = "terminated",
         )
+        cleanup.shutdown()
         runtime.close()
         Thread.setDefaultUncaughtExceptionHandler(previousCrashHandler)
         super.onTerminate()

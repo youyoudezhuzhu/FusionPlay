@@ -4,7 +4,8 @@ import 'package:flutter/material.dart';
 
 import '../theme/fusion_theme.dart';
 import 'g2_shape.dart';
-import 'liquid_glass.dart';
+import 'glass_appearance.dart';
+import 'frosted_glass.dart';
 import 'remote_focus.dart';
 import 'vector_icon.dart';
 
@@ -205,14 +206,16 @@ class _GlassSettingsHeader extends StatelessWidget {
   @override
   Widget build(BuildContext context) => DecoratedBox(
     key: const ValueKey('settings-glass-header'),
-    decoration: const BoxDecoration(
-      gradient: LinearGradient(
-        begin: Alignment.topCenter,
-        end: Alignment.bottomCenter,
-        colors: [Color(0x1FFFFFFF), Color(0x0AFFFFFF), Color(0x00FFFFFF)],
-        stops: [0.0, .55, 1.0],
-      ),
-    ),
+    decoration: GlassAppearance.enabledOf(context)
+        ? const BoxDecoration(
+            gradient: LinearGradient(
+              begin: Alignment.topCenter,
+              end: Alignment.bottomCenter,
+              colors: [Color(0x1FFFFFFF), Color(0x0AFFFFFF), Color(0x00FFFFFF)],
+              stops: [0.0, .55, 1.0],
+            ),
+          )
+        : BoxDecoration(color: GlassSpec.panel.solidColor),
     child: Padding(
       padding: const EdgeInsets.fromLTRB(20, 10, 10, 8),
       child: Row(
@@ -294,7 +297,7 @@ class FusionMorphOverlay extends StatefulWidget {
     required this.onClosed,
     this.onTransitionCompleted,
     this.settingsMaxWidth = 560,
-    this.forceFallback = false,
+    this.settingsMinWidth = SettingsStyle.panelWidth,
   });
 
   final MorphStage stage;
@@ -310,9 +313,9 @@ class FusionMorphOverlay extends StatefulWidget {
   final VoidCallback onClosed;
   final ValueChanged<MorphStage>? onTransitionCompleted;
 
-  /// Upper bound of the settings panel width (still clamped to half screen).
+  /// Preferred panel width bounds, limited by the available screen width.
   final double settingsMaxWidth;
-  final bool forceFallback;
+  final double settingsMinWidth;
 
   @override
   State<FusionMorphOverlay> createState() => _FusionMorphOverlayState();
@@ -321,8 +324,8 @@ class FusionMorphOverlay extends StatefulWidget {
 class _FusionMorphOverlayState extends State<FusionMorphOverlay>
     with SingleTickerProviderStateMixin {
   static const settingsRadius = 28.0;
-  static const menuTint = Color(0x7014171C);
-  static const settingsTint = Color(0x8814191F);
+  static const menuTint = Color(0x55181A26);
+  static const settingsTint = FusionGlassColors.settingsTint;
 
   late final AnimationController _controller = AnimationController(vsync: this);
 
@@ -350,7 +353,9 @@ class _FusionMorphOverlayState extends State<FusionMorphOverlay>
   void didUpdateWidget(covariant FusionMorphOverlay oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.stage != widget.stage ||
-        oldWidget.anchorRect != widget.anchorRect) {
+        oldWidget.anchorRect != widget.anchorRect ||
+        (widget.stage == MorphStage.menu &&
+            widget.menuItems.length != oldWidget.menuItems.length)) {
       final target = widget.stage;
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (!mounted || widget.stage != target) return;
@@ -415,7 +420,15 @@ class _FusionMorphOverlayState extends State<FusionMorphOverlay>
 
   Rect _settingsRect(Size size) {
     const side = 16.0;
-    final width = math.min(widget.settingsMaxWidth, size.width * .5);
+    final width = math
+        .min(
+          math.max(0.0, size.width - 2 * side),
+          (size.width * .5).clamp(
+            math.min(widget.settingsMinWidth, widget.settingsMaxWidth),
+            widget.settingsMaxWidth,
+          ),
+        )
+        .toDouble();
     final height = math.max(120.0, size.height - side * 2);
     return Rect.fromLTWH(size.width - side - width, side, width, height);
   }
@@ -506,32 +519,19 @@ class _FusionMorphOverlayState extends State<FusionMorphOverlay>
           final menuOpacity = _menuOpacity;
           final settingsOpacity = _settingsOpacity;
           final dim =
-              (.18 * math.max(menuOpacity, settingsOpacity) +
-                      .12 * settingsOpacity)
-                  .clamp(0.0, .42);
+              (.12 * math.max(menuOpacity, settingsOpacity) +
+                      .06 * settingsOpacity)
+                  .clamp(0.0, .18);
           final menuSize = _menuRect(_size).size;
           final settingsSize = _settingsRect(_size).size;
           final tint = Color.lerp(menuTint, settingsTint, settingsAmount)!;
           final glass = RepaintBoundary(
-            child: LiquidGlass(
+            child: FrostedGlass(
               key: const ValueKey('morph-container'),
               level: GlassLevel.panel,
-              interactive: false,
               borderRadius: radius,
-              blurSigma: settingsAmount > .5 ? 24 : 20,
+              blurSigma: 10 + 4 * settingsAmount,
               tint: tint,
-              forceFallback: true,
-              refraction: 0,
-              specular: .18,
-              thickness: 8,
-              tintGradient: settingsAmount > .35
-                  ? const LinearGradient(
-                      begin: Alignment.topLeft,
-                      end: Alignment.bottomRight,
-                      colors: [Color(0x1A000000), Color(0x04000000)],
-                    )
-                  : null,
-              animate: false,
               child: ClipRect(
                 child: Stack(
                   children: [

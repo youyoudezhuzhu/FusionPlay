@@ -11,7 +11,7 @@ Example:
         --signer-sha256 4836fb96c2ef76fd81ac385455f1b0154af77fadae1b45bbb752b192499dc12f \
         --source-commit "$GITHUB_SHA" \
         --notes-file docs/update/android/notes.md \
-        --tag android-v1.3.4 \
+        --tag v1.3.4 \
         --output artifacts/releases/update-manifest.json
 
 Fields (schema 1) are exactly the contract consumed by the Android app:
@@ -100,7 +100,7 @@ def main() -> int:
     parser.add_argument("--source-commit", required=True, help="Git commit the APK was built from")
     parser.add_argument("--notes-file", default="", help="Markdown release notes file")
     parser.add_argument("--notes", default=None, help="Inline notes (overrides --notes-file)")
-    parser.add_argument("--tag", default="", help="Release tag (defaults to android-v<version>)")
+    parser.add_argument("--tag", default="", help="Release tag (defaults to v<version>)")
     parser.add_argument("--repository", default=DEFAULT_REPOSITORY, help="owner/repo for the release mirror URL")
     parser.add_argument("--pages-base", default=DEFAULT_PAGES_BASE, help="GitHub Pages base URL")
     parser.add_argument(
@@ -132,9 +132,9 @@ def main() -> int:
     if not PUBLISHED_AT_PATTERN.match(published_at):
         fail(f"--published-at must look like 2026-11-15T00:00:00Z, got {published_at!r}")
 
-    tag = args.tag.strip() or f"android-v{args.version}"
-    if not tag.startswith("android-v"):
-        fail(f"--tag must start with android-v, got {tag!r}")
+    tag = args.tag.strip() or f"v{args.version}"
+    if tag != f"v{args.version}":
+        fail(f"--tag must match v<version>, got {tag!r}")
 
     apk_sha256 = sha256_of(args.apk)
     apk_size = os.path.getsize(args.apk)

@@ -3,9 +3,8 @@
  * Per-device volume-curve chart.
  *
  * The curve maps the sender's logical volume (0–100 %) to this speaker's output
- * amplitude (0–100 %). Sampling comes from POST /api/calibration/preview when
- * available; the exact same formulas are evaluated locally as a fallback so the
- * chart still works while the backend is restarting.
+ * amplitude (0–100 %). The interactive preview evaluates the same
+ * mapping as the receiver without changing hardware volume.
  */
 window.FP = window.FP || {};
 
@@ -77,6 +76,7 @@ window.FP = window.FP || {};
 
   FP.curve = {
     samplesFor: samplesFor,
+    outputAt: localOutput,
     neutralPoints: neutralPoints,
     normalizePoints: normalizePoints,
     KIND_LABELS: KIND_LABELS
@@ -123,10 +123,13 @@ window.FP = window.FP || {};
 
     function draw(width, height) {
       if (!width || !height) return;
-      const accent = cssVar('--accent');
-      const border = cssVar('--border');
-      const muted = cssVar('--muted');
-      const card = cssVar('--card');
+      // Resolve system colours on the element. A bare CanvasText keyword
+      // given to a 2D context can resolve against the wrong colour scheme.
+      const system = forcedColors.matches ? getComputedStyle(canvas) : null;
+      const accent = system ? system.color : cssVar('--accent');
+      const border = system ? system.borderTopColor : cssVar('--border');
+      const muted = system ? system.color : cssVar('--muted');
+      const card = system ? system.backgroundColor : cssVar('--card');
       const fontFamily = cssVar('--font') || 'sans-serif';
       const compact = width < 320;
       const pad = {
@@ -174,18 +177,6 @@ window.FP = window.FP || {};
         ctx.fillText(Math.round(ratio * 100) + '%', pad.left - 6, gy);
       }
 
-      // Plot border + compact axis captions.
-      ctx.strokeStyle = border;
-      ctx.strokeRect(pad.left, pad.top, plotWidth, plotHeight);
-      ctx.fillStyle = muted;
-      ctx.font = '9px ' + fontFamily;
-      ctx.textAlign = 'left';
-      ctx.textBaseline = 'top';
-      ctx.fillText('输出幅度', pad.left + 5, pad.top + 4);
-      ctx.textAlign = 'right';
-      ctx.textBaseline = 'bottom';
-      ctx.fillText('发送端音量', pad.left + plotWidth - 5, pad.top + plotHeight - 4);
-
       // Curve.
       const samples = state.samples && state.samples.length
         ? state.samples
@@ -202,6 +193,25 @@ window.FP = window.FP || {};
       ctx.lineJoin = 'round';
       ctx.lineCap = 'round';
       ctx.stroke();
+
+      ctx.lineTo(pad.left + plotWidth, pad.top + plotHeight);
+      ctx.lineTo(pad.left, pad.top + plotHeight);
+      ctx.closePath();
+      const fill = ctx.createLinearGradient(0, pad.top, 0, pad.top + plotHeight);
+      fill.addColorStop(0, 'rgba(242,242,245,.24)');
+      fill.addColorStop(1, 'rgba(242,242,245,0)');
+      ctx.fillStyle = fill;
+      ctx.fill();
+      if (opts.probe) {
+        const sample = samples[opts.probe()];
+        if (sample) {
+          const x = plot.left + sample.logical * plot.width;
+          const y = plot.top + (1 - sample.output) * plot.height;
+          ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(x, plot.top + plot.height);
+          ctx.strokeStyle = muted; ctx.lineWidth = 1; ctx.setLineDash([3,4]); ctx.stroke(); ctx.setLineDash([]);
+          ctx.beginPath(); ctx.arc(x, y, 4.5, 0, Math.PI * 2); ctx.fillStyle = accent; ctx.fill();
+        }
+      }
 
       // Fixed endpoints + editable control points for custom curves.
       if (state.kind === 'custom') {
@@ -414,12 +424,16 @@ window.FP = window.FP || {};
       resizeObserver = new ResizeObserver(function () { resize(); });
       resizeObserver.observe(canvas);
     }
+    const forcedColors = window.matchMedia('(forced-colors:active)');
+    const palettes = [forcedColors, window.matchMedia('(prefers-color-scheme:dark)')];
+    for (const palette of palettes) palette.addEventListener('change', resize);
     window.addEventListener('resize', resize);
     resize();
 
     return {
       setData: setData,
       redraw: resize,
+      movePoint: movePoint,
       addPoint: addPoint,
       removeSelected: removeSelected,
       resetPoints: resetPoints,
@@ -430,6 +444,7 @@ window.FP = window.FP || {};
       getSelected: function () { return state.selected; },
       destroy: function () {
         if (resizeObserver) resizeObserver.disconnect();
+        for (const palette of palettes) palette.removeEventListener('change', resize);
         window.removeEventListener('resize', resize);
         canvas.removeEventListener('pointerdown', onPointerDown);
         canvas.removeEventListener('pointermove', onPointerMove);

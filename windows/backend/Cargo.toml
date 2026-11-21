@@ -1,6 +1,6 @@
 [package]
 name = "fusionplay-windows-host"
-version = "1.7.0"
+version = "1.7.14"
 edition = "2024"
 license = "AGPL-3.0-only"
 description = "FusionPlay Windows host sidecar: AirPlay 2 + DLNA + MiPlay receiver"
@@ -16,6 +16,9 @@ name = "FusionPlayCore"
 path = "src/main.rs"
 
 [dependencies]
+sha2 = "0.10"
+tempfile = "3"
+regex-lite = "0.1"
 airplay-receiver-core = { path = "../../src/AirPlayReceiver.Core" }
 fusionplay-miplay-sdk = { path = "../../src/FusionPlay.MiPlaySdk" }
 if-addrs = { path = "../../src/FusionPlay.AndroidIfAddrs" }
@@ -67,8 +70,7 @@ windows-sys = { version = "0.61", features = [
     "Win32_Networking_WinSock",
 ] }
 
-[dev-dependencies]
-tempfile = "3"
+
 
 [profile.release]
 opt-level = "s"

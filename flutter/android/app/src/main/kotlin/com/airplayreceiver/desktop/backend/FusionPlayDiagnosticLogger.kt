@@ -27,12 +27,27 @@ class FusionPlayDiagnosticLogger(
     private val gate = Any()
     private val runId = FusionPlayRunIdentity.runId
     private val sequence = AtomicLong()
+    private val lastStorageWarning = AtomicLong()
     private val lastProgressWriteNanos = mutableMapOf<String, Long>()
     private val logPath = logDirectory.resolve(LOG_FILE_NAME)
+
+    private val errorPath = logDirectory.resolve("errors.jsonl")
+    private val previousErrors = logDirectory.resolve("errors.jsonl.1")
 
     init {
         require(maximumFileBytes > 0L)
         require(fileCount > 0)
+        runCatching { removeInactiveLogs() }
+    }
+
+    fun removeInactiveLogs() = synchronized(gate) {
+        val cutoff = clock.millis() - 7L * 24 * 60 * 60 * 1000
+        val paths = listOf(logPath, errorPath, previousErrors) + (1 until fileCount).map(::rotatedPath)
+        for (candidate in paths) {
+            if (Files.isRegularFile(candidate) && Files.getLastModifiedTime(candidate).toMillis() < cutoff) {
+                Files.deleteIfExists(candidate)
+            }
+        }
     }
 
     fun write(
@@ -68,11 +83,18 @@ class FusionPlayDiagnosticLogger(
             }
         }
         val line = payload.toString() + System.lineSeparator()
-        val encodedLength = line.toByteArray(StandardCharsets.UTF_8).size
+        val bytes = line.toByteArray(StandardCharsets.UTF_8)
+        val encodedLength = bytes.size
 
         runCatching {
             synchronized(gate) {
                 Files.createDirectories(logDirectory)
+                if (outcome.lowercase() in setOf("error", "failure", "warning")) {
+                    if (Files.isRegularFile(errorPath) && Files.size(errorPath) + bytes.size > 256 * 1024) {
+                        Files.move(errorPath, previousErrors, StandardCopyOption.REPLACE_EXISTING)
+                    }
+                    Files.write(errorPath, bytes, StandardOpenOption.CREATE, StandardOpenOption.APPEND)
+                }
                 val currentLength = if (Files.isRegularFile(logPath)) {
                     Files.size(logPath)
                 } else {
@@ -86,10 +108,16 @@ class FusionPlayDiagnosticLogger(
                 }
                 Files.write(
                     logPath,
-                    line.toByteArray(StandardCharsets.UTF_8),
+                    bytes,
                     StandardOpenOption.CREATE,
                     StandardOpenOption.APPEND,
                 )
+            }
+        }.onFailure { failure ->
+            val now = System.nanoTime()
+            val last = lastStorageWarning.get()
+            if ((last == 0L || now - last >= 60_000_000_000L) && lastStorageWarning.compareAndSet(last, now)) {
+                android.util.Log.w("FusionPlay", "诊断日志写入失败", failure)
             }
         }
     }
@@ -101,6 +129,12 @@ class FusionPlayDiagnosticLogger(
      */
     fun copySnapshotTo(destination: Path): List<Path> = synchronized(gate) {
         Files.createDirectories(destination)
+        // Error history belongs in persistent/; service extracts already use the main log.
+        for (errors in listOf(previousErrors, errorPath)) {
+            if (Files.isRegularFile(errors)) {
+                Files.copy(errors, destination.resolve(errors.fileName), StandardCopyOption.REPLACE_EXISTING)
+            }
+        }
         buildList {
             val candidates = buildList {
                 add(logPath)
@@ -244,6 +278,8 @@ class FusionPlayDiagnosticLogger(
                 details["reason"] = event.reason
             }
             is AppEvent.NowPlaying -> {
+                event.packetSummary?.let { details["input_decision"] = it }
+                details["title_lyric_present"] = !event.lyricLine.isNullOrBlank()
                 details["title_present"] = !event.title.isNullOrBlank()
                 details["title_length"] = event.title?.length
                 details["artist_present"] = !event.artist.isNullOrBlank()
@@ -280,6 +316,28 @@ class FusionPlayDiagnosticLogger(
                 details["album_length"] = event.album?.length
                 details["artwork_present"] =
                     !event.artworkUrl.isNullOrBlank()
+                details["resolved_artwork_present"] = event.resolvedArtwork != null
+                val artwork = event.artworkUrl?.trim()
+                if (!artwork.isNullOrEmpty()) {
+                    val uri = runCatching { java.net.URI(artwork.replace(" ", "%20")) }.getOrNull()
+                    val resolved = event.resolvedArtwork?.let {
+                        runCatching { java.net.URI(it) }.getOrNull()
+                    }
+                    details["artwork_address_kind"] = when {
+                        uri == null -> "invalid"
+                        uri.scheme == null -> "relative"
+                        uri.scheme.equals("data", ignoreCase = true) -> "inline"
+                        else -> "absolute"
+                    }
+                    details["artwork_address_length"] = artwork.length
+                    details["artwork_resolved_scheme"] = resolved?.scheme
+                    details["artwork_resolved_host"] = resolved?.host
+                    details["artwork_query_fields"] = uri?.rawQuery?.let { it.count { ch -> ch == '&' } + 1 }
+                    details["artwork_resolved_query_fields"] = resolved?.rawQuery?.let { it.count { ch -> ch == '&' } + 1 }
+                }
+                event.didlFields?.let { details["didl_fields"] = it }
+                details["lyrics_text_present"] = !event.lyricsText.isNullOrBlank()
+                details["lyrics_uri_present"] = !event.lyricsUri.isNullOrBlank()
                 details["content_type"] = event.contentType
                 details["media_kind"] = event.mediaKind
                 details["duration_ms"] = event.durationMs
@@ -519,6 +577,7 @@ class FusionPlayDiagnosticLogger(
             .replace(IPV4_PATTERN, "<IP_ADDRESS>")
             .replace(MAC_ADDRESS_PATTERN, "<MAC_ADDRESS>")
             .replace(URL_PATTERN, "<URL>")
+            .replace(HEADER_PATTERN, "<REDACTED>")
             .replace(SECRET_PATTERN, "$1=<REDACTED>")
     }
 
@@ -553,6 +612,7 @@ class FusionPlayDiagnosticLogger(
             )
         private val URL_PATTERN =
             Regex("""(?i)\b(?:https?|rtsp)://[^\s"']+""")
+        private val HEADER_PATTERN = Regex("""(?i)\b(?:authorization|cookie)\s*[:=]\s*[^\r\n]+""")
         private val SECRET_PATTERN =
             Regex(
                 """(?i)\b(password|token|authorization|cookie|account)""" +

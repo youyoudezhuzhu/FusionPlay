@@ -39,9 +39,11 @@ import io.flutter.plugin.common.EventChannel
 import io.flutter.plugin.common.MethodCall
 import io.flutter.plugin.common.MethodChannel
 import java.io.Closeable
+import java.io.File
 import java.net.URI
 import java.nio.file.Paths
 import java.util.concurrent.atomic.AtomicBoolean
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -93,7 +95,7 @@ class FusionPlayRuntime(
     private val mediaSourceArbiter = MediaSourceArbiter()
     private val coreLifecycleMutex = Mutex()
     private val miPlayLifecycleMutex = Mutex()
-    private val networkPlayer = NativeNetworkPlayer(context) { message ->
+    private val networkPlayer = NativeNetworkPlayer(context, diagnosticLogger, onDlnaStateChanged = ::onDlnaStateChanged) { message ->
         viewModel.reportExternalLog("网络媒体播放失败：$message", isError = true)
     }
     private val closed = AtomicBoolean(false)
@@ -102,7 +104,8 @@ class FusionPlayRuntime(
     private var lastDesiredCoreConfiguration: CoreReceiverConfiguration? = null
     private var lastDesiredMiPlayConfiguration: MiPlayReceiverConfiguration? = null
     private var appliedMiPlayConfiguration: MiPlayReceiverConfiguration? = null
-    private var lastPublishedArtwork: String? = null
+    private var downloadedDlnaArtwork: File? = null
+    private var lastPublishedArtwork: Triple<String?, Long?, String?>? = null
     private var lastPublishedMetadata: MediaMetadataProjection? = null
     private var lastPublishedPlaying: Boolean? = null
     private var lastPublishedCapabilities: MediaCapabilitiesProjection? = null
@@ -148,37 +151,7 @@ class FusionPlayRuntime(
                 val elapsedMs = ((nowNanos - lastTickNanos) / 1_000_000L).coerceAtLeast(0L)
                 lastTickNanos = nowNanos
 
-                val networkSource = networkPlayer.source
-                if (networkSource != null) {
-                    val networkPlayback = viewModel.playbackForSource(networkSource)
-                    if (networkPlayback.mediaUrl != null) {
-                        val position = networkPlayer.positionMs
-                        val playing = networkPlayer.playing
-                        val duration = networkPlayer.durationMs.takeIf { it > 0 }
-                            ?: networkPlayback.durationMs
-                            ?: 0L
-                        viewModel.updateNetworkMediaState(
-                            positionMs = position,
-                            durationMs = duration,
-                            playing = playing,
-                            source = networkSource,
-                            sourceEpoch = networkPlayer.sourceEpoch,
-                        )
-                        runCatching {
-                            viewModel.sendVideoState(
-                                positionMs = position,
-                                durationMs = duration,
-                                rate = if (playing) networkPlayer.rate else 0.0,
-                                ready = networkPlayer.ready,
-                                source = when (networkSource) {
-                                    MediaSource.AIRPLAY -> "AirPlay"
-                                    MediaSource.DLNA -> "DLNA"
-                                    MediaSource.XIAOMI_MIPLAY -> null
-                                },
-                            )
-                        }
-                    }
-                }
+                syncNetworkPlayback()
 
                 val playback = viewModel.state.value.playback
                 if (
@@ -190,6 +163,43 @@ class FusionPlayRuntime(
                 }
             }
         }
+    }
+
+    private var lastDlnaArtwork: String? = null
+
+    private fun onDlnaStateChanged() {
+        scope.launch { syncNetworkPlayback() }
+        val artwork = networkPlayer.embeddedArtworkPath
+        if (artwork != lastDlnaArtwork) {
+            lastDlnaArtwork = artwork
+            publishState(viewModel.state.value)
+        }
+    }
+
+    private suspend fun syncNetworkPlayback() {
+        val source = networkPlayer.source ?: return
+        val playback = viewModel.playbackForSource(source)
+        if (playback.mediaUrl != networkPlayer.url ||
+            playback.sourceEpoch != networkPlayer.sourceEpoch
+        ) return
+        val position = networkPlayer.positionMs
+        val duration = networkPlayer.durationMs.takeIf { it > 0 } ?: playback.durationMs ?: 0L
+        val playing = networkPlayer.playing
+        viewModel.updateNetworkMediaState(position, duration, playing, source, networkPlayer.sourceEpoch)
+        runCatching {
+            viewModel.sendVideoState(
+                positionMs = position,
+                durationMs = duration,
+                rate = if (playing) networkPlayer.rate else 0.0,
+                ready = networkPlayer.ready,
+                source = when (source) {
+                    MediaSource.AIRPLAY -> "AirPlay"
+                    MediaSource.DLNA -> "DLNA"
+                    MediaSource.XIAOMI_MIPLAY -> null
+                },
+                sourceEpoch = networkPlayer.sourceEpoch.takeIf { source == MediaSource.DLNA },
+            )
+        }.onFailure { if (it is CancellationException) throw it }
     }
 
     fun attach(messenger: BinaryMessenger) {
@@ -209,6 +219,30 @@ class FusionPlayRuntime(
     }
 
     private fun onMethodCall(call: MethodCall, result: MethodChannel.Result) {
+        if (call.method == "reportPlayerError") {
+            val text = call.string("value")
+            diagnosticLogger.write("flutter", "player_exception", "failure", mapOf(
+                "message" to text.substringBefore('\n'),
+                "stack_trace" to text.substringAfter('\n', ""),
+            ))
+            result.success(null)
+            return
+        }
+        if (call.method == "reportDlnaArtwork") {
+            val stage = call.argument<String>("stage")
+            val outcome = call.argument<String>("outcome")
+            if (stage in setOf("primary", "embedded", "display") &&
+                outcome != null && outcome.matches(Regex("[a-zA-Z0-9_]{1,64}"))
+            ) {
+                diagnosticLogger.write("dlna", "artwork_ui", outcome, mapOf(
+                    "stage" to stage,
+                    "epoch" to (call.argument<Number>("epoch")?.toLong()),
+                    "fallback_available" to call.argument<Boolean>("fallbackAvailable"),
+                ))
+            }
+            result.success(null)
+            return
+        }
         if (call.method == "state") {
             result.success(stateMap(viewModel.state.value))
             return
@@ -267,7 +301,7 @@ class FusionPlayRuntime(
             }.fold(
                 onSuccess = result::success,
                 onFailure = { error ->
-                    reportError("前后端调用失败", error)
+                    reportError("前后端调用失败（${call.method}）", error)
                     result.error("fusionplay_runtime", error.message, null)
                 },
             )
@@ -318,7 +352,6 @@ class FusionPlayRuntime(
 
     private suspend fun pauseSourceForTakeover(
         source: MediaSource,
-        remoteAlreadySuspended: Boolean = false,
     ) {
         val playback = viewModel.playbackForSource(source)
         if (networkPlayer.source == source) {
@@ -331,22 +364,14 @@ class FusionPlayRuntime(
             )
             networkPlayer.pause()
         }
-        if (remoteAlreadySuspended && source != MediaSource.XIAOMI_MIPLAY) {
-            viewModel.markSourcePaused(source)
-            return
-        }
-        when (source) {
-            MediaSource.XIAOMI_MIPLAY -> {
-                xiaomiTakeoverGate.arm(playback.isPlaying)
-                runCatching { bridge.suspendXiaomiOutput() }
-                    .onFailure { reportError("小米妙播本机输出暂停失败", it) }
-                runCatching { bridge.pauseXiaomi() }
-                    .onFailure { reportError("小米妙播暂停失败", it) }
-            }
-            MediaSource.AIRPLAY -> if (playback.mediaUrl == null) {
-                runCatching { viewModel.sendPlayback(PlaybackCommand.PAUSE) }
-            }
-            MediaSource.DLNA -> runCatching { viewModel.sendPlayback(PlaybackCommand.PAUSE) }
+        // Native takeover already suspended the previous AirPlay/DLNA lease.
+        // A foreground PAUSE here can target the newly projected receiver.
+        if (source == MediaSource.XIAOMI_MIPLAY) {
+            xiaomiTakeoverGate.arm(playback.isPlaying)
+            runCatching { bridge.suspendXiaomiOutput() }
+                .onFailure { reportError("小米妙播本机输出暂停失败", it) }
+            runCatching { bridge.pauseXiaomi() }
+                .onFailure { reportError("小米妙播暂停失败", it) }
         }
         if (
             source != MediaSource.XIAOMI_MIPLAY ||
@@ -359,7 +384,6 @@ class FusionPlayRuntime(
 
     private suspend fun activatePlaybackSource(
         source: MediaSource,
-        previousAlreadySuspendedByCore: Boolean = false,
         projectSource: Boolean = true,
     ) {
         if (source != MediaSource.XIAOMI_MIPLAY) {
@@ -374,7 +398,7 @@ class FusionPlayRuntime(
             transition.previous
                 ?.takeUnless { it == MediaSource.XIAOMI_MIPLAY }
                 ?.let {
-                pauseSourceForTakeover(it, previousAlreadySuspendedByCore)
+                pauseSourceForTakeover(it)
             }
         }
         if (projectSource) viewModel.activateSourceProjection(source)
@@ -793,7 +817,9 @@ class FusionPlayRuntime(
     }
 
     private suspend fun handleXiaomiEvent(event: WindowsBridgeXiaomiEvent) {
-        event.toVolumePercentOrNull()?.let { percent ->
+        event.toVolumePercentOrNull()?.takeIf {
+            SourceTakeoverPolicy.acceptsDeviceVolume(viewModel.state.value.activeMediaSource, MediaSource.XIAOMI_MIPLAY)
+        }?.let { percent ->
             if (!FusionPlayMediaChannel.setSystemMediaVolumePercent(percent)) {
                 viewModel.reportExternalLog("无法将被控端媒体音量同步到 $percent%。", isError = true)
             }
@@ -837,7 +863,6 @@ class FusionPlayRuntime(
                                 if (resumed.isSuccess) {
                                     activatePlaybackSource(
                                         MediaSource.XIAOMI_MIPLAY,
-                                        previousAlreadySuspendedByCore = true,
                                     )
                                 }
                             }
@@ -926,7 +951,8 @@ class FusionPlayRuntime(
                 }
             }
             is AppEvent.Volume -> if (
-                event.source == null || event.source.equals(CORE_SOURCE_AIRPLAY, ignoreCase = true)
+                (event.source == null || event.source.equals(CORE_SOURCE_AIRPLAY, ignoreCase = true)) &&
+                SourceTakeoverPolicy.acceptsDeviceVolume(viewModel.state.value.activeMediaSource, MediaSource.AIRPLAY)
             ) {
                 // iPhone AirPlay 2 sends SET_PARAMETER volume here. Map it to
                 // the real Android media volume exactly like MiPlay.
@@ -1033,11 +1059,29 @@ class FusionPlayRuntime(
                 mediaSourceArbiter.deactivate(MediaSource.DLNA)
             }
             is AppEvent.DlnaVolume -> if (
-                eventTargetsSourcePlayback("DLNA", event.source, event.epoch) &&
-                networkPlayer.source == MediaSource.DLNA
+                viewModel.state.value.activeMediaSource == MediaSource.DLNA &&
+                networkEventMatches(MediaSource.DLNA, CORE_SOURCE_DLNA, event.source, event.epoch)
             ) {
-                event.percent?.let(networkPlayer::setVolumePercent)
-                event.muted?.let(networkPlayer::setMuted)
+                // STREAM_MUSIC owns the percent. Player gain only handles DLNA
+                // mute and devices whose system volume cannot be changed.
+                val previousPercent = FusionPlayMediaChannel.currentSystemMediaVolumePercent()
+                val applied = event.percent?.let(FusionPlayMediaChannel::setSystemMediaVolumePercent)
+                networkPlayer.setDlnaVolume(
+                    fallbackPercent = event.percent?.takeIf { applied == false },
+                    muted = event.muted,
+                )
+                diagnosticLogger.write("dlna", "system_volume", when (applied) {
+                    true -> "applied"
+                    false -> "player_gain_fallback"
+                    null -> "mute_only"
+                }, mapOf(
+                    "epoch" to event.epoch,
+                    "requested_percent" to event.percent,
+                    "previous_system_percent" to previousPercent,
+                    "system_percent" to FusionPlayMediaChannel.currentSystemMediaVolumePercent(),
+                    "muted" to event.muted,
+                ))
+                publishState(viewModel.state.value)
             }
             else -> Unit
         }
@@ -1077,6 +1121,7 @@ class FusionPlayRuntime(
                 artworkJob = null
                 FusionPlayMediaChannel.clear()
                 mediaSessionHasMedia = false
+                clearDownloadedDlnaArtwork()
                 lastPublishedArtwork = null
                 lastPublishedMetadata = null
                 lastPublishedPlaying = null
@@ -1121,9 +1166,12 @@ class FusionPlayRuntime(
             )
         }
         val artwork = playback.coverArt
-        if (artwork != lastPublishedArtwork) {
-            lastPublishedArtwork = artwork
+        val dlna = state.activeMediaSource == MediaSource.DLNA
+        val artworkKey = Triple(artwork, playback.sourceEpoch.takeIf { dlna }, playback.mediaUrl.takeIf { dlna })
+        if (artworkKey != lastPublishedArtwork) {
+            lastPublishedArtwork = artworkKey
             artworkJob?.cancel()
+            clearDownloadedDlnaArtwork()
             artworkJob = scope.launch {
                 if (artwork.isNullOrBlank()) {
                     FusionPlayMediaChannel.clearArtwork()
@@ -1135,13 +1183,52 @@ class FusionPlayRuntime(
                             artwork.startsWith("http://", ignoreCase = true) ||
                                 artwork.startsWith("https://", ignoreCase = true) ||
                                 artwork.startsWith("file:", ignoreCase = true) ->
-                                bridge.setArtwork(URI.create(artwork))
+                                if (dlna && isRemoteArtwork(artwork)) {
+                                    val file = File.createTempFile("dlna-remote-cover-", ".img", context.cacheDir)
+                                    try {
+                                        FusionPlayMediaChannel.setArtwork(URI.create(artwork), file) { outcome, details ->
+                                            diagnosticLogger.write("dlna", "artwork_http", outcome,
+                                                details + ("epoch" to playback.sourceEpoch))
+                                        }
+                                        if (lastPublishedArtwork == artworkKey && file.length() > 0) {
+                                            downloadedDlnaArtwork = file
+                                            diagnosticLogger.write("dlna", "artwork_cache", "published",
+                                                mapOf("epoch" to playback.sourceEpoch, "bytes" to file.length()))
+                                            publishState(viewModel.state.value)
+                                        }
+                                    } finally {
+                                        if (downloadedDlnaArtwork != file) file.delete()
+                                    }
+                                } else {
+                                    bridge.setArtwork(URI.create(artwork))
+                                }
                             else -> bridge.setArtwork(Paths.get(artwork))
                         }
-                    }.onFailure { reportError("媒体封面更新失败", it) }
+                    }.onFailure {
+                        if (it is CancellationException) throw it
+                        diagnosticLogger.write("media", "artwork_request_failed", "failure",
+                            mapOf("error_type" to it.javaClass.simpleName))
+                    }
                 }
             }
         }
+    }
+
+    private fun isRemoteArtwork(artwork: String): Boolean =
+        artwork.startsWith("http://", ignoreCase = true) ||
+            artwork.startsWith("https://", ignoreCase = true)
+
+    private fun clearDownloadedDlnaArtwork() {
+        downloadedDlnaArtwork?.delete()
+        downloadedDlnaArtwork = null
+    }
+
+    private fun playerArtwork(state: AppState): String? {
+        val playback = state.playback
+        val artwork = playback.coverArt ?: return null
+        if (state.activeMediaSource != MediaSource.DLNA || !isRemoteArtwork(artwork)) return artwork
+        val key = Triple(artwork, playback.sourceEpoch, playback.mediaUrl)
+        return downloadedDlnaArtwork?.absolutePath.takeIf { lastPublishedArtwork == key }
     }
 
     // Lyrics rarely change but the whole state map is re-sent on every
@@ -1212,7 +1299,13 @@ class FusionPlayRuntime(
             "title" to state.playback.title,
             "artist" to state.playback.artist,
             "album" to state.playback.album,
-            "coverArt" to state.playback.coverArt,
+            "coverArt" to playerArtwork(state),
+            "embeddedArtwork" to networkPlayer.embeddedArtworkPath.takeIf {
+                state.activeMediaSource == MediaSource.DLNA &&
+                    networkPlayer.source == MediaSource.DLNA &&
+                    state.playback.mediaUrl == networkPlayer.url &&
+                    state.playback.sourceEpoch == networkPlayer.sourceEpoch
+            },
             "mediaUrl" to state.playback.mediaUrl,
             "mediaKind" to state.playback.mediaKind,
             "protocol" to state.playback.protocol,
@@ -1311,6 +1404,7 @@ class FusionPlayRuntime(
     }
 
     override fun close() {
+        clearDownloadedDlnaArtwork()
         if (!closed.compareAndSet(false, true)) return
         networkPlayer.close()
         bridge.close()

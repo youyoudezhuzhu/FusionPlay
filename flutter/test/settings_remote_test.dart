@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:fusionplay_android_flutter/backend/native_app_controller.dart';
+import 'package:fusionplay_android_flutter/backend/android/native_app_controller.dart';
 import 'package:fusionplay_android_flutter/main.dart';
 import 'package:fusionplay_android_flutter/models/app_state.dart';
 import 'package:fusionplay_android_flutter/ui/settings_view.dart';
@@ -21,7 +21,6 @@ void main() {
           controller: controller,
           state: const AppState(initialized: true),
           isAndroid: false,
-          forceGlassFallback: true,
         ),
       ),
     );
@@ -254,7 +253,6 @@ void main() {
             ),
           ),
           isAndroid: false,
-          forceGlassFallback: true,
         ),
       ),
     );
@@ -302,7 +300,6 @@ void main() {
             ),
           ),
           isAndroid: false,
-          forceGlassFallback: true,
         ),
       ),
     );

@@ -1,5 +1,6 @@
 package com.airplayreceiver.desktop.backend
 
+import com.fusionplay.android.media.FusionPlayMediaChannel
 import com.airplayreceiver.desktop.nativebridge.FusionPlayNative
 import com.airplayreceiver.desktop.nativebridge.NativeCallback
 import java.io.Closeable
@@ -163,6 +164,7 @@ class CoreProcessService(
                         configuration.receiverName,
                         configuration.statePath,
                         configuration.outputDeviceId,
+                        FusionPlayMediaChannel.currentSystemMediaVolumePercent(),
                     )
                     appliedConfigurations[protocol] = configuration
                     emitLog(
@@ -231,6 +233,7 @@ class CoreProcessService(
         rate: Double,
         ready: Boolean,
         source: String? = null,
+        sourceEpoch: Long? = null,
     ) {
         require(positionMs >= 0) { "positionMs must not be negative." }
         require(durationMs >= 0) { "durationMs must not be negative." }
@@ -241,6 +244,7 @@ class CoreProcessService(
             put("duration_ms", durationMs)
             put("rate", rate)
             put("ready", ready)
+            sourceEpoch?.let { put("epoch", it) }
             source?.trim()?.takeIf(String::isNotEmpty)?.let { put("source", it) }
         }
         writeNdjson(payload.toString(), targetForSource(source))
@@ -255,7 +259,9 @@ class CoreProcessService(
             .lowercase()
             .takeIf(String::isNotEmpty)
             ?: throw IllegalArgumentException("source must not be blank.")
+        val requestId = UUID.randomUUID().toString()
         val payload = buildJsonObject {
+            put("request_id", requestId)
             put("command", "takeover")
             put("source", normalizedSource)
             mediaKind
@@ -266,7 +272,14 @@ class CoreProcessService(
         }
         // Both native protocol runtimes share one playback arbiter, so a
         // single command is enough to suspend whichever core source is active.
-        writeNdjson(payload.toString(), "auto")
+        lifecycleMutex.withLock {
+            ensureOpen()
+            // When only MiPlay is enabled, there is no competing core output.
+            if (appliedConfigurations.isEmpty()) return@withLock
+            SourceTakeoverPolicy.awaitCoreTakeover(events, requestId) {
+                writeNdjson(payload.toString(), "auto")
+            }
+        }
     }
 
     suspend fun shutdown() {

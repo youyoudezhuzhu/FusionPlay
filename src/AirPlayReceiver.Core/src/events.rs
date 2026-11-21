@@ -55,6 +55,14 @@ pub enum CoreEvent<'a> {
         reason: &'a str,
     },
     NowPlaying {
+        #[serde(skip_serializing_if = "Option::is_none")]
+        packet_summary: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        lyric_line: Option<&'a str>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        track_changed: Option<bool>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        track_id: Option<&'a str>,
         source: &'a str,
         epoch: u64,
         title: Option<&'a str>,
@@ -110,6 +118,9 @@ pub enum CoreEvent<'a> {
         device_uuid: &'a str,
     },
     DlnaMedia {
+        decoder_id: u64,
+        metadata_only: bool,
+        didl_fields: String,
         source: &'a str,
         epoch: u64,
         url: &'a str,
@@ -298,6 +309,9 @@ mod tests {
     #[test]
     fn dlna_media_event_keeps_renderer_metadata_in_one_contract() {
         let event = CoreEvent::DlnaMedia {
+            decoder_id: 1,
+            metadata_only: false,
+            didl_fields: "item,res".into(),
             source: "dlna",
             epoch: 19,
             url: "https://example.test/track.flac",
@@ -322,6 +336,9 @@ mod tests {
             serde_json::to_value(event).unwrap(),
             json!({
                 "type": "dlna_media",
+                "decoder_id": 1,
+                "metadata_only": false,
+                "didl_fields": "item,res",
                 "source": "dlna",
                 "epoch": 19,
                 "url": "https://example.test/track.flac",
@@ -374,6 +391,10 @@ mod tests {
     #[test]
     fn mutable_media_events_are_scoped_to_source_epoch() {
         let event = CoreEvent::NowPlaying {
+            packet_summary: None,
+            lyric_line: None,
+            track_changed: None,
+            track_id: None,
             source: "airplay",
             epoch: 31,
             title: Some("Track"),

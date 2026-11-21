@@ -28,6 +28,7 @@ pub struct Settings {
     pub output_device: Option<String>,
     pub airplay_enabled: bool,
     pub dlna_enabled: bool,
+    pub dlna_initial_volume: u8,
     /// Advertise AirPlay as an audio-only speaker (AirPort10,115 model, no
     /// video/HLS feature bits). fnOS sets this so iPhones stop offering video.
     /// Android/desktop keep the existing video-capable Apple TV profile.
@@ -62,6 +63,9 @@ impl std::fmt::Debug for Settings {
 #[derive(Debug, Deserialize)]
 struct UiCommand {
     command: String,
+    epoch: Option<u64>,
+    uri: Option<String>,
+    decoder_id: Option<u64>,
     #[serde(default)]
     request_id: Option<String>,
     #[serde(default)]
@@ -317,6 +321,7 @@ pub async fn run_receiver_with_arbiter(
             mac,
             Arc::clone(&events),
             Arc::clone(&arbiter),
+            settings.dlna_initial_volume,
         )
         .await
         {
@@ -450,6 +455,18 @@ async fn wait_for_ui_commands(
             );
             continue;
         }
+        if matches!(command_name.as_str(), "dlna_audio_ready" | "dlna_audio_finished") {
+            if let (Some(controller), Some(epoch), Some(uri)) =
+                (&dlna_controller, command.epoch, command.uri.as_deref())
+            {
+                if command_name == "dlna_audio_ready" {
+                    controller.audio_decoder_ready(epoch, uri, command.decoder_id);
+                } else if let Some(id) = command.decoder_id {
+                    controller.audio_decoder_finished(epoch, uri, id);
+                }
+            }
+            continue;
+        }
         if command_name == "video_state" {
             let source = command.source.as_deref();
             let update_airplay = source.is_some_and(|value| value.eq_ignore_ascii_case("airplay"))
@@ -466,11 +483,12 @@ async fn wait_for_ui_commands(
                 );
             }
             if update_dlna && let Some(controller) = &dlna_controller {
-                controller.update_playback_state(
+                controller.update_renderer_state(
                     command.position_ms,
                     command.duration_ms,
                     command.rate,
                     command.ready,
+                    command.epoch,
                 );
             }
             continue;
@@ -633,6 +651,7 @@ pub fn parse_settings_from(arguments: impl IntoIterator<Item = String>) -> Resul
         output_device,
         airplay_enabled,
         dlna_enabled,
+        dlna_initial_volume: 100,
         airplay_audio_only: false,
         airplay_latency_frames: DEFAULT_AIRPLAY_LATENCY_FRAMES,
         audio_output: None,

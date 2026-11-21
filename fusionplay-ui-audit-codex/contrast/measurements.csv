@@ -1,0 +1,241 @@
+renderer,scene-effects,element,before_ratio,after_ratio,target_ratio
+Flutter,black-false,Starlight,19.77,19.77,3
+Flutter,black-false,Muse,9.79,16.64,4.5
+Flutter,black-false,1:24,4.06,16.55,4.5
+Flutter,black-false,-2:06,3.99,17.06,4.5
+Flutter,black-false,68,3.56,8.43,4.5
+Flutter,black-false,DLNA,9.28,10.85,4.5
+Flutter,black-false,player-progress-bar,1.62,7.34,3
+Flutter,black-false,volume-slider,1.69,4.65,3
+Flutter,black-false,playback-previous-button,,8.20,3
+Flutter,black-false,playback-play-pause-button,,11.63,3
+Flutter,black-false,playback-next-button,,8.20,3
+Flutter,black-false,设置,,13.54,4.5
+Flutter,black-false,检查更新,,13.54,4.5
+Flutter,black-false,自定义名称,,13.28,4.5
+Flutter,black-false,发现新版本 测试,,13.07,4.5
+Flutter,black-false,更新说明,,13.07,4.5
+Flutter,black-false,下载更新,,14.80,4.5
+Flutter,black-false,协议,,13.07,4.5
+Flutter,black-false,设备名,,13.07,4.5
+Flutter,black-false,好,,14.80,4.5
+Flutter,black-false,Current verse,,19.53,4.5
+Flutter,black-false,当前歌词,,16.40,4.5
+Flutter,black-false,Following verse,,16.38,4.5
+Flutter,black-false,下一句歌词,,14.68,4.5
+Flutter,black-false,Stream one,,16.85,4.5
+Flutter,black-false,第一句译文,,16.92,4.5
+Flutter,black-false,Stream two,,19.53,4.5
+Flutter,black-false,第二句译文,,18.03,4.5
+Flutter,black-true,Starlight,19.77,19.77,3
+Flutter,black-true,Muse,9.79,16.64,4.5
+Flutter,black-true,1:24,4.06,16.55,4.5
+Flutter,black-true,-2:06,3.99,17.06,4.5
+Flutter,black-true,68,4.78,14.09,4.5
+Flutter,black-true,DLNA,11.12,13.15,4.5
+Flutter,black-true,player-progress-bar,1.62,7.34,3
+Flutter,black-true,volume-slider,1.77,6.61,3
+Flutter,black-true,playback-previous-button,,12.73,3
+Flutter,black-true,playback-play-pause-button,,11.63,3
+Flutter,black-true,playback-next-button,,13.28,3
+Flutter,black-true,设置,,16.44,4.5
+Flutter,black-true,检查更新,,16.71,4.5
+Flutter,black-true,自定义名称,,15.26,4.5
+Flutter,black-true,发现新版本 测试,,15.12,4.5
+Flutter,black-true,更新说明,,15.12,4.5
+Flutter,black-true,下载更新,,14.53,4.5
+Flutter,black-true,协议,,15.14,4.5
+Flutter,black-true,设备名,,15.14,4.5
+Flutter,black-true,好,,14.53,4.5
+Flutter,black-true,Current verse,,19.51,4.5
+Flutter,black-true,当前歌词,,16.40,4.5
+Flutter,black-true,Following verse,,16.38,4.5
+Flutter,black-true,下一句歌词,,14.68,4.5
+Flutter,black-true,Stream one,,16.85,4.5
+Flutter,black-true,第一句译文,,16.92,4.5
+Flutter,black-true,Stream two,,19.53,4.5
+Flutter,black-true,第二句译文,,18.03,4.5
+Chromium,rooms-white-True,#back,2.08,6.15,4.5
+Chromium,rooms-white-True,#add-room,2.66,6.59,4.5
+Chromium,rooms-white-True,.room h2,6.10,10.98,4.5
+Chromium,rooms-white-True,.room .media,5.38,9.18,4.5
+Chromium,rooms-black-True,#back,17.59,17.59,4.5
+Chromium,rooms-black-True,#add-room,18.16,18.16,4.5
+Chromium,rooms-black-True,.room h2,18.39,18.39,4.5
+Chromium,rooms-black-True,.room .media,15.13,15.13,4.5
+Chromium,bind-white-True,#bind-title,2.68,7.35,4.5
+Chromium,bind-white-True,label[for=room-name],5.82,10.33,4.5
+Chromium,bind-white-True,#room-name,1.21,8.13,4.5
+Chromium,bind-black-True,#bind-title,20.05,20.05,4.5
+Chromium,bind-black-True,label[for=room-name],17.75,17.75,4.5
+Chromium,bind-black-True,#room-name,3.44,13.55,4.5
+Chromium,outputs-white-True,#outputs-rooms,2.00,6.06,4.5
+Chromium,outputs-white-True,label[for=output-delay],6.48,10.99,4.5
+Chromium,outputs-black-True,#outputs-rooms,17.67,17.67,4.5
+Chromium,outputs-black-True,label[for=output-delay],18.08,18.08,4.5
+Chromium,curve-white-True,#room-label,1.81,5.45,4.5
+Chromium,curve-white-True,.axis,5.17,7.90,4.5
+Chromium,curve-white-True,#readout,6.78,11.16,4.5
+Chromium,curve-white-True,#modes [aria-pressed=true],3.65,15.75,4.5
+Chromium,curve-black-True,#room-label,15.89,15.89,4.5
+Chromium,curve-black-True,.axis,12.54,12.54,4.5
+Chromium,curve-black-True,#readout,18.07,18.07,4.5
+Chromium,curve-black-True,#modes [aria-pressed=true],1.49,15.75,4.5
+Chromium,update-white-True,#back,2.08,6.15,4.5
+Chromium,update-white-True,#release,6.19,10.82,4.5
+Chromium,update-white-True,#message,4.50,7.75,4.5
+Chromium,update-black-True,#back,17.59,17.59,4.5
+Chromium,update-black-True,#release,18.20,18.20,4.5
+Chromium,update-black-True,#message,12.68,12.68,4.5
+Chromium,confirm-white-True,#confirm-title,15.44,16.61,4.5
+Chromium,confirm-white-True,#confirm-accept,15.75,15.75,4.5
+Chromium,confirm-white-True,button[value=cancel],13.29,14.47,4.5
+Chromium,confirm-black-True,#confirm-title,18.35,18.35,4.5
+Chromium,confirm-black-True,#confirm-accept,15.75,15.75,4.5
+Chromium,confirm-black-True,button[value=cancel],16.25,16.25,4.5
+Chromium,rooms-white-False,#back,2.08,6.15,4.5
+Chromium,rooms-white-False,#add-room,2.66,6.59,4.5
+Chromium,rooms-white-False,.room h2,6.10,10.98,4.5
+Chromium,rooms-white-False,.room .media,5.38,9.18,4.5
+Chromium,rooms-black-False,#back,17.59,17.59,4.5
+Chromium,rooms-black-False,#add-room,18.16,18.16,4.5
+Chromium,rooms-black-False,.room h2,18.39,18.39,4.5
+Chromium,rooms-black-False,.room .media,15.13,15.13,4.5
+Chromium,bind-white-False,#bind-title,2.68,7.35,4.5
+Chromium,bind-white-False,label[for=room-name],15.15,15.15,4.5
+Chromium,bind-white-False,#room-name,2.83,11.25,4.5
+Chromium,bind-black-False,#bind-title,20.05,20.05,4.5
+Chromium,bind-black-False,label[for=room-name],15.15,15.15,4.5
+Chromium,bind-black-False,#room-name,2.83,11.25,4.5
+Chromium,outputs-white-False,#outputs-rooms,2.00,6.06,4.5
+Chromium,outputs-white-False,label[for=output-delay],15.15,15.15,4.5
+Chromium,outputs-black-False,#outputs-rooms,17.67,17.67,4.5
+Chromium,outputs-black-False,label[for=output-delay],15.15,15.15,4.5
+Chromium,curve-white-False,#room-label,1.90,5.45,4.5
+Chromium,curve-white-False,.axis,10.53,10.53,4.5
+Chromium,curve-white-False,#readout,15.15,15.15,4.5
+Chromium,curve-white-False,#modes [aria-pressed=true],1.80,15.75,4.5
+Chromium,curve-black-False,#room-label,15.89,15.89,4.5
+Chromium,curve-black-False,.axis,10.53,10.53,4.5
+Chromium,curve-black-False,#readout,15.15,15.15,4.5
+Chromium,curve-black-False,#modes [aria-pressed=true],1.80,15.75,4.5
+Chromium,update-white-False,#back,2.08,6.15,4.5
+Chromium,update-white-False,#release,15.15,15.15,4.5
+Chromium,update-white-False,#message,10.53,10.53,4.5
+Chromium,update-black-False,#back,17.59,17.59,4.5
+Chromium,update-black-False,#release,15.15,15.15,4.5
+Chromium,update-black-False,#message,10.53,10.53,4.5
+Chromium,confirm-white-False,#confirm-title,15.15,15.15,4.5
+Chromium,confirm-white-False,#confirm-accept,15.75,15.75,4.5
+Chromium,confirm-white-False,button[value=cancel],13.05,13.05,4.5
+Chromium,confirm-black-False,#confirm-title,15.15,15.15,4.5
+Chromium,confirm-black-False,#confirm-accept,15.75,15.75,4.5
+Chromium,confirm-black-False,button[value=cancel],13.05,13.05,4.5
+Chromium,forced-curve-light,0.37,,19.79,3
+Chromium,forced-curve-light,0.63,,18.26,3
+Chromium,forced-curve-dark,0.37,,20.82,3
+Chromium,forced-curve-dark,0.63,,20.66,3
+Flutter,missing-false,Starlight,14.06,14.06,3
+Flutter,missing-false,Muse,7.70,12.15,4.5
+Flutter,missing-false,1:24,3.75,12.12,4.5
+Flutter,missing-false,-2:06,3.92,13.29,4.5
+Flutter,missing-false,68,3.56,8.43,4.5
+Flutter,missing-false,DLNA,9.28,10.85,4.5
+Flutter,missing-false,player-progress-bar,1.80,6.39,3
+Flutter,missing-false,volume-slider,1.69,4.65,3
+Flutter,missing-false,playback-previous-button,,8.20,3
+Flutter,missing-false,playback-play-pause-button,,11.82,3
+Flutter,missing-false,playback-next-button,,8.20,3
+Flutter,missing-false,missing-art-note,,6.18,3
+Flutter,missing-false,idle-art-note,,12.93,3
+Flutter,missing-true,Starlight,14.06,14.06,3
+Flutter,missing-true,Muse,7.70,12.15,4.5
+Flutter,missing-true,1:24,3.75,12.12,4.5
+Flutter,missing-true,-2:06,3.92,13.29,4.5
+Flutter,missing-true,68,3.96,9.97,4.5
+Flutter,missing-true,DLNA,5.84,6.65,4.5
+Flutter,missing-true,player-progress-bar,1.80,6.39,3
+Flutter,missing-true,volume-slider,1.73,5.23,3
+Flutter,missing-true,playback-previous-button,,8.98,3
+Flutter,missing-true,playback-play-pause-button,,11.82,3
+Flutter,missing-true,playback-next-button,,9.51,3
+Flutter,missing-true,missing-art-note,,6.18,3
+Flutter,missing-true,idle-art-note,,12.93,3
+Flutter,split-false,Starlight,19.40,19.40,3
+Flutter,split-false,Muse,8.11,12.25,4.5
+Flutter,split-false,1:24,3.71,11.06,4.5
+Flutter,split-false,-2:06,3.99,17.06,4.5
+Flutter,split-false,68,3.56,8.43,4.5
+Flutter,split-false,DLNA,9.28,10.85,4.5
+Flutter,split-false,player-progress-bar,1.62,7.34,3
+Flutter,split-false,volume-slider,1.69,4.65,3
+Flutter,split-false,playback-previous-button,,8.20,3
+Flutter,split-false,playback-play-pause-button,,11.63,3
+Flutter,split-false,playback-next-button,,8.20,3
+Flutter,split-true,Starlight,19.40,19.40,3
+Flutter,split-true,Muse,8.11,12.25,4.5
+Flutter,split-true,1:24,3.71,11.06,4.5
+Flutter,split-true,-2:06,3.99,17.06,4.5
+Flutter,split-true,68,4.78,14.09,4.5
+Flutter,split-true,DLNA,2.47,5.22,4.5
+Flutter,split-true,player-progress-bar,1.62,7.34,3
+Flutter,split-true,volume-slider,1.77,6.61,3
+Flutter,split-true,playback-previous-button,,12.73,3
+Flutter,split-true,playback-play-pause-button,,11.63,3
+Flutter,split-true,playback-next-button,,13.28,3
+Flutter,white-false,Starlight,4.48,8.73,3
+Flutter,white-false,Muse,3.44,8.07,4.5
+Flutter,white-false,1:24,2.36,8.30,4.5
+Flutter,white-false,-2:06,1.66,6.72,4.5
+Flutter,white-false,68,3.56,8.43,4.5
+Flutter,white-false,DLNA,9.28,10.85,4.5
+Flutter,white-false,player-progress-bar,1.32,4.06,3
+Flutter,white-false,volume-slider,1.69,4.65,3
+Flutter,white-false,playback-previous-button,,8.20,3
+Flutter,white-false,playback-play-pause-button,,11.92,3
+Flutter,white-false,playback-next-button,,8.20,3
+Flutter,white-false,设置,,13.54,4.5
+Flutter,white-false,检查更新,,13.54,4.5
+Flutter,white-false,自定义名称,,13.28,4.5
+Flutter,white-false,发现新版本 测试,,13.07,4.5
+Flutter,white-false,更新说明,,13.07,4.5
+Flutter,white-false,下载更新,,14.80,4.5
+Flutter,white-false,协议,,13.07,4.5
+Flutter,white-false,设备名,,13.07,4.5
+Flutter,white-false,好,,14.80,4.5
+Flutter,white-false,Current verse,,9.45,4.5
+Flutter,white-false,当前歌词,,8.42,4.5
+Flutter,white-false,Following verse,,8.38,4.5
+Flutter,white-false,下一句歌词,,7.64,4.5
+Flutter,white-false,Stream one,,8.85,4.5
+Flutter,white-false,第一句译文,,8.85,4.5
+Flutter,white-false,Stream two,,9.75,4.5
+Flutter,white-false,第二句译文,,9.33,4.5
+Flutter,white-true,Starlight,4.48,8.73,3
+Flutter,white-true,Muse,3.44,8.07,4.5
+Flutter,white-true,1:24,2.36,8.30,4.5
+Flutter,white-true,-2:06,1.66,6.72,4.5
+Flutter,white-true,68,1.69,5.41,4.5
+Flutter,white-true,DLNA,2.47,5.22,4.5
+Flutter,white-true,player-progress-bar,1.32,4.06,3
+Flutter,white-true,volume-slider,1.28,3.43,3
+Flutter,white-true,playback-previous-button,,6.08,3
+Flutter,white-true,playback-play-pause-button,,11.92,3
+Flutter,white-true,playback-next-button,,5.57,3
+Flutter,white-true,设置,,8.69,4.5
+Flutter,white-true,检查更新,,8.98,4.5
+Flutter,white-true,自定义名称,,11.08,4.5
+Flutter,white-true,发现新版本 测试,,10.37,4.5
+Flutter,white-true,更新说明,,10.15,4.5
+Flutter,white-true,下载更新,,14.92,4.5
+Flutter,white-true,协议,,10.14,4.5
+Flutter,white-true,设备名,,10.15,4.5
+Flutter,white-true,好,,14.92,4.5
+Flutter,white-true,Current verse,,9.45,4.5
+Flutter,white-true,当前歌词,,8.42,4.5
+Flutter,white-true,Following verse,,8.38,4.5
+Flutter,white-true,下一句歌词,,7.64,4.5
+Flutter,white-true,Stream one,,8.85,4.5
+Flutter,white-true,第一句译文,,8.85,4.5
+Flutter,white-true,Stream two,,9.75,4.5
+Flutter,white-true,第二句译文,,9.33,4.5

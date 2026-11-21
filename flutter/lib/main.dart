@@ -3,26 +3,35 @@ import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:liquid_glass_widgets/liquid_glass_widgets.dart' as lg;
 
 import 'backend/app_controller.dart';
-import 'backend/native_app_controller.dart';
-import 'backend/windows_app_controller.dart';
+import 'backend/android/native_app_controller.dart';
+import 'backend/windows/windows_app_controller.dart';
+import 'backend/ui_diagnostics.dart';
+import 'backend/windows/player_log.dart';
 import 'models/app_state.dart';
 import 'theme/fusion_theme.dart';
 import 'ui/app_menu.dart';
-import 'ui/glass_backdrop.dart';
+import 'ui/glass_appearance.dart';
 import 'ui/artwork.dart';
 import 'ui/player_view.dart';
 import 'ui/remote_focus.dart';
-import 'ui/liquid_glass.dart';
+import 'ui/frosted_glass.dart';
 import 'ui/settings_view.dart';
 import 'ui/update_dialogs.dart';
 import 'ui/vector_icon.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  await lg.LiquidGlassWidgets.initialize(enablePerformanceMonitor: false);
+  if (Platform.isWindows) {
+    installUiDiagnostics(recordWindowsPlayerError);
+  } else if (Platform.isAndroid) {
+    installUiDiagnostics(
+      (message) => const MethodChannel(
+        'com.fusionplay.android/runtime',
+      ).invokeMethod<void>('reportPlayerError', {'value': message}),
+    );
+  }
   final imageCache = PaintingBinding.instance.imageCache;
   imageCache.maximumSize = 8;
   imageCache.maximumSizeBytes = 32 * 1024 * 1024;
@@ -78,33 +87,12 @@ class _FusionPlayApplicationState extends State<FusionPlayApplication> {
     debugShowCheckedModeBanner: false,
     title: 'FusionPlay',
     theme: fusionTheme(),
-    builder: (context, child) => GlassBackdropScope(
-      background: const _AppGlassBackdrop(),
-      child: FusionTypographyScope(child: child ?? const SizedBox.shrink()),
-    ),
+    builder: (context, child) =>
+        FusionTypographyScope(child: child ?? const SizedBox.shrink()),
     home: ListenableBuilder(
       listenable: controller,
       builder: (context, _) =>
           FusionPlayHome(controller: controller, state: controller.state),
-    ),
-  );
-}
-
-/// App-level backdrop for routes that are outside the player page (dialogs,
-/// update sheets). The player page installs a nested scope with the real
-/// artwork; this one keeps every other glass surface on the same real
-/// captured-texture path instead of silently falling back to frosted blur.
-class _AppGlassBackdrop extends StatelessWidget {
-  const _AppGlassBackdrop();
-
-  @override
-  Widget build(BuildContext context) => const DecoratedBox(
-    decoration: BoxDecoration(
-      gradient: LinearGradient(
-        begin: Alignment.topLeft,
-        end: Alignment.bottomRight,
-        colors: [Color(0xFF2B2238), Color(0xFF141B26), Color(0xFF090B10)],
-      ),
     ),
   );
 }
@@ -115,7 +103,6 @@ class FusionPlayHome extends StatefulWidget {
     required this.controller,
     required this.state,
     this.isAndroid,
-    this.forceGlassFallback = false,
   });
 
   final FusionPlayController controller;
@@ -123,9 +110,6 @@ class FusionPlayHome extends StatefulWidget {
 
   /// Overrides platform update availability (tests).
   final bool? isAndroid;
-
-  /// Test hook: render LiquidGlass surfaces as the frosted fallback.
-  final bool forceGlassFallback;
 
   @override
   State<FusionPlayHome> createState() => _FusionPlayHomeState();
@@ -164,8 +148,10 @@ class _FusionPlayHomeState extends State<FusionPlayHome> {
   String? _requestedArtworkSource;
   String? _displayedArtworkIdentity;
   String? _requestedArtworkIdentity;
+  int _artworkRequest = 0;
   bool _artworkPreparationStarted = false;
   Timer? _artworkClearTimer;
+  DateTime? _artworkRetryAfter;
   Timer? _errorToastTimer;
   String? _errorToastMessage;
   String? _visibleError;
@@ -181,7 +167,7 @@ class _FusionPlayHomeState extends State<FusionPlayHome> {
   void initState() {
     super.initState();
     _requestedArtworkSource = _normalizedArtworkSource(
-      widget.state.playback.coverArt,
+      widget.state.playback.coverArt ?? widget.state.playback.embeddedArtwork,
     );
     _requestedArtworkIdentity = widget.state.playback.artworkTransitionIdentity;
     _navigationKeyChannel.setMethodCallHandler((call) async {
@@ -227,19 +213,43 @@ class _FusionPlayHomeState extends State<FusionPlayHome> {
     );
   }
 
+  (String?, int?, String?) _artworkOwner(AppState state) {
+    final source = (state.playback.protocol ?? state.activeMediaSource)
+        ?.toLowerCase();
+    final dlna = source == 'dlna';
+    return (
+      source,
+      dlna ? state.playback.sourceEpoch : null,
+      dlna ? state.playback.mediaUrl : null,
+    );
+  }
+
   @override
   void didUpdateWidget(covariant FusionPlayHome oldWidget) {
     super.didUpdateWidget(oldWidget);
     _syncErrorToast(widget.state.lastError);
     final nextArtwork = _normalizedArtworkSource(
-      widget.state.playback.coverArt,
+      widget.state.playback.coverArt ?? widget.state.playback.embeddedArtwork,
     );
     final nextIdentity = widget.state.playback.artworkTransitionIdentity;
-    if (nextArtwork == _requestedArtworkSource) {
+    final ownerChanged =
+        _artworkOwner(oldWidget.state) != _artworkOwner(widget.state);
+    if (ownerChanged) {
+      _displayedArtworkSource = null;
+      _displayedArtworkIdentity = null;
+    }
+    if (!ownerChanged &&
+        oldWidget.state.playback.embeddedArtwork ==
+            widget.state.playback.embeddedArtwork &&
+        nextArtwork == _requestedArtworkSource) {
       // Same (or still absent) cover image: now-playing metadata/track identity
       // churn must not restart the artwork flip. Keep the displayed identity
       // until the actual image source changes.
       _requestedArtworkIdentity = nextIdentity;
+      final retryAfter = _artworkRetryAfter;
+      if (retryAfter != null && !DateTime.now().isBefore(retryAfter)) {
+        unawaited(_prepareArtwork(nextArtwork, nextIdentity));
+      }
       return;
     }
     _requestedArtworkSource = nextArtwork;
@@ -264,39 +274,104 @@ class _FusionPlayHomeState extends State<FusionPlayHome> {
   }
 
   Future<void> _prepareArtwork(String? source, String? identity) async {
+    final request = ++_artworkRequest;
     _artworkClearTimer?.cancel();
+    _artworkRetryAfter = null;
     if (source == null) {
       if (_displayedArtworkSource == null) return;
       _artworkClearTimer = Timer(artworkClearGracePeriod, () {
-        if (mounted &&
-            _requestedArtworkSource == source &&
-            _requestedArtworkIdentity == identity) {
+        if (mounted && _requestedArtworkSource == null) {
           setState(() {
             _displayedArtworkSource = null;
-            _displayedArtworkIdentity = _displayedArtworkSource == null
-                ? _displayedArtworkIdentity
-                : identity;
+            _displayedArtworkIdentity = null;
           });
         }
       });
       return;
     }
-    final provider = artworkProvider(source);
-    if (provider == null) return;
-    try {
-      await precacheImage(provider, context);
-      if (mounted &&
-          _requestedArtworkSource == source &&
-          _requestedArtworkIdentity == identity) {
-        setState(() {
-          _displayedArtworkIdentity = _displayedArtworkSource == source
-              ? _displayedArtworkIdentity
-              : identity;
-          _displayedArtworkSource = source;
-        });
+    final dlna = _artworkOwner(widget.state).$1 == 'dlna';
+    final epoch = widget.state.playback.sourceEpoch;
+    final fallback = dlna ? widget.state.playback.embeddedArtwork : null;
+    void report(String stage, String outcome) {
+      if (!dlna || !Platform.isAndroid) return;
+      unawaited(
+        const MethodChannel('com.fusionplay.android/runtime')
+            .invokeMethod<void>('reportDlnaArtwork', {
+              'stage': stage,
+              'outcome': outcome,
+              'epoch': epoch,
+              'fallbackAvailable': fallback != null,
+            })
+            .catchError((Object _) {}),
+      );
+    }
+
+    String failureCode(Object error) => error is NetworkImageLoadException
+        ? 'http_${error.statusCode}'
+        : '${error.runtimeType}';
+
+    Future<void> load(String candidate) async {
+      final provider = artworkProvider(candidate);
+      if (provider == null) {
+        throw const FormatException('Invalid artwork source');
       }
-    } catch (_) {
-      // Preserve the decoded previous cover through transient load failures.
+      // The same live cover URL may refer to successive DLNA tracks.
+      if (dlna &&
+          (candidate.startsWith('http://') ||
+              candidate.startsWith('https://'))) {
+        await provider.evict();
+        if (!mounted || request != _artworkRequest) return;
+      }
+      Object? failure;
+      await precacheImage(
+        provider,
+        context,
+        onError: (error, _) => failure = error,
+      );
+      if (failure case final Object error) throw error;
+    }
+
+    var displayed = source;
+    try {
+      try {
+        await load(source);
+      } catch (error) {
+        if (mounted && request == _artworkRequest) {
+          report(
+            source == fallback ? 'embedded' : 'primary',
+            failureCode(error),
+          );
+        }
+        if (!mounted ||
+            request != _artworkRequest ||
+            fallback == null ||
+            fallback == source) {
+          rethrow;
+        }
+        try {
+          await load(fallback);
+          displayed = fallback;
+        } catch (error) {
+          if (mounted && request == _artworkRequest) {
+            report('embedded', failureCode(error));
+          }
+          rethrow;
+        }
+      }
+      if (!mounted || request != _artworkRequest) return;
+      setState(() {
+        _displayedArtworkIdentity = _displayedArtworkSource == displayed
+            ? _displayedArtworkIdentity
+            : identity;
+        _displayedArtworkSource = displayed;
+      });
+      report('display', displayed == fallback ? 'decoded_embedded' : 'decoded');
+    } catch (error) {
+      if (!mounted || request != _artworkRequest) return;
+      if (error is! NetworkImageLoadException || error.statusCode != 403) {
+        _artworkRetryAfter = DateTime.now().add(const Duration(seconds: 5));
+      }
+      report('display', 'unavailable');
     }
   }
 
@@ -411,9 +486,11 @@ class _FusionPlayHomeState extends State<FusionPlayHome> {
     _beginClose(
       then: () => unawaited(
         runUpdateFlow(
-          context: context,
+          context: _playerStackKey.currentContext!,
           onCheckUpdate: widget.controller.checkForUpdate,
-          onInstallUpdate: widget.controller.downloadAndInstallUpdate,
+          onDownloadUpdate: widget.controller.downloadUpdate,
+          onInstallUpdate: widget.controller.installDownloadedUpdate,
+          saveUpdate: widget.controller.saveUpdate,
         ),
       ),
     );
@@ -425,7 +502,7 @@ class _FusionPlayHomeState extends State<FusionPlayHome> {
 
   Future<void> _showAboutDialog() async {
     await showGlassDialog<void>(
-      context: context,
+      context: _playerStackKey.currentContext!,
       dialogKey: const ValueKey('about-dialog'),
       builder: (dialogContext) => Column(
         mainAxisSize: MainAxisSize.min,
@@ -487,7 +564,10 @@ class _FusionPlayHomeState extends State<FusionPlayHome> {
           width: 64,
           child: Text(
             label,
-            style: const TextStyle(fontSize: 13, color: Color(0x8CFFFFFF)),
+            style: const TextStyle(
+              fontSize: 13,
+              color: FusionGlassColors.supportingText,
+            ),
           ),
         ),
         Expanded(
@@ -537,7 +617,7 @@ class _FusionPlayHomeState extends State<FusionPlayHome> {
         label: '设置',
         onSelected: _settingsAction,
       ),
-      if (_isAndroid)
+      if (_isAndroid || widget.controller.saveUpdate != null)
         FusionMenuItem(
           icon: const Icon(Icons.system_update_rounded),
           label: '检查更新',
@@ -574,7 +654,6 @@ class _FusionPlayHomeState extends State<FusionPlayHome> {
     final mediaQuery = MediaQuery.of(context);
     final state = widget.state;
     final artwork = _displayedArtworkSource;
-    final hasArtwork = artwork != null && artwork.isNotEmpty;
     final playback = state.playback;
     final hasPlayback =
         playback.streamActive ||
@@ -585,23 +664,10 @@ class _FusionPlayHomeState extends State<FusionPlayHome> {
         playback.durationMs != null;
     final isTelevision = state.isTelevision;
 
-    final playerBackdrop = Stack(
-      fit: StackFit.expand,
-      children: [
-        ArtworkBackground(source: artwork, hasPlayback: hasPlayback),
-        // Dark readability gradient over the artwork (YAQMC-style restraint).
-        DecoratedBox(
-          decoration: BoxDecoration(
-            gradient: LinearGradient(
-              begin: Alignment.topLeft,
-              end: Alignment.bottomRight,
-              colors: hasArtwork
-                  ? const [Color(0xA6101316), Color(0xE6101316)]
-                  : const [Color(0xCC101316), Color(0xF0101316)],
-            ),
-          ),
-        ),
-      ],
+    final playerBackdrop = PlayerBackdrop(
+      key: ValueKey(_artworkOwner(state)),
+      source: artwork,
+      hasPlayback: hasPlayback,
     );
 
     final playerSurface = Stack(
@@ -629,7 +695,6 @@ class _FusionPlayHomeState extends State<FusionPlayHome> {
                       onOpenMenu: _openMenu,
                       menuOpen: menuOpen,
                       overlayOpen: _morphOpen,
-                      forceGlassFallback: widget.forceGlassFallback,
                       onPlayback: widget.controller.playback,
                       onSeek: widget.controller.seek,
                       onVolume: widget.controller.volume,
@@ -672,15 +737,16 @@ class _FusionPlayHomeState extends State<FusionPlayHome> {
                           onExportLogs: widget.controller.exportLogs,
                           isAndroid: _isAndroid,
                           onCheckUpdate: widget.controller.checkForUpdate,
+                          onDownloadUpdate: widget.controller.downloadUpdate,
+                          saveUpdate: widget.controller.saveUpdate,
                           onInstallUpdate:
-                              widget.controller.downloadAndInstallUpdate,
+                              widget.controller.installDownloadedUpdate,
                         ),
                         onDismiss: _dismissOverlay,
                         onSettingsClose: _closeSettings,
                         onClosed: _finishMorphClose,
                         onTransitionCompleted: _handleMorphTransitionCompleted,
                         settingsMaxWidth: isTelevision ? 720 : 560,
-                        forceFallback: widget.forceGlassFallback,
                       ),
                     ),
                   ),
@@ -690,16 +756,13 @@ class _FusionPlayHomeState extends State<FusionPlayHome> {
                       alignment: Alignment.topCenter,
                       child: Padding(
                         padding: const EdgeInsets.all(16),
-                        child: LiquidGlass(
+                        child: FrostedGlass(
                           key: const ValueKey('error-toast'),
                           level: GlassLevel.panel,
-                          interactive: true,
+                          blurSigma: 9,
                           borderRadius: 22,
                           padding: const EdgeInsets.fromLTRB(18, 8, 6, 8),
-                          forceFallback: true,
-                          refraction: 0,
-                          specular: .18,
-                          thickness: 8,
+
                           child: DefaultTextStyle.merge(
                             style: const TextStyle(
                               color: Color(0xEBFFFFFF),
@@ -761,25 +824,26 @@ class _FusionPlayHomeState extends State<FusionPlayHome> {
           _handleBackShortcut();
         },
         child: Scaffold(
-          backgroundColor: const Color(0xFF101316),
+          backgroundColor: Colors.transparent,
           body: playerSurface,
         ),
       ),
     );
-    return GlassBackdropScope(
-      revision:
-          '${artwork ?? ''}|${hasPlayback ? 1 : 0}|${state.playback.trackIdentity ?? ''}',
-      background: playerBackdrop,
-      child: MediaQuery(
-        data: mediaQuery.copyWith(
-          disableAnimations:
-              mediaQuery.disableAnimations ||
-              !state.settings.advancedEffectsEnabled,
-        ),
-        child: FusionFocusStyle(
-          borderWidth: isTelevision ? 4 : 3,
-          focusScale: isTelevision ? 1.02 : 1,
-          child: content,
+    return GlassAppearance(
+      enabled: state.settings.advancedEffectsEnabled,
+      child: FrostedScene(
+        background: playerBackdrop,
+        child: MediaQuery(
+          data: mediaQuery.copyWith(
+            disableAnimations:
+                mediaQuery.disableAnimations ||
+                !state.settings.advancedEffectsEnabled,
+          ),
+          child: FusionFocusStyle(
+            borderWidth: isTelevision ? 4 : 3,
+            focusScale: isTelevision ? 1.02 : 1,
+            child: content,
+          ),
         ),
       ),
     );

@@ -89,7 +89,6 @@ Widget _playerHost(
           onOpenMenu: onOpenMenu,
           progressFocusNode: progressFocusNode,
           volumeFocusNode: volumeFocusNode,
-          forceGlassFallback: true,
         ),
       ),
     ),
@@ -199,18 +198,117 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('AirPlay 无 remote 命令时隐藏上一曲/下一曲，播放保留', (tester) async {
+  testWidgets('有歌词横屏：左栏纵向居中，歌词独占右栏', (tester) async {
+    for (final size in const [
+      Size(620, 320),
+      Size(840, 360),
+      Size(900, 349),
+      Size(900, 350),
+      Size(900, 400),
+      Size(900, 460),
+      Size(900, 461),
+      Size(980, 420),
+      Size(1280, 597),
+      Size(1280, 800),
+      Size(1920, 1080),
+    ]) {
+      await _pumpPlayer(
+        tester,
+        _state(lyrics: _lyrics()),
+        reduceMotion: true,
+        size: size,
+      );
+      final cover = tester.getRect(find.byType(ArtworkCard));
+      final column = [
+        cover,
+        tester.getRect(find.text('Track')),
+        tester.getRect(find.text('Artist')),
+        for (final key in [
+          'player-progress-bar',
+          'playback-play-pause-button',
+          'player-volume-capsule',
+        ])
+          tester.getRect(find.byKey(ValueKey(key))),
+      ];
+      final lyrics = tester.getRect(
+        find.byKey(const ValueKey('player-lyrics-view')),
+      );
+      for (var i = 0; i < column.length; i++) {
+        expect(
+          column[i].center.dx,
+          closeTo(cover.center.dx, 1),
+          reason: '$size',
+        );
+        expect(column[i].right, lessThan(lyrics.left), reason: '$size');
+        if (i > 0) {
+          expect(
+            column[i].top,
+            greaterThanOrEqualTo(column[i - 1].bottom - .1),
+            reason: '$size',
+          );
+        }
+      }
+      expect(tester.takeException(), isNull);
+    }
+  });
+
+  testWidgets('相同歌词状态下三种来源的封面和操作区位置一致', (tester) async {
+    for (final lyrics in [false, true]) {
+      List<Rect>? reference;
+      for (final protocol in ['airplay', 'xiaomi_miplay', 'dlna']) {
+        final state = _stateFromMap({
+          'playback': {
+            'protocol': protocol,
+            if (lyrics)
+              'lyrics': {
+                'lines': [
+                  {'startMs': 0, 'text': 'Same lyric'},
+                ],
+              },
+          },
+        });
+        await _pumpPlayer(
+          tester,
+          state,
+          reduceMotion: true,
+          size: const Size(980, 420),
+        );
+        await tester.pump(const Duration(seconds: 1));
+        final rects = [
+          tester.getRect(find.byType(ArtworkCard)),
+          tester.getRect(find.text('Track')),
+          for (final key in [
+            'player-progress-bar',
+            'playback-previous-button',
+            'playback-play-pause-button',
+            'playback-next-button',
+            'player-volume-capsule',
+            if (lyrics) 'player-lyrics-view',
+          ])
+            tester.getRect(find.byKey(ValueKey(key))),
+        ];
+        reference ??= rects;
+        expect(rects, reference, reason: 'protocol=$protocol lyrics=$lyrics');
+      }
+    }
+  });
+
+  testWidgets('AirPlay 无 remote 命令时禁用上一曲/下一曲，播放保留', (tester) async {
     final state = _stateFromMap({
       'playback': {'protocol': 'airplay'},
       'remoteControl': {'available': false, 'commands': <Object?>[]},
     });
-    await _pumpPlayer(tester, state);
+    final commands = <PlaybackCommand>[];
+    await _pumpPlayer(tester, state, onPlayback: commands.add);
+    await tester.tap(find.byKey(const ValueKey('playback-previous-button')));
+    await tester.tap(find.byKey(const ValueKey('playback-next-button')));
+    expect(commands, isEmpty);
 
     expect(
       find.byKey(const ValueKey('playback-previous-button')),
-      findsNothing,
+      findsOneWidget,
     );
-    expect(find.byKey(const ValueKey('playback-next-button')), findsNothing);
+    expect(find.byKey(const ValueKey('playback-next-button')), findsOneWidget);
     expect(
       find.byKey(const ValueKey('playback-play-pause-button')),
       findsOneWidget,
@@ -247,7 +345,7 @@ void main() {
     expect(find.byKey(const ValueKey('playback-next-button')), findsOneWidget);
   });
 
-  testWidgets('显式 controls 可隐藏 skip 并禁用 seek', (tester) async {
+  testWidgets('显式 controls 可禁用 skip 并禁用 seek', (tester) async {
     final state = _stateFromMap({
       'playback': {'protocol': 'airplay'},
       'controls': {
@@ -261,9 +359,9 @@ void main() {
 
     expect(
       find.byKey(const ValueKey('playback-previous-button')),
-      findsNothing,
+      findsOneWidget,
     );
-    expect(find.byKey(const ValueKey('playback-next-button')), findsNothing);
+    expect(find.byKey(const ValueKey('playback-next-button')), findsOneWidget);
     final progressBar = tester.widget<RoundedProgressBar>(
       find.byKey(const ValueKey('player-progress-bar')),
     );
@@ -720,6 +818,139 @@ void main() {
     await tester.pump();
     expect(tester.takeException(), isNull);
   });
+  testWidgets('AirPlay 同专辑连播不把三首曲名当歌词', (tester) async {
+    for (final title in ['第一首', '第二首', '第三首']) {
+      final state = _stateFromMap({
+        'playback': {
+          'protocol': 'AirPlay',
+          'title': title,
+          'artist': '同一歌手',
+          'album': '同一专辑',
+          'sourceEpoch': 7,
+        },
+      });
+      await _pumpPlayer(tester, state);
+      expect(find.text(title), findsOneWidget);
+      expect(find.byKey(const ValueKey('player-lyrics-view')), findsNothing);
+    }
+  });
+
+  testWidgets('AirPlay 曲目标识切换时丢弃上一首的标题歌词', (tester) async {
+    for (final (id, title) in [
+      ('old', 'a'),
+      ('old', 'b'),
+      ('old', 'c'),
+      ('new', '新歌'),
+    ]) {
+      await _pumpPlayer(
+        tester,
+        _stateFromMap({
+          'playback': {
+            'protocol': 'AirPlay',
+            'title': title,
+            'artist': '歌曲 - 作者',
+            'album': '同一专辑',
+            'trackIdentity': id,
+          },
+        }),
+      );
+    }
+    expect(find.text('新歌'), findsOneWidget);
+    expect(find.byKey(const ValueKey('player-lyrics-view')), findsNothing);
+  });
+  testWidgets('AirPlay 换句和迟到的进度回报不会拉回进度，拖动可向后定位', (tester) async {
+    Future<void> report(
+      int ms,
+      String lyric, {
+      bool playing = true,
+      String id = 'a',
+    }) async {
+      await _pumpPlayer(
+        tester,
+        _stateFromMap({
+          'playback': {
+            'protocol': 'airplay',
+            'positionMs': ms,
+            'isPlaying': playing,
+            'trackIdentity': id,
+            'lyrics': {
+              'origin': 'airplay_title',
+              'lines': [
+                {'text': lyric},
+              ],
+            },
+          },
+          'controls': {'seek': true},
+        }),
+        reduceMotion: true,
+      );
+    }
+
+    await report(10000, '第一句');
+    await tester.pump(const Duration(seconds: 2));
+    expect(find.text('0:12'), findsOneWidget);
+    await report(10000, '第二句');
+    expect(find.text('0:12'), findsOneWidget);
+    await report(11500, '第二句');
+    expect(find.text('0:12'), findsOneWidget);
+    await tester.pump(const Duration(seconds: 2));
+    expect(find.text('0:13'), findsOneWidget);
+    await report(11500, '第二句', playing: false);
+    await tester.pump(const Duration(seconds: 2));
+    expect(find.text('0:13'), findsOneWidget);
+    await report(11500, '第二句');
+    final bar = tester.widget<RoundedProgressBar>(
+      find.byKey(const ValueKey('player-progress-bar')),
+    );
+    bar.onChangeStart!(.025);
+    bar.onChanged(.025);
+    bar.onChangeEnd!(.025);
+    await report(12000, '第三句');
+    expect(find.text('0:04'), findsOneWidget);
+    await tester.pump(const Duration(seconds: 2));
+    expect(find.text('0:06'), findsOneWidget);
+    await report(6500, '第三句');
+    await tester.pump(const Duration(seconds: 1));
+    expect(find.text('0:07'), findsOneWidget);
+    await report(0, '新曲', id: 'b');
+    expect(find.text('0:00'), findsOneWidget);
+  });
+
+  testWidgets('网易云 AirPlay 的规范化字段在同一连接中逐句显示，换歌清空历史', (tester) async {
+    Future<void> line(String song, String text) async {
+      await _pumpPlayer(
+        tester,
+        _stateFromMap({
+          'playback': {
+            'protocol': 'airplay',
+            'sourceEpoch': 7,
+            'title': song,
+            'artist': '周杰伦',
+            'lyrics': {
+              'origin': 'airplay_title',
+              'synced': false,
+              'lines': [
+                {'text': text},
+              ],
+            },
+          },
+        }),
+        reduceMotion: true,
+      );
+    }
+
+    await line('晴天', '故事的小黄花');
+    await line('晴天', '从出生那年就飘着');
+    expect(find.text('晴天'), findsOneWidget);
+    expect(find.text('周杰伦'), findsOneWidget);
+    expect(find.text('故事的小黄花'), findsOneWidget);
+    expect(find.text('从出生那年就飘着'), findsOneWidget);
+    await line('下一首', '新的一句');
+    expect(find.text('故事的小黄花'), findsNothing);
+    expect(find.text('从出生那年就飘着'), findsNothing);
+    expect(find.text('新的一句'), findsOneWidget);
+  });
+
   testWidgets('AirPlay 标题持续变化时按歌词双栏显示并移除空态', (tester) async {
     AppState airPlay(String title) => _stateFromMap({
       'playback': {

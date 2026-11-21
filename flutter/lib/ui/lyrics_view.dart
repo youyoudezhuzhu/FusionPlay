@@ -94,7 +94,7 @@ class _LyricsViewState extends State<LyricsView>
   Color get _activeColor => widget.activeColor ?? widget.foreground;
 
   Color get _inactiveColor =>
-      widget.muted ?? widget.foreground.withValues(alpha: .52);
+      widget.muted ?? widget.foreground.withValues(alpha: .92);
 
   @override
   void initState() {
@@ -477,7 +477,7 @@ class _LyricsListBody extends StatelessWidget {
                 height: 1.3,
                 color: active
                     ? activeColor.withValues(alpha: .92)
-                    : inactiveColor.withValues(alpha: .72),
+                    : inactiveColor,
                 fontWeight: FusionTypography.regularFontWeight,
                 fontVariations: FusionTypography.regular,
               ),
@@ -642,7 +642,9 @@ class _ReturnToCurrentChip extends StatelessWidget {
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 7),
         decoration: ShapeDecoration(
-          color: foreground.withValues(alpha: .12),
+          color: foreground.computeLuminance() > .5
+              ? const Color(0xE0252530)
+              : const Color(0xF2FFFFFF),
           shape: StadiumBorder(
             side: BorderSide(color: foreground.withValues(alpha: .18)),
           ),

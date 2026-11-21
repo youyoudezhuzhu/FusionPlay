@@ -40,13 +40,15 @@ fn main() {
     println!("cargo:rerun-if-env-changed=RC");
     println!("cargo:rerun-if-env-changed=FUSIONPLAY_SKIP_VERSION_RESOURCE");
 
+    let display_version = read_version_file("../../VERSION", DEFAULT_DISPLAY_VERSION);
+    println!("cargo:rustc-env=FUSIONPLAY_PRODUCT_VERSION={display_version}");
+
     // The version resource is Windows-only; every other platform (including a
     // plain Linux host build) simply has no PE resources to embed.
     if env::var("CARGO_CFG_TARGET_OS").as_deref() != Ok("windows") {
         return;
     }
 
-    let display_version = read_version_file("../../VERSION", DEFAULT_DISPLAY_VERSION);
     let installer_version =
         read_version_file("../../INSTALLER_VERSION", DEFAULT_INSTALLER_VERSION);
     let numeric_version = numeric_version(&installer_version);

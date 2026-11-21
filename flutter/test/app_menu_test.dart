@@ -1,12 +1,16 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:fusionplay_android_flutter/backend/native_app_controller.dart';
+import 'package:fusionplay_android_flutter/backend/android/native_app_controller.dart';
 import 'package:fusionplay_android_flutter/backend/update_service.dart';
 import 'package:fusionplay_android_flutter/main.dart';
 import 'package:fusionplay_android_flutter/models/app_state.dart';
 import 'package:fusionplay_android_flutter/theme/fusion_theme.dart';
-import 'package:fusionplay_android_flutter/ui/liquid_glass.dart';
+import 'package:fusionplay_android_flutter/ui/frosted_glass.dart';
+import 'package:fusionplay_android_flutter/ui/app_menu.dart';
+import 'package:fusionplay_android_flutter/ui/artwork.dart';
 import 'package:fusionplay_android_flutter/ui/settings_view.dart';
 
 const _runtimeChannel = MethodChannel('com.fusionplay.android/runtime');
@@ -67,7 +71,6 @@ Future<void> _pumpHome(
         controller: controller,
         state: _state(advancedEffects: advancedEffects),
         isAndroid: isAndroid,
-        forceGlassFallback: true,
       ),
     ),
   );
@@ -93,6 +96,96 @@ void main() {
     _clearChannels();
   });
 
+  testWidgets('DLNA uses embedded artwork when the remote cover fails', (
+    tester,
+  ) async {
+    const fallback =
+        'data:image/png;base64,'
+        'iVBORw0KGgoAAAANSUhEUgAAAAMAAAADCAIAAADZSiLoAAAAF0lEQVR4nGO8wyXHwMDAwMDAxAADCBYAHaYBCsbf1p8AAAAASUVORK5CYII=';
+    await tester.pumpWidget(
+      MaterialApp(
+        home: FusionPlayHome(
+          controller: controller,
+          state: const AppState(
+            initialized: true,
+            activeMediaSource: 'dlna',
+            playback: PlaybackSnapshot(
+              title: 'DLNA track',
+              protocol: 'dlna',
+              sourceEpoch: 1,
+              coverArt: 'https://example.test/rejected.jpg',
+              embeddedArtwork: fallback,
+              streamActive: true,
+            ),
+          ),
+        ),
+      ),
+    );
+    // Flutter's test HttpClient rejects remote requests. Decode the fallback
+    // on the real image IO thread, then render the requested widget update.
+    await tester.runAsync(() async {
+      final stream = artworkProvider(
+        fallback,
+      )!.resolve(ImageConfiguration.empty);
+      final decoded = Completer<void>();
+      final listener = ImageStreamListener(
+        (image, _) {
+          image.dispose();
+          if (!decoded.isCompleted) decoded.complete();
+        },
+        onError: (error, stack) {
+          if (!decoded.isCompleted) decoded.completeError(error, stack);
+        },
+      );
+      stream.addListener(listener);
+      try {
+        await decoded.future.timeout(const Duration(seconds: 3));
+      } finally {
+        stream.removeListener(listener);
+      }
+    });
+    await tester.pump();
+    expect(
+      tester.widget<ArtworkCard>(find.byType(ArtworkCard)).source,
+      fallback,
+    );
+  });
+
+  testWidgets('speaker discovery can add a visible action to an open menu', (
+    tester,
+  ) async {
+    Widget menu(List<String> labels) => MaterialApp(
+      home: Scaffold(
+        body: FusionMorphOverlay(
+          stage: MorphStage.menu,
+          anchorRect: const Rect.fromLTWH(720, 12, 34, 34),
+          menuItems: [
+            for (final label in labels)
+              FusionMenuItem(
+                icon: const Icon(Icons.speaker),
+                label: label,
+                onSelected: () {},
+              ),
+          ],
+          menuFocusNodes: const [],
+          settingsChild: const SizedBox.shrink(),
+          settingsTitle: '',
+          onDismiss: () {},
+          onClosed: () {},
+          onSettingsClose: () {},
+        ),
+      ),
+    );
+    await tester.pumpWidget(menu(['设置']));
+    await tester.pumpAndSettle();
+    final panel = find.byKey(const ValueKey('morph-container'));
+    final height = tester.getSize(panel).height;
+    await tester.pumpWidget(menu(['设置', '切换音箱']));
+    await tester.pumpAndSettle();
+    expect(tester.getSize(panel).height, height + 46);
+    expect(find.text('切换音箱').hitTestable(), findsOneWidget);
+  });
+
   testWidgets('三点按钮打开锚定菜单，非 Android 不显示检查更新', (tester) async {
     await _pumpHome(tester, controller: controller);
     expect(find.byKey(const ValueKey('app-menu')), findsNothing);
@@ -104,7 +197,7 @@ void main() {
     expect(find.text('导出日志'), findsOneWidget);
     expect(find.text('关于'), findsOneWidget);
     expect(find.text('检查更新'), findsNothing);
-    expect(find.byType(LiquidGlass), findsWidgets);
+    expect(find.byType(FrostedGlass), findsWidgets);
     // 焦点进入菜单第一项。
     expect(FocusManager.instance.primaryFocus?.debugLabel, 'menu-item-0');
     expect(tester.takeException(), isNull);
@@ -166,7 +259,6 @@ void main() {
           controller: errorController,
           state: const AppState(initialized: true, lastError: '同步妙播音量失败'),
           isAndroid: false,
-          forceGlassFallback: true,
         ),
       ),
     );
@@ -174,7 +266,7 @@ void main() {
     final toast = find.byKey(const ValueKey('error-toast'));
     expect(toast, findsOneWidget);
     expect(find.text('同步妙播音量失败'), findsOneWidget);
-    final glass = tester.widget<LiquidGlass>(toast);
+    final glass = tester.widget<FrostedGlass>(toast);
     expect(glass.level, GlassLevel.panel);
     expect(tester.takeException(), isNull);
   });
@@ -280,7 +372,7 @@ void main() {
   });
 
   testWidgets('设置标题使用官方 PinnedHeaderSliver，内容从标题下滚过', (tester) async {
-    await _pumpHome(tester, controller: controller);
+    await _pumpHome(tester, controller: controller, advancedEffects: true);
     await _openMenu(tester);
 
     await tester.tap(find.text('设置'));
@@ -359,7 +451,26 @@ void main() {
 
     expect(find.byKey(const ValueKey('app-menu')), findsNothing);
     expect(find.byType(GlassDialog), findsOneWidget);
-    expect(find.byKey(const ValueKey('about-dialog')), findsOneWidget);
+    final about = find.byKey(const ValueKey('about-dialog'));
+    expect(about, findsOneWidget);
+    expect(
+      find.descendant(
+        of: about,
+        matching: find.byWidgetPredicate(
+          (w) => w is BackdropFilter && w.enabled,
+        ),
+      ),
+      findsNothing,
+    );
+    expect(
+      find.descendant(
+        of: about,
+        matching: find.byWidgetPredicate(
+          (w) => w is ColoredBox && w.color == GlassSpec.panel.solidColor,
+        ),
+      ),
+      findsOneWidget,
+    );
     expect(find.byType(AlertDialog), findsNothing);
     expect(find.text('FusionPlay'), findsWidgets);
     expect(find.text('版本'), findsOneWidget);
@@ -437,7 +548,7 @@ void main() {
     expect(menuRect.right, closeTo(buttonRect.right, .01));
     expect(menuRect.top, closeTo(buttonRect.top, .01));
     expect(menuRect.height, closeTo(3 * 46 + 20, .01));
-    final container = tester.widget<LiquidGlass>(
+    final container = tester.widget<FrostedGlass>(
       find.byKey(const ValueKey('morph-container')),
     );
     expect(container.borderRadius, closeTo(buttonRect.height / 2, .01));
@@ -606,6 +717,5 @@ class _ErrorToastHostState extends State<_ErrorToastHost> {
     controller: widget.controller,
     state: AppState(initialized: true, lastError: _error),
     isAndroid: false,
-    forceGlassFallback: true,
   );
 }

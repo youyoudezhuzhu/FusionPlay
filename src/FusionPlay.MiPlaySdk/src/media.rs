@@ -1597,33 +1597,38 @@ impl TsDemuxer {
         // available can schedule valid audio arbitrarily far in the future.
         // Keep RTP time only as a compatibility fallback for malformed PES.
         let pts_micros = pes_pts_micros(&pes).or(rtp_pts_micros);
-        let mut elementary = pes[payload_offset..].to_vec();
-        if is_adts(&elementary) {
+        let input = &pes[payload_offset..];
+        let private_iv = pes_private_data_iv(&pes, payload_offset);
+        let mut elementary = input.to_vec();
+        let apparent_adts = is_adts(input);
+        if apparent_adts && (private_iv.is_none() || input.len() < 16) {
             return Ok(Some(AudioPes {
                 payload: elementary,
                 pts_micros,
             }));
         }
-        if self.keys.is_none()
-            && self.legacy_fixed_media
-            && let Some(iv) = pes_private_data_iv(&pes, payload_offset)
-        {
-            self.keys = Some(StreamKeys {
-                auth_key: [0; 16],
-                stream_key: [
-                    0x2b, 0x7e, 0x15, 0x16, 0x28, 0xae, 0xd2, 0xa6, 0xab, 0xf7, 0x15, 0x88, 0x09,
-                    0xcf, 0x4f, 0x3c,
-                ],
-                stream_iv: iv,
-            });
-        }
-        let Some(keys) = self.keys.as_mut() else {
+        // A private IV allows ciphertext to be identified even when its first
+        // bytes coincide with ADTS sync. Commit key state only after choosing
+        // the representation, since clear TV frames may also carry private data.
+        let candidate = self.keys.clone().or_else(|| {
+            private_iv
+                .filter(|_| self.legacy_fixed_media)
+                .map(|iv| StreamKeys {
+                    auth_key: [0; 16],
+                    stream_key: [
+                        0x2b, 0x7e, 0x15, 0x16, 0x28, 0xae, 0xd2, 0xa6, 0xab, 0xf7, 0x15, 0x88,
+                        0x09, 0xcf, 0x4f, 0x3c,
+                    ],
+                    stream_iv: iv,
+                })
+        });
+        let Some(mut keys) = candidate else {
             return Ok(Some(AudioPes {
                 payload: elementary,
                 pts_micros,
             }));
         };
-        if let Some(iv) = pes_private_data_iv(&pes, payload_offset) {
+        if let Some(iv) = private_iv {
             keys.stream_iv = iv;
         }
         let encrypted_len = elementary.len().min(256) / 16 * 16;
@@ -1634,6 +1639,14 @@ impl TsDemuxer {
             decryptor
                 .decrypt_padded::<NoPadding>(&mut elementary[..encrypted_len])
                 .map_err(|_| anyhow::anyhow!("decrypt media AES-CBC prefix"))?;
+        }
+        // The ADTS framer can join a frame across several PES payloads.
+        // Accept an incomplete decrypted frame only when the original header
+        // is incompatible with the receiver's AAC format.
+        if apparent_adts && !prefer_decrypted_adts(input, &elementary) {
+            elementary.copy_from_slice(input);
+        } else {
+            self.keys = Some(keys);
         }
         Ok(Some(AudioPes {
             payload: elementary,
@@ -1707,6 +1720,21 @@ fn adts_frame_len(data: &[u8]) -> Option<usize> {
             | (usize::from(data[4]) << 3)
             | (usize::from(data[5]) >> 5),
     )
+}
+
+fn prefer_decrypted_adts(clear: &[u8], decrypted: &[u8]) -> bool {
+    fn supported_frame_len(data: &[u8]) -> Option<usize> {
+        if adts_sample_rate(data) != Some(MIPLAY_SAMPLE_RATE_HZ) {
+            return None;
+        }
+        let header_len = adts_header_len(data)?;
+        let frame_len = adts_frame_len(data)?;
+        (data.len() >= header_len && frame_len > header_len).then_some(frame_len)
+    }
+
+    supported_frame_len(decrypted).is_some_and(|frame_len| {
+        frame_len <= decrypted.len() || supported_frame_len(clear).is_none()
+    })
 }
 
 const ADTS_SAMPLE_RATES: [u32; 13] = [
@@ -2559,6 +2587,11 @@ fn spawn_external_audio_output(
                 .unwrap_or(MIPLAY_DEFAULT_HOST_OUTPUT_LATENCY_MILLIS)
                 .min(MIPLAY_MAX_OUTPUT_LATENCY_MILLIS);
             let mut latency_refresh_countdown = 0_u32;
+            let period = StdDuration::from_millis(10);
+            let mut deadline = Instant::now();
+            let mut next_report = deadline + StdDuration::from_secs(10);
+            let mut missed_ticks = 0_u32;
+            let mut short_blocks = 0_u32;
             while !stop_for_thread.load(Ordering::Acquire) {
                 if latency_refresh_countdown == 0 {
                     if let Some(measured) = sink
@@ -2589,7 +2622,7 @@ fn spawn_external_audio_output(
                     }
                     latency_telemetry.update_buffered_frames(0);
                     scratch.fill(0.0);
-                } else if let Ok(mut queue) = queue.try_lock() {
+                } else if let Ok(mut queue) = queue.lock() {
                     latency_telemetry.update_buffered_frames(queue.buffered_frames());
                     let synchronized_frames = synchronized_buffer_frames(host_output_latency_millis);
                     let mut leading_silence_frames = 0_usize;
@@ -2608,7 +2641,7 @@ fn spawn_external_audio_output(
                         )
                     {
                         synchronization_mode = "sender_clock";
-                        if should_hard_drop_late_frames(timed_playback_started, schedule_error, true)
+                        if should_hard_drop_late_frames(timed_playback_started, schedule_error, false)
                         {
                             let late_frames = ((-schedule_error)
                                 * MIPLAY_SOURCE_SAMPLE_RATE as f64
@@ -2627,7 +2660,7 @@ fn spawn_external_audio_output(
                             schedule_error += dropped as f64 * 1_000_000.0
                                 / MIPLAY_SOURCE_SAMPLE_RATE as f64;
                         }
-                        if schedule_error > 0.0 {
+                        if !timed_playback_started && schedule_error > 0.0 {
                             leading_silence_frames = (schedule_error
                                 * MIPLAY_SOURCE_SAMPLE_RATE as f64
                                 / 1_000_000.0)
@@ -2645,7 +2678,7 @@ fn spawn_external_audio_output(
                                 render_tick = false;
                             }
                         }
-                        timed_playback_started = true;
+                        timed_playback_started = render_tick;
                         queue.scheduled_playback_rate(schedule_error, 1.0)
                     } else {
                         timed_playback_started = false;
@@ -2690,6 +2723,9 @@ fn spawn_external_audio_output(
                             Some(playback_rate),
                             0,
                         );
+                        if queue.buffered_frames() < frames_per_tick - leading_silence_frames {
+                            short_blocks += 1;
+                        }
                         for (frame_index, frame) in scratch.chunks_mut(CHANNELS).enumerate() {
                             if frame_index < leading_silence_frames {
                                 frame[0] = 0.0;
@@ -2706,8 +2742,7 @@ fn spawn_external_audio_output(
                     }
                     latency_telemetry.update_buffered_frames(queue.buffered_frames());
                 } else {
-                    // The decoder holds the queue briefly; emit silence instead
-                    // of blocking this realtime-paced thread.
+                    // The queue is poisoned.
                     scratch.fill(0.0);
                 }
                 if non_silent && !signal_reported {
@@ -2722,7 +2757,19 @@ fn spawn_external_audio_output(
                 // applies it; scaling the samples here as well would apply the
                 // volume twice (quadratic volume curve).
                 sink.write(gain, MIPLAY_SAMPLE_RATE_HZ, CHANNELS as u16, &scratch);
-                std::thread::sleep(StdDuration::from_millis(10));
+                deadline += period;
+                let now = Instant::now();
+                if now.saturating_duration_since(deadline) >= period {
+                    missed_ticks += 1;
+                    deadline = now;
+                }
+                if now >= next_report {
+                    events(json!({"event":"host_pcm_health", "short_blocks":short_blocks, "late_ticks":missed_ticks}));
+                    next_report = now + StdDuration::from_secs(10);
+                    missed_ticks = 0;
+                    short_blocks = 0;
+                }
+                std::thread::sleep(deadline.saturating_duration_since(now));
             }
             sink.flush();
         })
@@ -3956,6 +4003,41 @@ mod tests {
         assert!(should_hard_drop_late_frames(true, -26_000.0, true));
     }
 
+    #[cfg(not(target_os = "android"))]
+    #[test]
+    fn external_output_waits_for_queued_pcm_on_contention() {
+        use super::{spawn_external_audio_output, MiPlayPresentationClock};
+        use std::sync::{Arc, Mutex, atomic::{AtomicBool, AtomicU32}};
+        use std::sync::mpsc::{channel, Sender};
+        struct Sink { started: Sender<()>, signal: Sender<bool> }
+        impl crate::MiPlayPcmOutput for Sink {
+            fn output_latency_millis(&self) -> Option<f64> {
+                let _ = self.started.send(());
+                Some(25.0)
+            }
+            fn write(&self, _: f32, _: u32, _: u16, samples: &[f32]) {
+                let _ = self.signal.send(samples.iter().all(|sample| *sample > 0.1));
+            }
+            fn flush(&self) {}
+        }
+        let queue = Arc::new(Mutex::new(PcmQueue::new()));
+        let mut guard = queue.lock().unwrap();
+        guard.push(&vec![0.5; (synchronized_buffer_frames(25.0) + 1024) * 2]);
+        let (started, ready) = channel();
+        let (signal, output) = channel();
+        let pump = spawn_external_audio_output(queue.clone(), Arc::new(AtomicBool::new(false)),
+            Arc::new(AtomicU32::new(100)), Arc::new(MiPlayPresentationClock::new()),
+            Arc::new(MiPlayLatencyTelemetry::new()), Arc::new(Sink { started, signal }),
+            Arc::new(|_| {}));
+        let started = ready.recv_timeout(StdDuration::from_secs(2));
+        let premature = output.recv_timeout(StdDuration::from_millis(30));
+        drop(guard);
+        assert!(started.is_ok());
+        assert!(premature.is_err(), "contention inserted a silent block");
+        assert_eq!(output.recv_timeout(StdDuration::from_secs(2)).unwrap(), true);
+        drop(pump);
+    }
+
     #[test]
     fn pcm_queue_waits_for_the_group_playout_window() {
         let target_frames = 1_000;
@@ -4078,6 +4160,82 @@ mod tests {
         assert!(is_adts(&decrypted.payload));
         assert_eq!(&decrypted.payload[256..], clear_tail.as_slice());
         assert_eq!(demuxer.keys.unwrap().stream_iv, private_iv);
+    }
+
+    #[test]
+    fn adts_sync_in_ciphertext_does_not_bypass_pes_decryption() {
+        // First block of a synthetic 683-byte, 48 kHz silence frame. With this
+        // per-PES IV its ciphertext also starts with ADTS sync (22.05 kHz).
+        let iv: [u8; 16] = hex::decode("10035bad46d1797be653491b05875c66")
+            .unwrap()
+            .try_into()
+            .unwrap();
+        let key: [u8; 16] = hex::decode("2b7e151628aed2a6abf7158809cf4f3c")
+            .unwrap()
+            .try_into()
+            .unwrap();
+        let mut plain = vec![0x35; 683];
+        plain[..16].copy_from_slice(&hex::decode("fff94c805561a82111450014500146ff").unwrap());
+        let mut cipher = plain.clone();
+        cbc::Encryptor::<Aes128>::new_from_slices(&key, &iv)
+            .unwrap()
+            .encrypt_padded::<NoPadding>(&mut cipher[..256], 256)
+            .unwrap();
+        assert_eq!(adts_sample_rate(&cipher), Some(22_050));
+
+        let mut header = vec![0, 0, 1, 0xc0, 0, 0, 0x80, 1, 17, 0x80];
+        header.extend(iv);
+        for negotiated in [false, true] {
+            let keys = negotiated.then_some(StreamKeys {
+                auth_key: [0; 16],
+                stream_key: key,
+                stream_iv: [1; 16],
+            });
+            let mut demuxer = TsDemuxer::new(keys);
+            demuxer.legacy_fixed_media = !negotiated;
+            // A clear frame from a mixed source must not install a fallback key
+            // or advance the negotiated IV merely because it has private data.
+            let short_clear = [0xff, 0xf9, 0x4c, 0x80, 0x01, 0x1f, 0xfc, 0];
+            demuxer.pes = [header.as_slice(), &short_clear].concat();
+            assert_eq!(demuxer.finish_pes().unwrap().unwrap().payload, short_clear);
+            demuxer.pes = [header.as_slice(), &plain].concat();
+            assert_eq!(demuxer.finish_pes().unwrap().unwrap().payload, plain);
+            assert_eq!(
+                demuxer.keys.as_ref().map(|k| k.stream_iv),
+                negotiated.then_some([1; 16])
+            );
+            demuxer.pes = [header.as_slice(), &cipher].concat();
+            let decoded = demuxer.finish_pes().unwrap().unwrap();
+            assert_eq!(adts_sample_rate(&decoded.payload), Some(48_000));
+            assert_eq!(decoded.payload, plain);
+            let mut framer = AdtsFramer::default();
+            demuxer.pes = [header.as_slice(), &cipher[..256]].concat();
+            let first = demuxer.finish_pes().unwrap().unwrap();
+            assert_eq!(first.payload, plain[..256]);
+            assert!(framer.push(&first.payload).is_empty());
+
+            let mut continuation = plain[256..].to_vec();
+            cbc::Encryptor::<Aes128>::new_from_slices(&key, &iv)
+                .unwrap()
+                .encrypt_padded::<NoPadding>(&mut continuation[..256], 256)
+                .unwrap();
+            demuxer.pes = [header.as_slice(), continuation.as_slice()].concat();
+            let second = demuxer.finish_pes().unwrap().unwrap();
+            assert_eq!(framer.push(&second.payload), vec![plain.clone()]);
+
+            assert_eq!(demuxer.keys.unwrap().stream_iv, iv);
+        }
+    }
+
+    #[test]
+    fn ambiguous_adts_keeps_supported_clear_header_over_wrong_rate_or_partial_candidate() {
+        let clear = [0xff, 0xf9, 0x4c, 0x80, 0x01, 0x1f, 0xfc, 0];
+        let mut candidate = clear;
+        candidate[2] = 0x5c; // 22.05 kHz
+        assert!(!super::prefer_decrypted_adts(&clear, &candidate));
+        candidate[2] = clear[2];
+        candidate[4] = 0x04; // 32-byte frame carried in a shorter slice
+        assert!(!super::prefer_decrypted_adts(&clear, &candidate));
     }
 
     #[test]

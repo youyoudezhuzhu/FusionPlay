@@ -15,22 +15,22 @@ import 'vector_icon.dart';
 
 const fusionPlayVersion = String.fromEnvironment(
   'FUSIONPLAY_VERSION',
-  defaultValue: '1.7.0',
+  defaultValue: '1.7.14',
 );
 
-/// Dark liquid-glass palette used by the settings panel. The outer
-/// [LiquidGlass] surface provides the actual glass; everything here is a
+/// Dark frosted-material palette used by the settings panel. The outer
+/// [FrostedGlass] surface provides the actual glass; everything here is a
 /// translucent surface/fill painted on top of it.
 abstract final class _GlassStyle {
   static const cardRadius = 22.0;
   static const rowRadius = 16.0;
-  static const surface = Color(0xB315181D);
-  static const surfaceBorder = Color(0x1FFFFFFF);
+  static const surface = Color(0x24151822);
+  static const surfaceBorder = Color(0x12FFFFFF);
   static const rowHighlight = Color(0x1AFFFFFF);
   static const divider = Color(0x0DFFFFFF);
   static const textPrimary = Color(0xEBFFFFFF);
-  static const textSecondary = Color(0x8CFFFFFF);
-  static const textDisabled = Color(0x59FFFFFF);
+  static const textSecondary = FusionGlassColors.supportingText;
+  static const textDisabled = Color(0xA6FFFFFF);
   static const icon = Color(0xB8FFFFFF);
   static const iconMuted = Color(0x94FFFFFF);
   // Monochrome glass accent: the selected device identity uses the same
@@ -41,7 +41,7 @@ abstract final class _GlassStyle {
   static const inputFill = Color(0x14FFFFFF);
   static const inputBorder = Color(0x1FFFFFFF);
   static const inputFocusBorder = Color(0x73FFFFFF);
-  static const hint = Color(0x73FFFFFF);
+  static const hint = FusionGlassColors.supportingText;
   static const actionFill = Color(0x1AFFFFFF);
   static const actionFillDisabled = Color(0x0DFFFFFF);
   static const actionPrimaryFill = Color(0xE6FFFFFF);
@@ -69,8 +69,14 @@ class SettingsView extends StatefulWidget {
     this.isAndroid,
     this.scrollable = true,
     this.onCheckUpdate,
+    this.onDownloadUpdate,
     this.onInstallUpdate,
+    this.saveUpdate,
     this.showHeader = true,
+    this.showHostControls = true,
+    this.extraActions = const [],
+    this.onOpenUpdate,
+    this.productVersion = fusionPlayVersion,
   });
 
   final AppState state;
@@ -95,7 +101,7 @@ class SettingsView extends StatefulWidget {
   final Future<void> Function() onExportLogs;
 
   /// Overrides the platform detection so widget tests can render the update
-  /// row for Android and hide it for Windows without touching the host OS.
+  /// Android row independently of the host without touching the host OS.
   final bool? isAndroid;
 
   /// When false the host (the morphing settings sheet) owns the scrolling via a
@@ -103,14 +109,20 @@ class SettingsView extends StatefulWidget {
   /// its padded content. Standalone pages/tests keep the internal scroll view.
   final bool scrollable;
 
-  /// Update check triggered by the "检查更新" row (Android only).
+  /// Update check triggered by the "检查更新" row.
   final Future<UpdateCheckResult> Function()? onCheckUpdate;
 
   /// Download + system installer triggered from the update dialog.
-  final Future<UpdateInstallResult> Function()? onInstallUpdate;
+  final DownloadUpdate? onDownloadUpdate;
+  final InstallUpdate? onInstallUpdate;
+  final SaveUpdate? saveUpdate;
 
   /// When false the page title is omitted (hosted inside the glass overlay).
   final bool showHeader;
+  final bool showHostControls;
+  final List<({IconData icon, String label, VoidCallback onTap})> extraActions;
+  final VoidCallback? onOpenUpdate;
+  final String productVersion;
 
   @override
   State<SettingsView> createState() => _SettingsViewState();
@@ -256,18 +268,20 @@ class _SettingsViewState extends State<SettingsView> {
                         ]),
                         SizedBox(height: cardSpacing),
                         _card([
-                          _switchRow(
-                            asset: 'assets/icon-power-settings-new.svg',
-                            title: '开机自启',
-                            value: settings.startupEnabled,
-                            onChanged: widget.onStartup,
-                          ),
-                          _switchRow(
-                            asset: 'assets/auto-wake.svg',
-                            title: '自动唤起',
-                            value: settings.autoWakeEnabled,
-                            onChanged: widget.onAutoWake,
-                          ),
+                          if (widget.showHostControls) ...[
+                            _switchRow(
+                              asset: 'assets/icon-power-settings-new.svg',
+                              title: '开机自启',
+                              value: settings.startupEnabled,
+                              onChanged: widget.onStartup,
+                            ),
+                            _switchRow(
+                              asset: 'assets/auto-wake.svg',
+                              title: '自动唤起',
+                              value: settings.autoWakeEnabled,
+                              onChanged: widget.onAutoWake,
+                            ),
+                          ],
                           _switchRow(
                             icon: Icons.auto_awesome_rounded,
                             title: '高级效果',
@@ -279,6 +293,14 @@ class _SettingsViewState extends State<SettingsView> {
                         _card([
                           _aboutRow(),
                           if (_showUpdateRow) _checkUpdateRow(),
+                          for (final action in widget.extraActions)
+                            _row(
+                              leading: Icon(action.icon),
+                              title: action.label,
+                              onTap: action.onTap,
+                              enabled: !widget.state.busy,
+                              trailing: const Icon(Icons.chevron_right_rounded),
+                            ),
                           _exportLogsRow(),
                         ]),
                       ],
@@ -396,9 +418,9 @@ class _SettingsViewState extends State<SettingsView> {
   Widget _aboutRow() => _row(
     leading: _glassIcon(FusionIcons.about),
     title: '关于应用',
-    trailing: const Text(
-      fusionPlayVersion,
-      style: TextStyle(fontSize: 13, color: _GlassStyle.textSecondary),
+    trailing: Text(
+      widget.productVersion,
+      style: const TextStyle(fontSize: 13, color: _GlassStyle.textSecondary),
     ),
   );
 
@@ -441,15 +463,25 @@ class _SettingsViewState extends State<SettingsView> {
   }
 
   bool get _showUpdateRow =>
-      (widget.isAndroid ?? defaultTargetPlatform == TargetPlatform.android) &&
+      widget.onOpenUpdate != null ||
       widget.onCheckUpdate != null &&
-      widget.onInstallUpdate != null;
+          (widget.saveUpdate != null ||
+              ((widget.isAndroid ??
+                      defaultTargetPlatform == TargetPlatform.android) &&
+                  widget.onDownloadUpdate != null &&
+                  widget.onInstallUpdate != null));
 
   Widget _checkUpdateRow() {
     final busy = _checkingUpdate || _downloadingUpdate;
     final enabled = !busy && !widget.state.busy;
     void check() {
-      if (enabled) unawaited(_checkForUpdate());
+      if (!enabled) return;
+      final open = widget.onOpenUpdate;
+      if (open != null) {
+        open();
+      } else {
+        unawaited(_checkForUpdate());
+      }
     }
 
     return _row(
@@ -482,12 +514,15 @@ class _SettingsViewState extends State<SettingsView> {
     if (_checkingUpdate || _downloadingUpdate) return;
     final onCheck = widget.onCheckUpdate;
     final onInstall = widget.onInstallUpdate;
-    if (onCheck == null || onInstall == null) return;
+    final onDownload = widget.onDownloadUpdate;
+    if (onCheck == null || !_showUpdateRow) return;
 
     await runUpdateFlow(
       context: context,
       onCheckUpdate: onCheck,
+      onDownloadUpdate: onDownload,
       onInstallUpdate: onInstall,
+      saveUpdate: widget.saveUpdate,
       onCheckingChanged: (checking) {
         if (mounted) setState(() => _checkingUpdate = checking);
       },
@@ -795,7 +830,7 @@ class _SettingsViewState extends State<SettingsView> {
                       size: isSelected ? 22 : 20,
                       color: isSelected
                           ? _GlassStyle.accent
-                          : _GlassStyle.iconMuted.withValues(alpha: .45),
+                          : _GlassStyle.iconMuted,
                     ),
                   ),
                 ),
@@ -972,6 +1007,11 @@ class _G2SettingsSwitch extends StatelessWidget {
                 SettingsStyle.switchOnTrack,
                 progress,
               )!;
+              final thumb = Color.lerp(
+                _GlassStyle.switchOffThumb,
+                _GlassStyle.switchOnThumb,
+                progress,
+              )!;
               return DecoratedBox(
                 decoration: ShapeDecoration(
                   color: trackColor,
@@ -984,16 +1024,14 @@ class _G2SettingsSwitch extends StatelessWidget {
                     Positioned(
                       left: 4 + 20 * progress,
                       top: 4,
-                      child: DecoratedBox(
-                        decoration: ShapeDecoration(
-                          color: Color.lerp(
-                            _GlassStyle.switchOffThumb,
-                            _GlassStyle.switchOnThumb,
-                            progress,
+                      child: SizedBox.square(
+                        dimension: 24,
+                        child: DecoratedBox(
+                          decoration: ShapeDecoration(
+                            color: thumb,
+                            shape: const CircleBorder(),
                           ),
-                          shape: const CircleBorder(),
                         ),
-                        child: const SizedBox.square(dimension: 24),
                       ),
                     ),
                   ],
@@ -1027,13 +1065,15 @@ class _SectionTitle extends StatelessWidget {
         ),
       ),
       const SizedBox(width: 14),
-      Text(
-        text,
-        style: const TextStyle(
-          fontSize: 16,
-          color: _GlassStyle.textPrimary,
-          fontWeight: FusionTypography.semiBoldFontWeight,
-          fontVariations: FusionTypography.semiBold,
+      Flexible(
+        child: Text(
+          text,
+          style: const TextStyle(
+            fontSize: 16,
+            color: _GlassStyle.textPrimary,
+            fontWeight: FusionTypography.semiBoldFontWeight,
+            fontVariations: FusionTypography.semiBold,
+          ),
         ),
       ),
     ],

@@ -9,18 +9,23 @@ FusionPlay 是一个面向全平台的局域网音乐投放接收器，支持 **
 | 平台 | 形态 | 说明 |
 |---|---|---|
 | Android | APK | 最低 Android 5.0（API 21），对 Android TV 做了遥控器适配 |
-| fnOS（飞牛 OS） | FPK 应用 | 原生常驻服务 + 四页 Web 管理界面，支持多音频设备独立音量 |
+| fnOS（飞牛 OS） | FPK 应用 | 共享 Flutter 播放器 + 独立音箱管理，支持多音箱输出方案 |
 | Windows 10/11 | 桌面应用 | Flutter Windows 界面 + Rust 协议侧车，支持开机自启、防火墙规则安装包 |
 
 ## 目录结构
 
 ```text
 flutter/
-  lib/                  Flutter 界面、状态模型与平台运行时
+  lib/ui/, lib/theme/   三端共用的播放器、歌词和视觉参数，以及宿主设置组件
+  lib/models/           三端共用的播放器状态和歌词模型
+  lib/backend/android/  Kotlin MethodChannel 适配器
+  lib/backend/windows/  Rust 侧车 NDJSON 适配器
+  lib/backend/fnos/     飞牛 Web 播放器入口、实例选择和 HTTP 适配器
   android/app/          Android 宿主、Kotlin 后端和 Rust 构建任务
   windows/              Windows 宿主工程（CMake/runner）
   test/                 Flutter 与界面交互测试
 src/
+  shared_audio/         Windows 和飞牛共用的 DLNA 声道混合、重采样与单测
   AirPlayReceiver.Core/ AirPlay、DLNA、音频和 JNI 核心
   FusionPlay.MiPlaySdk/ 小米妙播协议与媒体接收
   FusionPlay.AndroidIfAddrs/ Android 5 网络接口适配
@@ -32,6 +37,14 @@ vendor/shairplay/       带本地修复的上游 AirPlay 实现
 tools/                  图标、抓包和诊断辅助工具
 docs/                   平台与协议说明
 ```
+
+三端在同一分支维护。播放协议改动集中在 `src/`。Android 和 Windows 通过各自的控制器向同一个 `FusionPlayHome` 提供状态。飞牛通过 Flutter Web 使用同一个 `PlayerView`、歌词布局、封面背景和菜单动效。右上角「设置」提供接收管理和诊断。飞牛播放器右下角提供「切换音箱」和「新建实例」，音箱分配和校准在音箱页面管理。选定输出并保存绑定后即可调节这只音箱的音量曲线。每个实例的播放地址可单独收藏或在新标签页打开。播放器的 HTTP 适配器位于 `flutter/lib/backend/fnos/`。
+
+接手时的分支基线、源码入口、回归测试、统一发布和真机待验事项见[跨平台维护与交接](docs/CROSS_PLATFORM_MAINTENANCE.md)。
+
+调整共享颜色、圆角或模糊半径时，编辑 `flutter/lib/theme/fusion_theme.dart`，运行 `python3 tools/sync_web_theme.py` 并提交生成的样式。飞牛构建使用 `--check` 验证同步。播放器从当前媒体的封面生成背景，缺少封面时使用中性底色。
+
+界面预览：[共享 Flutter 播放器](docs/platform-previews/flutter-player.png) · [飞牛默认播放器](docs/platform-previews/fnos-player.png) · [飞牛歌词布局](docs/platform-previews/fnos-player-lyrics.png) · [输出方案](docs/platform-previews/fnos-output-groups.png) · [飞牛输出设备](docs/platform-previews/fusionplay-fnos-output.png)。截图使用测试曲目信息和模拟 USB 设备。飞牛使用真实配置接口保存输出延迟，音频后端为 null。
 
 Android 侧只有 `flutter/android/app` 一个应用模块：Rust 动态库由该模块的 `buildRustNative` 任务生成到 Gradle 构建目录，不会写入源码树。Windows 侧由 `windows/backend` 生成独立侧车可执行文件，与 Flutter 宿主通过 NDJSON 通信，接口见 [docs/WINDOWS_ARCHITECTURE.md](docs/WINDOWS_ARCHITECTURE.md)。
 
@@ -91,7 +104,7 @@ Rust 模块可分别运行 `cargo test` 和 `cargo clippy`。Android 原生库�
 
 脚本会编译 `windows/backend` 侧车、执行 `flutter build windows --release`、把 `FusionPlayCore.exe` 放进发布目录，输出 `dist/FusionPlay-Windows-<版本>-x64.zip` 与 SHA256；如本机安装了 Inno Setup，还会生成 `dist/FusionPlay-Setup-<版本>-x64.exe` 安装包（含私有/域网络防火墙放行规则）。
 
-CI 上 `.github/workflows/windows.yml` 在 `windows-latest` 上完成同样的构建，并执行侧车 NDJSON 冒烟测试（启动 → `ready`/`receiverReady` → `shutdown` 退出 0）。发布流程：打 `windows-v*` tag 触发 Release。
+CI 上 `.github/workflows/windows.yml` 在 `windows-latest` 上完成同样的构建，并执行侧车 NDJSON 冒烟测试（启动 → `ready`/`receiverReady` → `shutdown` 退出 0）。发布时推送 `v<版本号>` 标签，所有平台安装包会出现在同一个 GitHub Release。
 
 Windows 版的安装、使用、端口与已知限制见 [docs/WINDOWS.md](docs/WINDOWS.md)，协议实现细节见 [docs/WINDOWS_ARCHITECTURE.md](docs/WINDOWS_ARCHITECTURE.md)。
 
@@ -99,7 +112,7 @@ Windows 版的数据目录为 `%LOCALAPPDATA%\FusionPlay`（设置、日志、�
 
 ## 构建 fnOS FPK
 
-见 [fnos/README.md](fnos/README.md) 与 [fnos/INSTALL.md](fnos/INSTALL.md)；CI 由 `.github/workflows/build-fnos.yml` 在 `fnos-*` tag 上出包。
+见 [fnos/README.md](fnos/README.md) 与 [fnos/INSTALL.md](fnos/INSTALL.md)；统一发布使用 `v<版本号>` 标签，由飞牛构建工作流分别生成 x64 和 ARM64 两个 FPK。
 
 ## 协议与商标说明
 

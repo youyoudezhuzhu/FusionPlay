@@ -9,6 +9,20 @@ import org.junit.Test
 
 class LyricsParserTest {
     @Test
+    fun reportsFailedExplicitLinkAndSuccessfulSidecarWithoutValues() = kotlinx.coroutines.runBlocking {
+        val resolver = OfflineLyricsResolver { uri ->
+            if (uri.path.endsWith("explicit.lrc")) null
+            else LoadedLyrics("[00:01.00]private line", uri)
+        }
+        val attempts = mutableListOf<Pair<LyricsOrigin, String>>()
+        val song = resolver.resolve(LyricsRequest(metadataUri = "explicit.lrc", mediaUri = "https://example.test/song.mp3")) {
+            origin, result -> attempts.add(origin to result)
+        }
+        assertEquals(LyricsOrigin.SIDECAR_URI, song?.origin)
+        assertEquals(listOf(LyricsOrigin.METADATA_URI to "unavailable", LyricsOrigin.SIDECAR_URI to "parsed"), attempts)
+    }
+
+    @Test
     fun parsesPlainLrcLines() {
         val lyrics = LrcParser.parse(
             """

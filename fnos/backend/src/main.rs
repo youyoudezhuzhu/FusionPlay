@@ -18,6 +18,7 @@ use fusionplay_fnos::audio::alsa::AlsaBackend;
 use fusionplay_fnos::audio::{AudioEngine, NullBackend, OutputBackend};
 use fusionplay_fnos::config::Config;
 use fusionplay_fnos::http::{self, HttpApp};
+use fusionplay_fnos::instances::SpeakerSupervisor;
 use fusionplay_fnos::protocols::{self, ProtocolHosts};
 use fusionplay_fnos::{logging, state::AppState, VERSION};
 
@@ -109,6 +110,11 @@ fn main() -> Result<()> {
         .with_context(|| format!("无法创建数据目录 {}", args.state_dir.display()))?;
     let config = Config::load(&args.config)?;
     logging::init(&args.state_dir, &config.logging.level, config.logging.max_bytes, config.logging.keep_bytes)?;
+    let previous = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |panic| {
+        tracing::error!("PANIC {panic}");
+        previous(panic);
+    }));
     if args.probe {
         let mut rows = Vec::new();
         for device in fusionplay_fnos::audio::alsa::probe_devices() {
@@ -149,7 +155,11 @@ fn main() -> Result<()> {
         }
     };
     let gateway_prefix = std::env::var("GATEWAY_PREFIX").unwrap_or_else(|_| "/app/fusionplay-fnos".into());
+    let parent_pid = std::env::var("FUSIONPLAY_PARENT_PID").ok()
+        .map(|v| v.parse::<i32>()).transpose().context("独立音箱父进程无效")?;
+    let instances = parent_pid.is_none().then(|| Arc::new(SpeakerSupervisor::new(&args.state_dir, args.www.clone())));
     let app = Arc::new(HttpApp {
+        instances: instances.clone(),
         config_path: args.config.clone(),
         config: std::sync::RwLock::new(config.clone()),
         state: Arc::clone(&state),
@@ -166,13 +176,41 @@ fn main() -> Result<()> {
     let _servers = http::start(Arc::clone(&app), tcp, args.listen_unix.clone())?;
     tracing::info!(
         "HTTP 已启动：tcp={:?} unix={:?}",
-        app.config.read().unwrap().receiver.name,
+        tcp,
         args.listen_unix
     );
+    // Expose gateway health first. Startup time grows with attached hardware;
+    // fnOS must be able to check the gateway while room workers initialize.
+    if let Some(supervisor) = &instances {
+        if let Err(error) = supervisor.apply(&app.config.read().unwrap()) {
+            state.record_error(format!("独立音箱启动失败：{error:#}"));
+        }
+    }
+    let cleanup_period = std::time::Duration::from_secs(3600);
+    let mut next_cleanup = std::time::Instant::now();
+    let mut health_interval = 5;
+    let mut last_health = std::time::Instant::now();
     while !SHUTDOWN.load(Ordering::SeqCst) {
+        // Child processes may be spawned by a transient HTTP thread. Linux
+        // PDEATHSIG tracks that thread's lifetime; watch the process instead.
+        if parent_pid.is_some_and(|pid| unsafe { libc::getppid() } != pid) { break }
+        if parent_pid.is_none() && std::time::Instant::now() >= next_cleanup {
+            logging::clean_retired_logs(&args.state_dir, &app.config.read().unwrap().audio.instances);
+            next_cleanup = std::time::Instant::now() + cleanup_period;
+        }
+        if last_health.elapsed() >= std::time::Duration::from_secs(health_interval) {
+            if let Some(supervisor) = &instances {
+                if let Err(error) = supervisor.apply(&app.config.read().unwrap()) {
+                    tracing::error!("独立音箱恢复失败：{error:#}");
+                    health_interval = (2 * health_interval).min(60);
+                } else { health_interval = 5; }
+            }
+            last_health = std::time::Instant::now();
+        }
         std::thread::sleep(std::time::Duration::from_millis(200));
     }
     tracing::info!("收到退出信号，正在停止");
+    if let Some(supervisor) = &instances { supervisor.stop(); }
     if let Some(hosts) = &protocol_hosts {
         hosts.stop();
     }

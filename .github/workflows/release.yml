@@ -1,0 +1,69 @@
+name: Publish FusionPlay
+on:
+  push:
+    tags: ['v[0-9]*']
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  android:
+    uses: ./.github/workflows/android.yml
+    secrets: inherit
+  windows:
+    uses: ./.github/workflows/windows.yml
+  fnos:
+    uses: ./.github/workflows/build-fnos.yml
+  publish:
+    needs: [android, windows, fnos]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      actions: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: fusionplay-*
+          path: release-assets
+          merge-multiple: true
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: FusionPlay-Windows-*
+          path: release-assets
+          merge-multiple: true
+      - name: Verify all four installers and publish once
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          version=$(tr -d '[:space:]' < VERSION)
+          test "$GITHUB_REF_NAME" = "v$version"
+          cd release-assets
+          apk="FusionPlay-Android-$version.apk"
+          setup="FusionPlay-Setup-$version-x64.exe"
+          portable="FusionPlay-Windows-$version-x64.zip"
+          for file in "$apk" "$setup" "$portable"; do
+            sha256sum -c "$file.sha256"
+          done
+          for arch in x86 arm; do
+            if [ "$arch" = x86 ]; then fpk=fusionplay-fnos.fpk; else fpk=fusionplay-fnos-arm64.fpk; fi
+            manifest=$(tar -xzOf "$fpk" manifest)
+            test "$(awk '$1 == "version" {print $3}' <<< "$manifest")" = "$version"
+            test "$(awk '$1 == "platform" {print $3}' <<< "$manifest")" = "$arch"
+          done
+          python3 ../.github/scripts/android_prepare_pages.py \
+            --tag "$GITHUB_REF_NAME" --manifest update-manifest.json --apk "$apk" \
+            --index ../docs/update/index.html --output-dir "$RUNNER_TEMP/check-pages"
+          if ! gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            gh release create "$GITHUB_REF_NAME" --verify-tag --draft --title "FusionPlay $version" --generate-notes
+          fi
+          gh release upload "$GITHUB_REF_NAME" --clobber \
+            "$apk" "$apk.sha256" "$setup" "$setup.sha256" "$portable" "$portable.sha256" \
+            fusionplay-fnos.fpk fusionplay-fnos-arm64.fpk update-manifest.json
+          gh release edit "$GITHUB_REF_NAME" --draft=false --latest
+          gh workflow run android-pages.yml --ref main -f tag="$GITHUB_REF_NAME"

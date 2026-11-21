@@ -2,24 +2,59 @@ name: Build fnOS FPK
 
 # 触发：
 #   - workflow_dispatch：手动出包
-#   - push tags `fnos-*`：打 tag 时出包并附到 GitHub Release
+#   - workflow_call：为统一 Release 构建两种架构的 FPK
 on:
   workflow_dispatch:
-  push:
-    tags:
-      - 'fnos-*'
+  pull_request:
+    paths:
+      - 'fnos/package/**'
+      - 'fnos/backend/Cargo.toml'
+      - 'fnos/tools/*fpk*'
+      - '.github/actions/setup-flutter/**'
+      - 'fnos/tools/simulate-*.sh'
+      - '.github/workflows/build-fnos.yml'
+  workflow_call:
 
-# softprops/action-gh-release 需要写权限；默认 GITHUB_TOKEN 只读，不加会 403。
 permissions:
-  contents: write
+  contents: read
 
 env:
   CARGO_TERM_COLOR: always
   RUST_BACKTRACE: 1
 
 jobs:
+  player-web:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup-flutter
+      - name: Compile the shared NAS player
+        working-directory: flutter
+        run: |
+          flutter pub get --enforce-lockfile
+          flutter build web --release --no-pub --no-web-resources-cdn --pwa-strategy=none -t lib/backend/fnos/player.dart
+      - uses: actions/upload-artifact@v4
+        with:
+          name: fnos-player-web
+          path: flutter/build/web/
+          if-no-files-found: error
+          retention-days: 1
+
   build-fnos:
-    runs-on: ubuntu-latest
+    needs: player-web
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x86_64
+            runner: ubuntu-22.04
+            fpk: fusionplay-fnos.fpk
+            artifact: fusionplay-fnos-fpk
+          - arch: arm64
+            runner: ubuntu-22.04-arm
+            fpk: fusionplay-fnos-arm64.fpk
+            artifact: fusionplay-fnos-fpk-arm64
+    runs-on: ${{ matrix.runner }}
     timeout-minutes: 90
     steps:
       - name: Checkout
@@ -50,16 +85,22 @@ jobs:
             src/FusionPlay.MiPlaySdk/target
             vendor/shairplay/target
           # key 必须覆盖所有 Cargo.lock/Cargo.toml，否则依赖变化会命中旧缓存
-          key: ${{ runner.os }}-fnos-cargo-${{ hashFiles('fnos/backend/Cargo.lock', 'fnos/backend/Cargo.toml', 'src/AirPlayReceiver.Core/Cargo.lock', 'src/AirPlayReceiver.Core/Cargo.toml', 'src/FusionPlay.MiPlaySdk/Cargo.lock', 'src/FusionPlay.MiPlaySdk/Cargo.toml', 'src/FusionPlay.AndroidIfAddrs/Cargo.lock', 'vendor/shairplay/Cargo.toml') }}
+          key: ${{ runner.os }}-${{ runner.arch }}-fnos-cargo-${{ hashFiles('fnos/backend/Cargo.lock', 'fnos/backend/Cargo.toml', 'src/AirPlayReceiver.Core/Cargo.lock', 'src/AirPlayReceiver.Core/Cargo.toml', 'src/FusionPlay.MiPlaySdk/Cargo.lock', 'src/FusionPlay.MiPlaySdk/Cargo.toml', 'src/FusionPlay.AndroidIfAddrs/Cargo.lock', 'vendor/shairplay/Cargo.toml') }}
           restore-keys: |
-            ${{ runner.os }}-fnos-cargo-
+            ${{ runner.os }}-${{ runner.arch }}-fnos-cargo-
+
+      - name: Check shared Flutter design values
+        run: python3 tools/sync_web_theme.py --check
 
       - name: Toolchain sanity check
         run: |
           rustc --version
           cargo --version
-          chmod +x fnos/tools/fnpack-linux-amd64
-          fnos/tools/fnpack-linux-amd64 --help | head -5
+          uname -m
+
+      - name: Install emulator for the pinned fnpack tool
+        if: matrix.arch == 'arm64'
+        run: sudo apt-get install -y --no-install-recommends qemu-user
 
       # 后端单测使用 null 音频后端（CI 无声卡），不会打开真实 /dev/snd。
       # （audio_engine_mock 的 drift 断言已改为串行 + 稳定不变量 + 确定性收敛测试，不再 flaky）
@@ -79,6 +120,11 @@ jobs:
         timeout-minutes: 20
         run: cargo test --manifest-path src/FusionPlay.MiPlaySdk/Cargo.toml --lib
 
+      - uses: actions/download-artifact@v4
+        with:
+          name: fnos-player-web
+          path: player-web
+
       - name: Build release binary
         timeout-minutes: 20
         run: cargo build --release --manifest-path fnos/backend/Cargo.toml
@@ -87,34 +133,29 @@ jobs:
       # platform 与构建架构一致、service_port 与 cmd/main 默认一致、fnpack 输出含 "Packing successfully"。
       - name: Build FPK
         timeout-minutes: 15
+        env:
+          FPK_PLAYER_WEB_DIR: ${{ github.workspace }}/player-web
         run: ./fnos/tools/build-fpk.sh
 
       - name: Check FPK structure and fnOS spec
-        run: ./fnos/tools/check-fpk.sh fnos/dist/fusionplay-fnos.fpk
+        run: ./fnos/tools/check-fpk.sh fnos/dist/${{ matrix.fpk }}
 
       # 沙箱模拟：install_init → install_callback → main start → status=0 → /healthz → stop → status=3
       # 使用随机端口 + 临时目录，不碰 NAS/真机；音频后端强制 null。
       - name: Simulate install lifecycle (sandboxed)
         timeout-minutes: 10
-        run: ./fnos/tools/simulate-install.sh fnos/dist/fusionplay-fnos.fpk
+        run: ./fnos/tools/simulate-install.sh fnos/dist/${{ matrix.fpk }}
 
-      # 升级回归：临时重建一个 +1 版本的二进制并 repack，验证
-      # upgrade_init 停服务/释放端口/删 PID、upgrade_callback 重新拉起新版本、孤儿进程也能被清理。
-      - name: Simulate upgrade path (rebuilds a +1 version fixture)
+      - name: Exercise same-architecture upgrade lifecycle
+        env:
+          GH_TOKEN: ${{ github.token }}
         timeout-minutes: 25
-        run: ./fnos/tools/simulate-upgrade.sh fnos/dist/fusionplay-fnos.fpk
+        run: ./fnos/tools/simulate-upgrade.sh fnos/dist/${{ matrix.fpk }}
 
       - name: Upload FPK artifact
         uses: actions/upload-artifact@v4
         with:
-          name: fusionplay-fnos-fpk
-          path: fnos/dist/fusionplay-fnos.fpk
+          name: ${{ matrix.artifact }}
+          path: fnos/dist/${{ matrix.fpk }}
           if-no-files-found: error
           retention-days: 30
-
-      - name: Attach FPK to release (tag pushes)
-        if: startsWith(github.ref, 'refs/tags/')
-        uses: softprops/action-gh-release@v2
-        with:
-          files: fnos/dist/fusionplay-fnos.fpk
-          generate_release_notes: true

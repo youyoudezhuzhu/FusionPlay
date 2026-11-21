@@ -1,5 +1,8 @@
 # FusionPlay fnOS：构建、测试与 CI
 
+本地编译播放器需要 Flutter 3.32.8。构建脚本会编译 `flutter/lib/backend/fnos/player.dart` 并将播放器、字体及 CanvasKit 一起写入 `www/player/`。管理页从播放器菜单进入。
+
+
 面向开发者。用户安装/验收见 [INSTALL.md](INSTALL.md)；功能边界见 [README.md](README.md)。
 
 ## 1. 目录布局
@@ -20,8 +23,8 @@ fnos/
 │   ├── simulate-install.sh   # 沙箱模拟安装/启动/停止/卸载
 │   ├── simulate-upgrade.sh   # 升级路径回归（正常 + 孤儿进程）
 │   ├── fpk-sim-lib.sh        # 上面两个脚本的共享函数
-│   └── fnpack-linux-amd64    # fnpack 二进制（必须提交进仓库，官方下载页给的是 HTML）
-└── dist/fusionplay-fnos.fpk  # 构建产物（gitignore）
+│   └── fnpack-linux-amd64    # fnpack 二进制（x86_64 打包器）
+└── dist/                    # x86_64 和 ARM64 的独立 FPK
 ```
 
 ## 2. 本机构建依赖
@@ -31,10 +34,11 @@ fnos/
 | Rust stable | 编译 `fnos/backend`（cpal → ALSA） | <https://rustup.rs> |
 | `libasound2-dev` + `pkg-config` | alsa-sys / cpal | `sudo apt-get install -y libasound2-dev pkg-config` |
 | `tar` / `curl` / `python3` | 打包、检查、模拟测试 | 系统自带或 apt |
-| `fnpack` | 生成 `.fpk` | 仓库内 `fnos/tools/fnpack-linux-amd64`（不要靠 curl 下载） |
+| `fnpack` | 生成 `.fpk` | 使用仓库固定的 `fnos/tools/fnpack-linux-amd64` |
 
-> 构建机若是 ARM，当前 `manifest.platform = x86` 会被 `build-fpk.sh` 的守卫拒绝
-> （含架构特定二进制时不允许 `all`）。ARM 版需要交叉编译 + 改 manifest 后另出包。
+ARM64 Linux 构建机需安装 `qemu-user`（Ubuntu/Debian 可执行 `sudo apt-get install qemu-user`）。两条构建线使用仓库内相同版本的飞牛打包工具。ARM64 构建机仅通过 `qemu-x86_64` 运行打包工具，Rust 编译、后台执行和 FPK 生命周期测试均原生运行。
+
+两种架构使用同一份 Flutter Web 输出。设置 `FPK_PLAYER_WEB_DIR` 可复用从同一提交构建的 Web 目录，后台在对应架构的 Linux 上原生编译和运行。CI 会先构建一次播放器，再把相同文件交给两个 FPK 作业。[飞牛 fnpack 文档](https://developer.fnnas.com/docs/cli/fnpack)
 
 ## 3. 构建 FPK
 
@@ -46,7 +50,7 @@ cargo build --release --manifest-path fnos/backend/Cargo.toml
 ./fnos/tools/build-fpk.sh
 
 # 产物
-ls -lh fnos/dist/fusionplay-fnos.fpk
+ls -lh fnos/dist/*.fpk
 ```
 
 `build-fpk.sh` 在打包**之前**做这些硬性守卫（失败即退出，不会产出「看起来成功」的坏包）：
@@ -135,21 +139,18 @@ SIM_PORT=18999 FUSIONPLAY_AUDIO_BACKEND=alsa ./fnos/tools/simulate-install.sh fn
 
 ```bash
 ./fnos/tools/simulate-upgrade.sh fnos/dist/fusionplay-fnos.fpk
-# 或指定新版本号
-./fnos/tools/simulate-upgrade.sh fnos/dist/fusionplay-fnos.fpk 0.1.7
+# 在 ARM64 构建机上
+./fnos/tools/simulate-upgrade.sh fnos/dist/fusionplay-fnos-arm64.fpk
 ```
 
-做法：把 `fnos/backend` 复制到临时目录，只把临时副本的 crate version +1 重新编译，
-再用 fnpack 把旧包 repack 成新版本测试包（manifest / BUILD-INFO 同步），跑两个场景：
+x86_64 使用已发布的 0.2.5 做真实双包升级。ARM64 的首个版本 0.2.6 用同一候选包演练替换文件和恢复服务。发布首个 ARM64 版本后，后续候选使用已发布的 ARM64 0.2.6 做双包升级并校验 Release 资产摘要。离线测试可传入同一架构的两个不同版本。
 
-1. **正常升级**：旧包安装并启动 → 替换 `TRIM_APPDEST` 代码 + 新 cmd → `upgrade_init`
-   （断言端口释放、PID/socket 删除、旧进程退出）→ `upgrade_callback`
-   （断言 `/healthz` 报**新**版本、`/proc/<pid>/exe` 哈希 = 新二进制、配置保留、PID 变化、只有 1 个进程）。
-2. **孤儿进程升级**：手动删掉 PID 文件但旧进程仍占端口 → `upgrade_init` 仍必须按精确路径/端口
-   清掉它 → `upgrade_callback` 拉起新版本。
+```bash
+./fnos/tools/simulate-upgrade.sh /path/to/old.fpk /path/to/new.fpk
+```
 
-注意：变体构建会短暂复用 `fnos/backend/target`（cargo 自身有锁），脚本结束前会重新构建真实版本，
-避免影响后续 `build-fpk.sh`。CI 里该步骤约多花 1 分钟。
+覆盖运行中升级、丢失或复用 PID、已停用升级及端口被其他程序占用。按前置钩子、文件替换、后置钩子、应用中心端口预检及启动的顺序执行，验证新进程、双入口健康状态及持久化数据。本项目保留上一发布包的 glibc 兼容范围。可通过 `FPK_BACKEND_BIN` 提供在兼容 Linux 工具链上独立构建的 release 后台，仍会执行版本和包内容检查。
+
 
 ## 8. GitHub Actions（`.github/workflows/build-fnos.yml`）
 
@@ -158,7 +159,7 @@ SIM_PORT=18999 FUSIONPLAY_AUDIO_BACKEND=alsa ./fnos/tools/simulate-install.sh fn
 - `workflow_dispatch`：手动出包。
 - push tag `fnos-*`：出包并附到 GitHub Release。
 
-步骤（ubuntu-latest，job 超时 90 分钟）：
+两条原生构建任务分别使用 ubuntu-22.04 和 ubuntu-22.04-arm，按架构独立缓存和测试。
 
 1. `apt-get install libasound2-dev pkg-config build-essential cmake curl tar iproute2 procps python3`
    （cpal/alsa-sys 需要 ALSA 头文件）。
@@ -171,7 +172,7 @@ SIM_PORT=18999 FUSIONPLAY_AUDIO_BACKEND=alsa ./fnos/tools/simulate-install.sh fn
 6. `cargo build --release --manifest-path fnos/backend/Cargo.toml`。
 7. `./fnos/tools/build-fpk.sh` → `./fnos/tools/check-fpk.sh`。
 8. `simulate-install.sh` + `simulate-upgrade.sh`（沙箱、随机端口、null 音频）。
-9. `actions/upload-artifact@v4` 上传 `fnos/dist/fusionplay-fnos.fpk`（30 天）。
+9. `actions/upload-artifact@v4` 分别上传 `fusionplay-fnos.fpk` 和 `fusionplay-fnos-arm64.fpk`（30 天）。
 10. tag 时 `softprops/action-gh-release@v2` 附到 Release。
 
 **关于 `CI` 环境变量（真机必踩坑）**：上游 `shairplay` 用 `CI` 作为测试开关，存在时**跳过
@@ -182,7 +183,7 @@ mDNS 注册**（AirPlay 在发送端完全搜不到，但 HTTP 面板正常）�
 **CI 注意事项**（已处理）：
 
 - Release 上传需要 `permissions: contents: write`，否则 tag 构建最后一步 403。
-- fnpack 二进制必须提交进仓库（官方下载 URL 返回 HTML 页面）；CI 里只需 `chmod +x`。
+- 两个架构复用仓库内固定的 fnpack；运行阶段不依赖 QEMU。
 - 下载 artifact 必须 `curl -L`（会 302 到对象存储，不跟随会拿到空文件）。
 - `cargo`/`target` 缓存命中后构建时间显著下降；缓存 key 必须包含 `Cargo.lock`。
 - 发包前务必 bump 版本（三处一致），否则 `build-fpk.sh` 会直接失败。
@@ -202,9 +203,9 @@ gh run list --workflow=build-fnos.yml
 
 1. 改代码 + 单测通过 + bump 版本（三处一致）。
 2. 本地跑完整验证（见下节）。
-3. 提交并打 tag：`git tag fnos-v0.1.1 && git push origin fnos-v0.1.1`
+3. 提交并打 tag：`git tag v1.8.0 && git push origin v1.8.0`
    （tag 格式必须是 `fnos-*`，否则不会触发）。
-4. CI 产出 artifact + Release 附件 `fusionplay-fnos.fpk`。
+4. CI 分别产出 x86_64 和 ARM64 的 FPK，两条构建任务全部通过后才会附到同一个 Release。
 5. 真机按 [INSTALL.md](INSTALL.md) 验收（尤其 audio 授权与升级路径）。
 
 ## 10. 本地一键验证

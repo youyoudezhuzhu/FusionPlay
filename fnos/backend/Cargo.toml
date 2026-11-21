@@ -1,6 +1,6 @@
 [package]
 name = "fusionplay-fnos"
-version = "0.2.5"
+version = "1.7.14"
 edition = "2021"
 license = "AGPL-3.0-only"
 description = "FusionPlay fnOS host: AirPlay 2 + DLNA + MiPlay receiver with unified multi-device ALSA output"
@@ -15,6 +15,9 @@ name = "fusionplay-fnos"
 path = "src/main.rs"
 
 [dependencies]
+sha2 = "0.10"
+tempfile = "3"
+regex-lite = "0.1"
 airplay-receiver-core = { path = "../../src/AirPlayReceiver.Core" }
 fusionplay-miplay-sdk = { path = "../../src/FusionPlay.MiPlaySdk" }
 alsa = "0.9"
@@ -30,6 +33,3 @@ rubato = "3"
 rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12", "logging"] }
 webpki-roots = "1"
 libc = "0.2"
-
-[dev-dependencies]
-tempfile = "3"

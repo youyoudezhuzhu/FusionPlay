@@ -10,12 +10,12 @@ import 'package:fusionplay_android_flutter/models/app_state.dart';
 import 'package:fusionplay_android_flutter/theme/fusion_theme.dart';
 import 'package:fusionplay_android_flutter/ui/app_menu.dart';
 import 'package:fusionplay_android_flutter/ui/artwork.dart';
-import 'package:fusionplay_android_flutter/ui/glass_backdrop.dart';
-import 'package:fusionplay_android_flutter/ui/liquid_glass.dart';
+import 'package:fusionplay_android_flutter/ui/glass_appearance.dart';
+import 'package:fusionplay_android_flutter/ui/frosted_glass.dart';
 import 'package:fusionplay_android_flutter/ui/settings_view.dart';
 
 final String _coverData =
-    'data:image/png;base64,${base64Encode(File('/tmp/fusionplay-cover.png').readAsBytesSync())}';
+    'data:image/png;base64,${base64Encode(File('../fusionplay-ui-audit-codex/assets/cover.png').readAsBytesSync())}';
 
 Widget _backdrop() => Stack(
   fit: StackFit.expand,
@@ -30,8 +30,7 @@ Widget _host(Widget child, GlobalKey boundaryKey) => MaterialApp(
   theme: fusionTheme(),
   home: RepaintBoundary(
     key: boundaryKey,
-    child: GlassBackdropScope(
-      revision: 'gallery',
+    child: FrostedScene(
       background: _backdrop(),
       child: Scaffold(backgroundColor: Colors.transparent, body: child),
     ),
@@ -39,6 +38,9 @@ Widget _host(Widget child, GlobalKey boundaryKey) => MaterialApp(
 );
 
 void main() {
+  setUpAll(
+    () => Directory('/tmp/fusionplay-preview').createSync(recursive: true),
+  );
   setUpAll(() async {
     final loader = FontLoader('MiSans')
       ..addFont(rootBundle.load('assets/fonts/MiSansUI.ttf'));
@@ -61,14 +63,11 @@ void main() {
           child: SizedBox(
             width: 500,
             height: 520,
-            child: LiquidGlass(
+            child: FrostedGlass(
               level: GlassLevel.panel,
               borderRadius: 24,
               tint: const Color(0x8814191F),
-              forceFallback: true,
-              refraction: 0,
-              specular: .18,
-              thickness: 8,
+
               child: SettingsView(
                 state: const AppState(initialized: true),
                 showHeader: false,
@@ -116,14 +115,11 @@ void main() {
             padding: const EdgeInsets.all(20),
             child: SizedBox(
               width: 250,
-              child: LiquidGlass(
+              child: FrostedGlass(
                 level: GlassLevel.panel,
                 borderRadius: 22,
                 tint: const Color(0x7014171C),
-                forceFallback: true,
-                refraction: 0,
-                specular: .18,
-                thickness: 8,
+
                 child: FusionAppMenu(
                   items: [
                     FusionMenuItem(

@@ -6,40 +6,139 @@ import android.os.Looper
 import androidx.media3.common.AudioAttributes
 import androidx.media3.common.C
 import androidx.media3.common.MediaItem
+import androidx.media3.common.MediaMetadata
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.PlaybackParameters
+import androidx.media3.common.Tracks
+import androidx.media3.extractor.metadata.id3.Id3Frame
 import androidx.media3.common.Player
 import androidx.media3.exoplayer.ExoPlayer
+import com.airplayreceiver.desktop.backend.FusionPlayDiagnosticLogger
 import com.airplayreceiver.desktop.backend.MediaSource
 import java.io.Closeable
+import java.io.File
 
 internal class NativeNetworkPlayer(
     context: Context,
+    private val diagnostics: FusionPlayDiagnosticLogger,
+    private val onDlnaStateChanged: () -> Unit = {},
     private val onError: (String) -> Unit = {},
 ) : Closeable {
+    private companion object {
+        val lyricFrameIds = setOf("USLT", "SYLT", "ULT", "SLT")
+    }
+
     private val applicationContext = context.applicationContext
     private val mainHandler = Handler(Looper.getMainLooper())
     private var player: ExoPlayer? = null
+    private val publishDlnaState = Runnable(onDlnaStateChanged)
+    private var embeddedCover: File? = null
+    private var embeddedCoverOutcome = "no_artwork_data"
+    private var reportedEmbeddedCoverOutcome: String? = null
+    val embeddedArtworkPath: String? get() = embeddedCover?.absolutePath
 
     private fun createPlayer(): ExoPlayer = ExoPlayer.Builder(applicationContext).build().apply {
         setAudioAttributes(
             AudioAttributes.Builder().setUsage(C.USAGE_MEDIA).setContentType(C.AUDIO_CONTENT_TYPE_MUSIC).build(),
-            true,
+            // FusionPlayMediaChannel owns system audio focus for all receivers.
+            // A second request here can revoke our own focus and pause DLNA.
+            /* handleAudioFocus = */ false,
         )
         addListener(object : Player.Listener {
+            @androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
+            override fun onTracksChanged(tracks: Tracks) {
+                if (source != MediaSource.DLNA) return
+                val observed = mutableSetOf<String>()
+                var audioTracks = 0
+                for (group in tracks.groups) {
+                    if (group.type != C.TRACK_TYPE_AUDIO) continue
+                    for (index in 0 until group.length) {
+                        if (!group.isTrackSelected(index)) continue
+                        audioTracks++
+                        val tags = group.getTrackFormat(index).metadata ?: continue
+                        for (i in 0 until tags.length()) {
+                            val id = (tags[i] as? Id3Frame)?.id ?: continue
+                            if (id in lyricFrameIds) observed.add(id)
+                        }
+                    }
+                }
+                if (audioTracks > 0) {
+                    recordPlayback("decoder_id3_lyrics", mapOf("audio_tracks" to audioTracks,
+                        "frames" to observed.sorted().joinToString(","), "lyrics_frame_present" to observed.isNotEmpty()))
+                }
+            }
+
+            override fun onPlayWhenReadyChanged(playWhenReady: Boolean, reason: Int) {
+                recordPlayback("decoder_play_intent", mapOf("play_when_ready" to playWhenReady, "reason_code" to reason))
+            }
+
             override fun onIsPlayingChanged(isPlaying: Boolean) {
                 playing = isPlaying
+                recordPlayback("decoder_playing", mapOf("playing" to isPlaying))
             }
 
             override fun onPlaybackStateChanged(playbackState: Int) {
                 ready = playbackState == Player.STATE_READY
+                if (ready) reportEmbeddedCover()
+                recordPlayback("decoder_state", mapOf("state" to when (playbackState) {
+                    Player.STATE_BUFFERING -> "buffering"
+                    Player.STATE_READY -> "ready"
+                    Player.STATE_ENDED -> "ended"
+                    else -> "idle"
+                }))
+            }
+
+            override fun onMediaMetadataChanged(mediaMetadata: MediaMetadata) {
+                if (source != MediaSource.DLNA || embeddedCover != null) return
+                val bytes = mediaMetadata.artworkData ?: return
+                if (bytes.isEmpty() || bytes.size > 1024 * 1024) {
+                    embeddedCoverOutcome = if (bytes.isEmpty()) "empty" else "size_limit"
+                    if (ready) reportEmbeddedCover()
+                    return
+                }
+                runCatching {
+                    val file = File.createTempFile("dlna-cover-", ".img", applicationContext.cacheDir)
+                    try {
+                        file.writeBytes(bytes)
+                        embeddedCover = file
+                    } finally {
+                        if (embeddedCover != file) file.delete()
+                    }
+                }.onSuccess { embeddedCoverOutcome = "cached" }
+                    .onFailure { embeddedCoverOutcome = "cache_write_failed" }
+                if (ready) reportEmbeddedCover()
+            }
+
+            override fun onEvents(player: Player, events: Player.Events) {
+                if (source == MediaSource.DLNA && events.containsAny(
+                        Player.EVENT_PLAYBACK_STATE_CHANGED,
+                        Player.EVENT_PLAY_WHEN_READY_CHANGED,
+                        Player.EVENT_IS_PLAYING_CHANGED,
+                        Player.EVENT_POSITION_DISCONTINUITY,
+                        Player.EVENT_MEDIA_METADATA_CHANGED,
+                    )
+                ) {
+                    mainHandler.removeCallbacks(publishDlnaState)
+                    mainHandler.post(publishDlnaState)
+                }
             }
 
             override fun onPlayerError(error: PlaybackException) {
-                onError(error.message ?: "未知播放器错误")
+                recordPlayback("decoder_error", mapOf("code" to error.errorCodeName))
+                onError("${error.errorCodeName}：${error.message ?: "未知播放器错误"}")
             }
         })
-        volume = if (muted) 0f else unmutedVolume
+        volume = if (dlnaMuted) 0f else dlnaGain
+    }
+
+    private fun recordPlayback(event: String, details: Map<String, Any?>) {
+        val component = when (source) {
+            MediaSource.DLNA -> "dlna"
+            MediaSource.AIRPLAY -> "airplay"
+            else -> return
+        }
+        diagnostics.write(component, event, if (event == "decoder_error") "failure" else "observed",
+            details + ("epoch" to sourceEpoch))
     }
 
     var source: MediaSource? = null
@@ -54,13 +153,20 @@ internal class NativeNetworkPlayer(
         private set
     var rate: Double = 1.0
         private set
-    private var unmutedVolume = 1f
-    private var muted = false
+    private var dlnaGain = 1f
+    private var dlnaMuted = false
     val positionMs: Long get() = player?.currentPosition?.coerceAtLeast(0) ?: 0
     val durationMs: Long get() = player?.duration?.takeIf { it > 0 } ?: 0
 
     fun open(source: MediaSource, url: String, epoch: Long?, positionMs: Long, autoPlay: Boolean) = onMain {
         val activePlayer = player ?: createPlayer().also { player = it }
+        clearEmbeddedCover()
+        ready = false
+        if (this.source != source || sourceEpoch != epoch) {
+            dlnaMuted = false
+            dlnaGain = 1f
+            activePlayer.volume = 1f
+        }
         this.source = source
         this.url = url
         sourceEpoch = epoch
@@ -82,15 +188,30 @@ internal class NativeNetworkPlayer(
             activePlayer.play()
         }
     }
-    fun setVolumePercent(percent: Int) = onMain {
-        unmutedVolume = percent.coerceIn(0, 100) / 100f
-        if (!muted) player?.volume = unmutedVolume
+    fun setDlnaVolume(fallbackPercent: Int?, muted: Boolean?) = onMain {
+        if (source != MediaSource.DLNA) return@onMain
+        dlnaGain = (fallbackPercent?.coerceIn(0, 100) ?: 100) / 100f
+        if (muted != null) dlnaMuted = muted
+        player?.volume = if (dlnaMuted) 0f else dlnaGain
     }
-    fun setMuted(muted: Boolean) = onMain {
-        this.muted = muted
-        player?.volume = if (muted) 0f else unmutedVolume
+
+    private fun reportEmbeddedCover() {
+        if (source != MediaSource.DLNA || reportedEmbeddedCoverOutcome == embeddedCoverOutcome) return
+        reportedEmbeddedCoverOutcome = embeddedCoverOutcome
+        diagnostics.write("dlna", "decoder_embedded_cover", embeddedCoverOutcome,
+            mapOf("epoch" to sourceEpoch, "cached_bytes" to embeddedCover?.length()))
     }
+
+    private fun clearEmbeddedCover() {
+        embeddedCoverOutcome = "no_artwork_data"
+        reportedEmbeddedCoverOutcome = null
+        embeddedCover?.delete()
+        embeddedCover = null
+    }
+
     fun stop() = onMain {
+        mainHandler.removeCallbacks(publishDlnaState)
+        clearEmbeddedCover()
         player?.release()
         player = null
         source = null
@@ -100,10 +221,7 @@ internal class NativeNetworkPlayer(
         ready = false
     }
 
-    override fun close() = onMain {
-        player?.release()
-        player = null
-    }
+    override fun close() { stop() }
 
     private fun onMain(block: () -> Unit) {
         if (Looper.myLooper() == Looper.getMainLooper()) block() else mainHandler.post(block)

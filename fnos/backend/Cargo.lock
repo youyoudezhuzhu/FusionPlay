@@ -75,6 +75,7 @@ dependencies = [
  "md-5",
  "ndk-context",
  "oboe",
+ "quick-xml",
  "rand",
  "serde",
  "serde_json",
@@ -728,7 +729,7 @@ dependencies = [
 
 [[package]]
 name = "fusionplay-fnos"
-version = "0.2.5"
+version = "1.7.14"
 dependencies = [
  "airplay-receiver-core",
  "alsa 0.9.1",
@@ -736,10 +737,12 @@ dependencies = [
  "fusionplay-miplay-sdk",
  "if-addrs 0.15.0",
  "libc",
+ "regex-lite",
  "rubato",
  "rustls",
  "serde",
  "serde_json",
+ "sha2",
  "symphonia",
  "tempfile",
  "tokio",
@@ -2038,6 +2041,7 @@ dependencies = [
  "rubato",
  "sha1",
  "sha2",
+ "socket2",
  "subtle",
  "symphonia",
  "thiserror 2.0.21",

@@ -1,0 +1,103 @@
+@import url("fusion-theme.css");
+@font-face {
+  font-family: MiSans;
+  src: url("player/assets/assets/fonts/MiSansUI.ttf") format("truetype");
+  font-weight: 100 900;
+  font-display: swap;
+}
+:root {
+  color-scheme: dark; --font: "MiSans",system-ui,sans-serif; --accent: #f2f2f5; --card:var(--fusion-solid-panel);
+  --border:rgba(246,238,255,.15); --muted:#d0c9db; color:#fff; font: 15px/1.5 var(--font);
+  background:#212329;
+}
+* { box-sizing:border-box }
+[hidden]{display:none!important}
+body {margin:0; min-height:100vh; isolation:isolate}
+.scene {isolation:isolate;position:fixed;inset:0;z-index:-1;overflow:hidden;background:linear-gradient(130deg,#373a41,#202227 68%,#191b20)}
+.scene img {width:100%;height:100%;object-fit:cover;filter:blur(clamp(16px,6.1vmin,65px))}
+.scene:has(img:not([hidden]))::before {content:"";position:absolute;inset:0;z-index:1;background:var(--fusion-backdrop-highlight-limit);mix-blend-mode:darken}
+.scene::after {content:"";position:absolute;inset:0;background:radial-gradient(ellipse at 56% 47%,#12172866,transparent 84%),linear-gradient(#10172550,#10172575)}
+header,main {width:min(100% - 48px,984px); margin-inline:auto}
+header,.heading,.footer,.toolbar,.device-row,.room-top,.room-actions {display:flex;align-items:center;gap:14px;flex-wrap:wrap}
+header,.heading,.room-top,.room-actions {justify-content:space-between}
+header {padding:25px 0}.brand{display:flex;align-items:center;gap:10px;font-size:17px;font-weight:650}.brand img{width:25px}
+main {padding:clamp(18px,6vh,68px) 0 52px}
+h1,h2,p{margin:0} h1{font-size:clamp(28px,3.2vw,38px);line-height:1.18;letter-spacing:-.035em;font-weight:650}
+.heading,h1:has(+form){margin-bottom:24px}.context{font-weight:550;color:#ede1eb;margin-bottom:5px}
+a,button {color:inherit;text-decoration:none;cursor:pointer}
+button,.button,select,input:not([type=range]) {font:inherit;border:1px solid #ffffff38;border-radius:var(--fusion-field-radius);background:#ffffff0d;color:white;padding:10px 16px}
+input:not([type=range]),select {min-width:0;max-width:100%}select option {background:#373246;color:white}input::placeholder{color:var(--fusion-supporting-text);opacity:1}
+button:disabled {cursor:default;opacity:.48}
+button:hover:not(:disabled),a.button:hover {background:#ffffff24}
+:focus-visible{outline:2px solid white;outline-offset:3px}
+.back,.room-actions a {font-size:14px;color:#f7edf7}.back:hover,.room-actions a:hover{text-decoration:underline}
+.card {border:1px solid #ffffff1a;border-radius:var(--fusion-card-radius);background:linear-gradient(140deg,#ffffff09,transparent 54%),var(--fusion-settings-tint);backdrop-filter:blur(var(--fusion-panel-blur));box-shadow:inset 0 1px 0 #ffffff0b}
+.room-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(280px,100%),1fr));gap:18px}
+.room {position:relative;min-width:0;padding:24px;display:flex;flex-direction:column;gap:22px}
+.room h2{font-size:clamp(24px,3vw,36px);line-height:1.15;overflow-wrap:anywhere}
+.room .media{font-size:14px;color:#eee4ee;margin-top:5px}
+.room-top{min-height:54px}.cover,.speaker-symbol{width:54px;height:54px;border-radius:15px;object-fit:cover}
+.speaker-symbol{display:grid;place-items:center;background:#ffffff13;border:1px solid #ffffff28}
+.speaker-symbol::after{content:"";width:13px;height:24px;border:1.5px solid white;border-radius:6px;background:radial-gradient(circle at 50% 70%,white 0 3px,transparent 4px),radial-gradient(circle at 50% 24%,white 0 1px,transparent 2px)}
+.current{font-size:12px;color:#f2f2f5}.room-actions{border-top:1px solid #ffffff20;padding-top:14px;margin-top:auto}
+.room-actions a{display:inline-flex;align-items:center;min-height:44px}
+.room-open::after{content:"";position:absolute;inset:0;border-radius:var(--fusion-card-radius)}
+.room-actions a:not(.room-open){position:relative}
+#binding-result:not(:empty){margin-bottom:16px;color:#f5e6d8}
+.bind{max-width:560px;padding:28px;display:grid;gap:10px}.bind label:not(:first-child){margin-top:12px}
+.bind p,.small,.axis,.x-axis,.response label,#save-state{font-size:13px;color:#ddd4e2}
+.footer{justify-content:flex-end}.bind .footer{margin-top:12px}
+.primary:not(:disabled),.primary:not(:disabled):hover {background:#f2f2f5;color:#17191d;border-color:transparent;font-weight:600}
+.device-row{margin-bottom:14px}.editor{display:grid;grid-template-columns:minmax(170px,.75fr) minmax(0,2fr);padding:clamp(16px,3vw,30px);gap:24px 34px}
+.controls{display:flex;flex-direction:column;gap:14px}.modes{display:grid;grid-template-columns:1fr 1fr;gap:7px}.modes button{border-radius:12px}.modes button[aria-pressed=true],.modes button[aria-pressed=true]:hover{color:#17191d;background:#f2f2f5}
+.response{margin-top:auto}.response output{display:block;font-size:clamp(22px,2.6vw,32px);font-variant-numeric:tabular-nums}
+input[type=range]{width:100%;accent-color:var(--accent);cursor:pointer}
+.probe-slider{min-height:40px;display:grid;align-items:center}
+.probe-slider input{margin:0;min-height:40px}
+.plot{align-self:center;min-width:0}.axis{margin-left:8px}.x-axis{text-align:right}
+canvas{display:block;width:100%;height:clamp(170px,30vh,310px);touch-action:none}
+.editor-foot,#custom{grid-column:1/-1}.editor-foot{border-top:1px solid var(--border);padding-top:16px;justify-content:space-between}
+#points{display:flex;gap:10px;flex-wrap:wrap;margin-top:10px}.point{display:flex;align-items:center;gap:5px}.point input{width:66px;padding:6px}.point button{padding:4px 7px}
+#notice:not(:empty){padding:14px 0}
+@media(max-width:620px){header,main{width:calc(100% - 32px)}header{padding:17px 0}main{padding-top:14px}.editor{grid-template-columns:1fr;gap:18px}.controls{display:contents}.small{display:none}.modes{grid-template-columns:repeat(4,1fr)}.modes button{padding:9px 2px}.plot{grid-row:2}.response{grid-row:3}.heading{gap:8px}.room{gap:16px}}
+@media(prefers-reduced-transparency:reduce),(forced-colors:active){.scene{display:none}.card{background:var(--fusion-solid-panel);backdrop-filter:none}}
+
+/* Keep the first eight rooms close together on desktop. More rows and narrow
+   screens use the document's normal scroll and keyboard focus order. */
+.room-grid.many {
+  grid-template-columns: repeat(auto-fit, minmax(min(220px, 100%), 1fr));
+  gap: 12px;
+}
+.many .room { padding: 16px; gap: 12px; }
+.many .room-top { min-height: 34px; }
+.many .cover, .many .speaker-symbol { width: 34px; height: 34px; border-radius: 10px; }
+.many .room h2 { font-size: 21px; }
+.many .media { overflow-wrap: anywhere; }
+.many .room-actions { gap: 4px 10px; padding-top: 6px; }
+.many .room-actions a { font-size: 13px; }
+select option:disabled { color: #aaa3b6; }
+.many .room {
+  display: grid;
+  grid-template-columns: 34px minmax(0, 1fr);
+  align-content: start;
+  align-items: center;
+}
+.many .room-top { display: contents; }
+.many .room-info { grid-column: 2; grid-row: 1; }
+.many .current { position: absolute; top: 0; right: 12px; font-size: 10px; }
+.many .room-actions { grid-column: 1 / -1; margin-top: 0; }
+
+#manage-outputs {display:inline-block;margin:0 0 16px}
+#output-fields {border:0;padding:0;margin:0;min-width:0;display:grid;gap:9px}
+#output-groups .toolbar {margin:8px 0}
+
+.solid-surfaces .card, .solid-surfaces dialog.card {background:var(--fusion-solid-panel);backdrop-filter:none;box-shadow:none}
+dialog.card {width:min(400px,calc(100% - 32px));color:white;padding:24px;background:var(--fusion-popup-tint);backdrop-filter:blur(20px)}
+dialog::backdrop {background:rgb(0 0 0 / .16)}
+.solid-surfaces dialog::backdrop {background:rgb(0 0 0 / .42)}
+dialog h2 {font-size:20px;line-height:1.35}
+dialog .footer {margin-top:20px}
+@media(prefers-reduced-transparency:reduce),(forced-colors:active){dialog.card{background:var(--fusion-solid-panel);backdrop-filter:none}}
+
+/* Canvas chart colours must follow the browser's high-contrast palette too. */
+@media(forced-colors:active){#graph{color:CanvasText;background-color:Canvas;border-color:GrayText}}

@@ -386,3 +386,110 @@ GitHub Actions（tag `fnos-v0.2.3` → commit `ea29bd8`）：
 
 `fnos/fpk` 合入 `main`（fast-forward），main 上的 Android CI 将重新构建 `1.2.6` APK
 （包含妙播兼容 + AirPlay 音响身份）。CI 运行与产物哈希见发布记录。
+
+## 独立音箱与播放页（2026-11-21）
+
+环境为 Linux x86_64、Chromium、Flutter Web 发布构建和空音频后端。两只音箱分别配置为默认输出和独立输出。
+
+| 验证场景 | 结果 |
+|---|---|
+| 在同一网关下同时运行两个接收器 | 两个 AirPlay、两个 DLNA 和两个妙播接收服务进入等待状态。通过 IPv4 组播获得分开的 AirPlay 身份和端口、DLNA 设备描述与 UDN、妙播发现身份与端口。 |
+| 两只音箱同时接收不同的 DLNA 曲目 | 实际通过 SOAP 向两个接收器投送 WAV 并触发解码。播放状态返回各自曲目。通过书房播放页的接口暂停，书房报告暂停，客厅仍报告播放。 |
+| 封面、控制与失效链接 | 从两个状态目录请求相同文件名时，各自返回所属实例的数据。删除或停用的实例拒绝控制请求。全部声卡分配给独立音箱后，首页的默认目标随实例目录更新。 |
+| 两个浏览器标签页 | 使用测试媒体分别展示两首歌曲，两次暂停请求发往各自实例。在其中一个标签切换音箱，另一个标签保留原目标。 |
+| 回归与硬件边界 | Flutter 全套检查运行通过，飞牛后端 88 项测试通过。需要实体 ALSA 声卡的冒烟测试跳过。iPhone、HyperOS 和真实 NAS 多声卡的听感与稳定性仍待实机验证。 |
+
+复现并发播放测试时，先构建飞牛后端，再运行下列命令。组播检查需要一台正在运行两个接收器的测试主机，两个名称应与配置中的投送名称一致。
+
+```bash
+cargo build --manifest-path fnos/backend/Cargo.toml
+python3 fnos/tools/test-speaker-instances.py fnos/backend/target/debug/fusionplay-fnos
+# 需安装 dnslib 并填入测试机局域网接口地址
+python3 fnos/tools/test-speaker-discovery.py <local-interface-ip> "客厅" "书房"
+```
+
+[音箱选择截图](../docs/platform-previews/fnos-speaker-picker.png) · [音箱设置截图](../docs/platform-previews/fnos-speaker-assignments.png)
+
+## 绑定后调节音量曲线与玻璃边缘（2026-11-21）
+
+验证版本为 `30a1165`。在 Linux x86_64 浏览器中打开 Flutter Web 发布构建，从右下角的飞牛菜单进入音箱选择。测试后端执行实际配置读写并启动接收器子进程，音频输出使用 null。截图中的专辑封面、曲名和进度使用固定媒体数据，以便复核同一背景下的渲染。
+
+| 场景 | 观察结果 |
+|---|---|
+| 新建「桌面」实例 | 选定设备前无法保存。点击「保存绑定」后，配置文件记录了「桌面」与其 USB 输出的对应关系，新接收器报告三个协议均已启用。成功页自动选中刚绑定的设备。 |
+| 已有「书房」实例 | 从卡片再次打开曲线，保存柔和预设，刷新仍选中柔和。切至自定义，新增控制点后保存成功。 |
+| 多输出与过期页面 | 同时启用 USB 和 HDMI 的主接收器需要先选音箱。已删除的实例无法打开编辑器。后端测试覆盖重复绑定、跨实例写入和另一标签页先保存后的冲突。 |
+| 跨房间播放 | 另行以两个实际 DLNA 接收器同时解码测试音频。暂停一间后另一间仍播放，状态和封面保持独立。 |
+| 窄屏与安装包 | 在 390 × 760 浏览器中完成设备选择，页面无横向溢出。x86_64 FPK 构建、解包与版本检查通过，独立音箱网页资源逐项与源码一致。 |
+
+### 外圈对照
+
+下面的上、下两行分别来自 `c2fd275` 和 `30a1165` 的播放器截图。视口均为 1100 × 525，裁切区域为左上角 (524, 360)，宽 478、高 64 像素。相同位置的音量胶囊下缘由灰暗变为透出封面色的细边。
+
+![修改前后音量胶囊，原尺寸裁切](../docs/platform-previews/fnos-glass-rim-comparison.png)
+
+以截图左上角为原点，取半开像素区间，计算 8 位 RGB 的加权平均值 `0.2126R + 0.7152G + 0.0722B`。胶囊下缘 `x=[630,691), y=[407,411)` 从 64.1 升至 86.5。紧邻背景 `x=[630,691), y=[414,417)` 从 41.7 变为 42.7。该读数仅对应本组 CanvasKit 截图。实体 NAS 外接声卡、实际扬声器响度以及 Android Impeller 的显示效果仍需真机验证。
+
+[播放器](../docs/platform-previews/fnos-player-corner.png) · [音箱选择](../docs/platform-previews/fnos-speaker-picker.png) · [新建绑定](../docs/platform-previews/fnos-speaker-create.png) · [曲线编辑器](../docs/platform-previews/fnos-room-curve.png)
+
+### 回归命令
+
+以下命令从仓库根目录运行。浏览器测试需要 Python Playwright 及 Chromium。未设置 `CHROMIUM` 时使用 Playwright 已安装的 Chromium。
+
+```sh
+(cd flutter && flutter pub get && flutter analyze && flutter test)
+cargo test --manifest-path fnos/backend/Cargo.toml --all-targets
+CHROMIUM=/usr/bin/chromium python3 fnos/tools/test-curve-page.py
+bash fnos/tools/build-fpk.sh
+bash fnos/tools/check-fpk.sh fnos/dist/fusionplay-fnos.fpk
+python3 fnos/tools/test-speaker-instances.py fnos/backend/target/release/fusionplay-fnos
+```
+
+## 十个实例及并发投送
+
+最终测试包的 BUILD-INFO 为 `0.2.5 / 705d691`。在 Linux x86_64 上运行一个主接收器与九个独立接收器，每个接收器对应不同的逻辑输出。使用真实协议监听器、网络连接、解码器和 null 音频输出。发送内容是有已知曲名和歌词的测试音频。
+
+| 场景 | 结果 |
+|---|---|
+| 音箱选择 | Chromium 加载 10 个运行中的实例，1280 × 670 下前 8 张卡片完整可见。在 390 × 760 下滚动到第 10 个并进入编辑。自动化还覆盖了 19 张卡片和横向溢出检查。 |
+| 绑定与已占用设备 | 将「露台」改成「露台音乐」，换绑备用 USB，再保存柔和曲线。刷新后实例 ID 和播放地址保持稳定，旧 USB 的曲线仍为均衡。其他实例占用的设备在列表中禁用并标出所有者。旧页面对已变更绑定的写入返回 409。 |
+| 三协议局域网发现 | 通过 IPv4 组播收到十组可区分的 AirPlay 设备 ID 与 RTSP 端口、DLNA UDN 与描述端口、妙播设备标识、MAC、控制端口与 Lyra 端口。检查覆盖了改名后的「露台音乐」。 |
+| 10 路 DLNA | 同时通过 SOAP 投送十首 WAV，逐实例核对正在播放、曲名、歌手、DIDL 内嵌同步歌词和封面地址。暂停一个房间，其余九个继续播放。 |
+| 2 路 AirPlay 2 与 DLNA 同时播放 | 两个 pyatv 发送会话经标准临时配对建立加密连接，发送首包曲目资料、模拟网易云字段的歌词更新及音频。两个房间均报告递增的 PCM 帧数，曲名、艺人和歌词分别匹配各自发送端。同期的 DLNA 房间保持原曲与原歌词。 |
+| 同协议与混合妙播元数据 | 妙播 SDK 的媒体消息解析覆盖曲名、歌手、YRC、LRC 与纯文本。飞牛按曲目合并分批到达的妙播字段，单独补发歌词时保留原曲名，切歌时清除旧歌词。回归测试同时给两个房间输入不同的妙播元数据与 PCM，再让一个房间切换 AirPlay，验证另一房间的媒体信息、歌词和封面未被覆盖。Flutter 验证小米逐字歌词交给共用歌词组件后保留字级时间。此项使用协议事件和 PCM 回调。双小米手机及 iPhone 与小米手机的同时投送、实体 NAS 多声卡听感仍待真机验证。 |
+
+此前双路 AirPlay 2 测试中，两个房间均已解码音频，但曲名为空。发送端在 SETUP 之后、首个 RTP 音频包之前就发了元数据。此时解码器尚未初始化，旧回调直接返回。修复后，接收器按逻辑客户端保留开场元数据、封面路径及进度，在首个音频包建立播放会话时发布。客户端断开会清空待发布资料。
+
+DLNA 验证使用明确包含歌词文本的 DIDL。只发送歌词链接的控制端、未发送歌词的推送，均不在这次歌词显示的通过范围内。
+
+![十个实际运行的接收器](../docs/platform-previews/fnos-ten-speakers.png)
+
+从仓库根目录复现时，测试主机需要可用的局域网接口、空闲的接收服务端口以及 Rust 构建依赖。以下依赖仅供测试发送端使用。
+
+```sh
+cargo build --release --manifest-path fnos/backend/Cargo.toml
+python3 -m venv /tmp/fusionplay-sender
+/tmp/fusionplay-sender/bin/pip install 'pyatv==0.18.0' 'srptools==1.0.1' dnslib
+/tmp/fusionplay-sender/bin/python fnos/tools/test-speaker-instances.py fnos/backend/target/release/fusionplay-fnos --rooms 10 --airplay2
+# 对已经运行的 NAS 验证发现身份，传入测试机的局域网 IPv4 地址与投送名
+/tmp/fusionplay-sender/bin/python fnos/tools/test-speaker-discovery.py <local-ip> <name-1> <name-2> ...
+```
+
+## 2026-11-21 飞牛 DLNA 和旧界面复核
+
+此次环境为 Linux x86_64、Chromium、飞牛 Rust 服务及模拟音频输出。分别运行了共享协议核心、飞牛和 Windows 后端的 `cargo test --locked --all-targets`，三者通过数依次为 133、104 和 135。飞牛套件按既有配置跳过了两项，其中一项需要真实 ALSA 声卡。共享设置、更新和播放器地址的 25 个 Flutter 测试通过。
+
+- 8 个实例、24 个协议服务就绪后，通过本地 HTTP 和 UPnP SOAP 同时播放 8 首 WAV。各实例的曲名、歌手、歌词和封面独立。暂停一个房间后 PCM 帧数保持不变，其他七个房间仍为 PLAYING。同 URI 刷新元数据及恢复播放均未再次下载媒体。
+- 0.7 秒短曲自然结束、同曲再次播放和 HTTP 404 均经 SOAP 查询确认返回 STOPPED。另用一份 2.6 秒的 44.1 kHz MP3 对照完整请求与中途断开后续读，后者从第 42,654 字节发出 Range 请求。两次各输出 124,729 个 48 kHz 双声道 PCM 帧。设备拒绝续传或对象改变时仍会报告播放失败。
+- 两种 FPK 架构共用显式 Web 资源清单。按打包脚本复制静态资源到临时目录，用真实飞牛 HTTP 服务和 390 × 760 的 Chromium 打开带实例参数的旧音频书签。它进入音箱输出管理，修改的延迟值 32 ms 在重载后保留。旧后台脚本和样式返回 404。浏览器回归另覆盖旧概览、接收、设置、曲线链接和 19 个实例的滚动。截图中的音箱为测试配置。[主接收器输出截图](../docs/platform-previews/fnos-primary-outputs.png)
+
+复现投送和浏览器回归可在仓库根目录执行以下命令。并发实例测试需独占其协议端口。
+
+```sh
+cargo test --locked --manifest-path fnos/backend/Cargo.toml --all-targets
+ffmpeg -loglevel error -f lavfi -i 'sine=frequency=440:duration=2.6' -ar 44100 -ac 2 -b:a 256k -y /tmp/fusionplay-test.mp3
+python3 fnos/tools/test-speaker-instances.py "${CARGO_TARGET_DIR:-fnos/backend/target}/debug/fusionplay-fnos" --rooms 8 --mp3 /tmp/fusionplay-test.mp3
+CHROMIUM=/usr/bin/chromium python3 fnos/tools/test-curve-page.py
+```
+
+本次没有生成安装包。ARM64 NAS、物理音箱、手机端 QQ 音乐、网易云和 BubbleUPnP 的组合仍待真机复测。
