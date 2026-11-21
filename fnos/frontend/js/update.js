@@ -73,6 +73,8 @@ byId('pick').onclick = async () => {
   render();
   try {
     if (!location.pathname.startsWith(gateway)) throw new Error('请从飞牛桌面打开 FusionPlay，以使用 NAS 文件夹授权。');
+    byId('message').textContent = '正在打开飞牛目录选择器…';
+    await sdk.ready();
     if (sdk.isStandaloneWeb) {
       const state = Array.from(crypto.getRandomValues(new Uint32Array(4)), v => v.toString(16).padStart(8, '0')).join('');
       sessionStorage.setItem(pending, JSON.stringify({state, room}));
@@ -82,7 +84,10 @@ byId('pick').onclick = async () => {
     } else {
       const result = await sdk.pickUserFile({directory:true, title:'选择 FPK 保存目录'});
       if (result && result.code !== 0) throw new Error(result.msg || '未获得目录授权');
-      if (result?.data?.length) selected = result.data[0];
+      if (result?.data?.length) {
+        selected = result.data[0];
+        byId('message').textContent = '请确认安装包的保存位置。';
+      }
       else byId('message').textContent = '尚未选择目录。若未弹出选择器，请检查飞牛系统（1.2.0401 起）和客户端（1.34.0 起）。';
     }
   } catch (err) { showError(err); }
