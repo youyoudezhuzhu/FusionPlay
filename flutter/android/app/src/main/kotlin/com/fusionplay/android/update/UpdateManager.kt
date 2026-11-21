@@ -3,6 +3,7 @@ package com.fusionplay.android.update
 import android.content.Context
 import android.os.Handler
 import android.os.Looper
+import com.airplayreceiver.desktop.backend.FusionPlayDiagnosticLogger
 import io.flutter.plugin.common.BinaryMessenger
 import io.flutter.plugin.common.MethodCall
 import io.flutter.plugin.common.MethodChannel
@@ -23,7 +24,10 @@ import kotlinx.coroutines.launch
  *
  * 网络与文件操作都在 IO 线程执行，结果切回主线程再回给 Flutter。
  */
-class UpdateManager(private val context: Context) {
+class UpdateManager(
+    private val context: Context,
+    private val logger: FusionPlayDiagnosticLogger,
+) {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val mainHandler = Handler(Looper.getMainLooper())
     private val repository = UpdateRepository(context)
@@ -57,12 +61,16 @@ class UpdateManager(private val context: Context) {
                 selected = available
                 val downloaded = available != null && runCatching {
                     downloader.verifiedFile(available) != null
+                }.onFailure { error ->
+                    logger.write("update", "cached_apk_check", "warning", mapOf(
+                        "exception_type" to error.javaClass.name, "message" to error.message,
+                    ))
                 }.getOrDefault(false)
-                respond(result, checkMap(outcome) + ("downloaded" to downloaded))
+                respond(call.method, result, checkMap(outcome) + ("downloaded" to downloaded))
             }
             "download", "install", "downloadAndInstall" -> {
                 if (!busy.compareAndSet(false, true)) {
-                    result.success(
+                    respond(call.method, result,
                         mapOf("status" to "error", "message" to "已有更新任务正在进行中"),
                     )
                     return
@@ -75,7 +83,7 @@ class UpdateManager(private val context: Context) {
                     } finally {
                         busy.set(false)
                     }
-                    respond(result, payload)
+                    respond(call.method, result, payload)
                 }
             }
             else -> result.notImplemented()
@@ -156,7 +164,13 @@ class UpdateManager(private val context: Context) {
         )
     }
 
-    private fun respond(result: MethodChannel.Result, payload: Map<String, Any?>) {
+    private fun respond(action: String, result: MethodChannel.Result, payload: Map<String, Any?>) {
+        val status = payload["status"]
+        if (status == "error" || status == "unavailable" || status == "permission_required") {
+            logger.write("update", action, if (status == "error") "failure" else "warning", mapOf(
+                "status" to status, "message" to payload["message"],
+            ))
+        }
         mainHandler.post { runCatching { result.success(payload) } }
     }
 }
