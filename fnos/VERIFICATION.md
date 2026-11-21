@@ -386,3 +386,26 @@ GitHub Actions（tag `fnos-v0.2.3` → commit `ea29bd8`）：
 
 `fnos/fpk` 合入 `main`（fast-forward），main 上的 Android CI 将重新构建 `1.2.6` APK
 （包含妙播兼容 + AirPlay 音响身份）。CI 运行与产物哈希见发布记录。
+
+## 独立音箱与播放页（2026-11-21）
+
+环境为 Linux x86_64、Chromium、Flutter Web 发布构建和空音频后端。两只音箱分别配置为默认输出和独立输出。
+
+| 验证场景 | 结果 |
+|---|---|
+| 在同一网关下同时运行两个接收器 | 两个 AirPlay、两个 DLNA 和两个妙播接收服务进入等待状态。通过 IPv4 组播获得分开的 AirPlay 身份和端口、DLNA 设备描述与 UDN、妙播发现身份与端口。 |
+| 两只音箱同时接收不同的 DLNA 曲目 | 实际通过 SOAP 向两个接收器投送 WAV 并触发解码。播放状态返回各自曲目。通过书房播放页的接口暂停，书房报告暂停，客厅仍报告播放。 |
+| 封面、控制与失效链接 | 从两个状态目录请求相同文件名时，各自返回所属实例的数据。删除或停用的实例拒绝控制请求。全部声卡分配给独立音箱后，首页的默认目标随实例目录更新。 |
+| 两个浏览器标签页 | 使用测试媒体分别展示两首歌曲，两次暂停请求发往各自实例。在其中一个标签切换音箱，另一个标签保留原目标。 |
+| 回归与硬件边界 | Flutter 全套检查运行通过，飞牛后端 88 项测试通过。需要实体 ALSA 声卡的冒烟测试跳过。iPhone、HyperOS 和真实 NAS 多声卡的听感与稳定性仍待实机验证。 |
+
+复现并发播放测试时，先构建飞牛后端，再运行下列命令。组播检查需要一台正在运行两个接收器的测试主机，两个名称应与配置中的投送名称一致。
+
+```bash
+cargo build --manifest-path fnos/backend/Cargo.toml
+python3 fnos/tools/test-speaker-instances.py fnos/backend/target/debug/fusionplay-fnos
+# 需安装 dnslib 并填入测试机局域网接口地址
+python3 fnos/tools/test-speaker-discovery.py <local-interface-ip> "客厅" "书房"
+```
+
+[音箱选择截图](../docs/platform-previews/fnos-speaker-picker.png) · [音箱设置截图](../docs/platform-previews/fnos-speaker-assignments.png)
