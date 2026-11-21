@@ -52,6 +52,29 @@ button:hover:not(:disabled),a.button:hover {background:#ffffff24}
 .controls{display:flex;flex-direction:column;gap:14px}.modes{display:grid;grid-template-columns:1fr 1fr;gap:7px}.modes button{border-radius:12px}.modes [aria-pressed=true]{color:#17191d;background:#f2f2f5}
 .response{margin-top:auto}.response output{display:block;font-size:clamp(22px,2.6vw,32px);font-variant-numeric:tabular-nums}
 input[type=range]{width:100%;accent-color:var(--accent);cursor:pointer}
+/* Keep the native input for hit testing, keyboard and accessibility. The
+   sibling lens samples the track underneath it in the browser compositor. */
+.probe-slider{position:relative;--fraction:.5;min-height:40px;display:grid;align-items:center}
+.probe-slider input{margin:0;min-height:40px}
+.probe-track,.probe-lens{display:none;pointer-events:none}
+@supports (backdrop-filter:url(#lens)){
+  @media not (prefers-reduced-transparency:reduce){
+    html:not(.solid-surfaces) .probe-slider:has(.probe-lens[style]) input{opacity:0}
+    html:not(.solid-surfaces) .probe-slider:has(.probe-lens[style]) .probe-track{
+      display:block;position:absolute;inset-inline:10px;height:6px;border-radius:3px;
+      background:linear-gradient(to right,#ffffffce calc(var(--fraction)*100%),#ffffff30 0)}
+    html:not(.solid-surfaces) .probe-lens{display:block;visibility:hidden;position:absolute;top:50%;
+      left:calc(10px + (100% - 20px)*var(--fraction));width:20px;height:17px;
+      transform:translate(-50%,-50%);border-radius:999px;border:1px solid #ffffff65;
+      background:#ffffff38;backdrop-filter:var(--surface-lens);transition:width 100ms,height 100ms}
+    html:not(.solid-surfaces) .probe-lens[style]{visibility:visible}
+    html:not(.solid-surfaces) .probe-slider:active .probe-lens,
+    html:not(.solid-surfaces) .probe-slider:focus-within .probe-lens{width:26px;height:21px}
+    .probe-slider:has(input:focus-visible){outline:2px solid white;outline-offset:2px;border-radius:12px}
+  }
+}
+@media(prefers-reduced-motion:reduce){.probe-slider .probe-lens[style]{transition:none!important}}
+@media(forced-colors:active){.probe-slider input{opacity:1!important}.probe-slider span{display:none!important}}
 .plot{align-self:center;min-width:0}.axis{margin-left:8px}.x-axis{text-align:right}
 canvas{display:block;width:100%;height:clamp(170px,30vh,310px);touch-action:none}
 .editor-foot,#custom{grid-column:1/-1}.editor-foot{border-top:1px solid var(--border);padding-top:16px;justify-content:space-between}

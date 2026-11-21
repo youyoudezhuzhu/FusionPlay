@@ -10,6 +10,8 @@ import '../models/app_state.dart';
 import '../theme/fusion_theme.dart';
 import 'g2_shape.dart';
 import 'remote_focus.dart';
+import 'liquid_glass.dart';
+import 'glass_backdrop.dart';
 import 'update_dialogs.dart';
 import 'vector_icon.dart';
 
@@ -1007,6 +1009,14 @@ class _G2SettingsSwitch extends StatelessWidget {
                 SettingsStyle.switchOnTrack,
                 progress,
               )!;
+              final thumb = Color.lerp(
+                _GlassStyle.switchOffThumb,
+                _GlassStyle.switchOnThumb,
+                progress,
+              )!;
+              final glassThumb =
+                  GlassAppearance.enabledOf(context) &&
+                  GlassBackdropScope.of(context) != null;
               return DecoratedBox(
                 decoration: ShapeDecoration(
                   color: trackColor,
@@ -1019,16 +1029,18 @@ class _G2SettingsSwitch extends StatelessWidget {
                     Positioned(
                       left: 4 + 20 * progress,
                       top: 4,
-                      child: DecoratedBox(
-                        decoration: ShapeDecoration(
-                          color: Color.lerp(
-                            _GlassStyle.switchOffThumb,
-                            _GlassStyle.switchOnThumb,
-                            progress,
-                          ),
-                          shape: const CircleBorder(),
-                        ),
-                        child: const SizedBox.square(dimension: 24),
+                      child: SizedBox.square(
+                        dimension: 24,
+                        child: glassThumb
+                            ? LiquidGlass.droplet(
+                                tint: thumb.withValues(alpha: .46),
+                              )
+                            : DecoratedBox(
+                                decoration: ShapeDecoration(
+                                  color: thumb,
+                                  shape: const CircleBorder(),
+                                ),
+                              ),
                       ),
                     ),
                   ],

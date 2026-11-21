@@ -244,6 +244,7 @@
     }
     function probe() {
       const x = Number($('probe').value);
+      $('probe').parentElement.style.setProperty('--fraction', x / 100);
       const y = FP.curve.outputAt(curve.kind, curve.points, x / 100);
       $('readout').textContent = x + '% → ' + Math.round(y * 100) + '%';
     }

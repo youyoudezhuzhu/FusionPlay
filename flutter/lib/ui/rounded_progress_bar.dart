@@ -4,6 +4,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import 'g2_shape.dart';
+import 'glass_backdrop.dart';
+import 'liquid_glass.dart';
 import 'remote_focus.dart';
 
 class RoundedProgressBar extends StatefulWidget {
@@ -18,6 +20,8 @@ class RoundedProgressBar extends StatefulWidget {
     required this.onChanged,
     this.seekEnabled,
     this.showThumb = true,
+    this.refractiveThumb = true,
+    this.onChangeCancel,
     this.focusBorderColor = Colors.black,
     this.focusNode,
     this.upFocusNode,
@@ -32,6 +36,8 @@ class RoundedProgressBar extends StatefulWidget {
   final ValueChanged<double> onChanged;
   final bool? seekEnabled;
   final bool showThumb;
+  final bool refractiveThumb;
+  final VoidCallback? onChangeCancel;
   final Color focusBorderColor;
   final FocusNode? focusNode;
   final FocusNode? upFocusNode;
@@ -60,15 +66,18 @@ class _RoundedProgressBarState extends State<RoundedProgressBar> {
     if (!interactionEnabled) touching = false;
   }
 
-  void update(Offset local, double width) {
+  void update(Offset local, double width, double inset) {
     if (!interactionEnabled || width <= 0) return;
-    const thumbRadius = 8.0;
-    final usableWidth = math.max(1.0, width - thumbRadius * 2);
-    final next = ((local.dx - thumbRadius) / usableWidth)
-        .clamp(0, 1)
-        .toDouble();
+    final usableWidth = math.max(1.0, width - inset * 2);
+    final next = ((local.dx - inset) / usableWidth).clamp(0, 1).toDouble();
     setState(() => dragging = next);
     widget.onChanged(next);
+  }
+
+  void cancelDrag() {
+    if (dragging == null) return;
+    setState(() => dragging = null);
+    widget.onChangeCancel?.call();
   }
 
   void adjust(double delta) {
@@ -85,6 +94,18 @@ class _RoundedProgressBarState extends State<RoundedProgressBar> {
     builder: (context, constraints) {
       final value = (dragging ?? widget.value).clamp(0.0, 1.0);
       final highlighted = focused || touching;
+      final glassThumb =
+          widget.showThumb &&
+          widget.refractiveThumb &&
+          GlassAppearance.enabledOf(context) &&
+          GlassBackdropScope.of(context) != null;
+      final inset = math.min(glassThumb ? 14.0 : 8.0, constraints.maxWidth / 2);
+      final active = widget.enabled
+          ? widget.activeColor
+          : widget.activeColor.withValues(alpha: widget.activeColor.a * .38);
+      final inactive = widget.enabled
+          ? widget.inactiveColor
+          : widget.inactiveColor.withValues(alpha: widget.inactiveColor.a * .5);
       final reduceMotion =
           MediaQuery.maybeOf(context)?.disableAnimations ?? false;
       return RemoteFocusFrame(
@@ -143,7 +164,7 @@ class _RoundedProgressBarState extends State<RoundedProgressBar> {
               behavior: HitTestBehavior.opaque,
               onTapDown: interactionEnabled
                   ? (e) {
-                      update(e.localPosition, constraints.maxWidth);
+                      update(e.localPosition, constraints.maxWidth, inset);
                       widget.onChangeStart?.call(dragging ?? value);
                     }
                   : null,
@@ -155,13 +176,15 @@ class _RoundedProgressBarState extends State<RoundedProgressBar> {
                   : null,
               onHorizontalDragStart: interactionEnabled
                   ? (e) {
-                      update(e.localPosition, constraints.maxWidth);
+                      update(e.localPosition, constraints.maxWidth, inset);
                       widget.onChangeStart?.call(dragging ?? value);
                     }
                   : null,
               onHorizontalDragUpdate: interactionEnabled
-                  ? (e) => update(e.localPosition, constraints.maxWidth)
+                  ? (e) => update(e.localPosition, constraints.maxWidth, inset)
                   : null,
+              onTapCancel: cancelDrag,
+              onHorizontalDragCancel: cancelDrag,
               onHorizontalDragEnd: interactionEnabled
                   ? (_) {
                       widget.onChangeEnd?.call(dragging ?? value);
@@ -170,22 +193,59 @@ class _RoundedProgressBarState extends State<RoundedProgressBar> {
                   : null,
               child: SizedBox(
                 height: RoundedProgressBar.hitHeight,
-                child: CustomPaint(
-                  painter: _ProgressPainter(
-                    value: value,
-                    active: widget.enabled
-                        ? widget.activeColor
-                        : widget.activeColor.withValues(
-                            alpha: widget.activeColor.a * .38,
+                child: LayoutBuilder(
+                  builder: (context, bounds) {
+                    final span = bounds.maxWidth - 2 * inset;
+                    final travel = span * value;
+                    final width = math.min(
+                      bounds.maxWidth,
+                      20 + 8 * focusProgress,
+                    );
+                    final height = math.min(
+                      bounds.maxHeight,
+                      17 + 5 * focusProgress,
+                    );
+                    final trackHeight = 6 + 2 * focusProgress;
+                    final trackColor = Color.lerp(
+                      inactive,
+                      active,
+                      .24 * focusProgress,
+                    )!;
+                    return Stack(
+                      fit: StackFit.expand,
+                      children: [
+                        CustomPaint(
+                          painter: _ProgressPainter(
+                            value: value,
+                            active: active,
+                            inactive: trackColor,
+                            showThumb: widget.showThumb && !glassThumb,
+                            inset: inset,
+                            focusProgress: focusProgress,
                           ),
-                    inactive: widget.enabled
-                        ? widget.inactiveColor
-                        : widget.inactiveColor.withValues(
-                            alpha: widget.inactiveColor.a * .5,
+                        ),
+                        if (glassThumb)
+                          Positioned(
+                            left: inset + travel - width / 2,
+                            top: (bounds.maxHeight - height) / 2,
+                            width: width,
+                            height: height,
+                            child: IgnorePointer(
+                              child: LiquidGlass.droplet(
+                                key: const ValueKey('volume-droplet'),
+                                rail: (
+                                  start: -travel,
+                                  end: span - travel,
+                                  height: trackHeight,
+                                  active: active,
+                                  inactive: trackColor,
+                                ),
+                              ),
+                            ),
                           ),
-                    showThumb: widget.showThumb,
-                    focusProgress: focusProgress,
-                  ),
+                      ],
+                    );
+                  },
                 ),
               ),
             ),
@@ -203,23 +263,25 @@ class _ProgressPainter extends CustomPainter {
     required this.inactive,
     required this.showThumb,
     required this.focusProgress,
+    required this.inset,
   });
   final double value;
   final Color active;
   final Color inactive;
   final bool showThumb;
   final double focusProgress;
+  final double inset;
 
   @override
   void paint(Canvas canvas, Size size) {
     final y = size.height / 2;
     final thumbRadius = 8 + 2 * focusProgress;
-    final trackStart = math.min(thumbRadius, size.width / 2);
-    final trackEnd = math.max(trackStart, size.width - thumbRadius);
+    final trackStart = inset;
+    final trackEnd = math.max(trackStart, size.width - inset);
     final trackWidth = trackEnd - trackStart;
     final trackHeight = 6 + 2 * focusProgress;
     final inactivePaint = Paint()
-      ..color = Color.lerp(inactive, active, .24 * focusProgress)!
+      ..color = inactive
       ..strokeWidth = trackHeight
       ..strokeCap = StrokeCap.round;
     canvas.drawLine(Offset(trackStart, y), Offset(trackEnd, y), inactivePaint);
@@ -245,6 +307,7 @@ class _ProgressPainter extends CustomPainter {
 
   @override
   bool shouldRepaint(_ProgressPainter old) =>
+      old.inset != inset ||
       old.value != value ||
       old.active != active ||
       old.inactive != inactive ||

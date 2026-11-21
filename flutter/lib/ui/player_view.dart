@@ -705,6 +705,7 @@ class _PlayerViewState extends State<PlayerView> {
   }
 
   Widget _chip(String text) => LiquidGlass(
+    interactive: true,
     level: GlassLevel.card,
     borderRadius: 999,
     forceFallback: widget.forceGlassFallback,
@@ -936,6 +937,8 @@ class _PlayerViewState extends State<PlayerView> {
                   enabled: widget.volumeEnabled,
                   seekEnabled: widget.volumeEnabled,
                   showThumb: true,
+                  refractiveThumb: !widget.forceGlassFallback,
+                  onChangeCancel: () => setState(() => _volumeDrag = null),
                   focusNode: _volumeFocus,
                   upFocusNode: _playEnabled ? _playPauseFocus : null,
                   focusBorderColor: Colors.white,
@@ -1172,6 +1175,10 @@ class _PlayerViewState extends State<PlayerView> {
                 enabled: duration > 0,
                 seekEnabled: _seekable,
                 showThumb: false,
+                onChangeCancel: () => setState(() {
+                  seeking = false;
+                  seekPositionMs = null;
+                }),
                 focusNode: _progressFocus,
                 upFocusNode: _menuVisible ? _menuFocus : null,
                 downFocusNode: _playEnabled ? _playPauseFocus : null,

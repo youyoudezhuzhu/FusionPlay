@@ -531,7 +531,7 @@ class _FusionMorphOverlayState extends State<FusionMorphOverlay>
             child: LiquidGlass(
               key: const ValueKey('morph-container'),
               level: GlassLevel.panel,
-              interactive: false,
+              interactive: true,
               borderRadius: radius,
               blurSigma:
                   20 + (FusionGlassColors.panelBlur - 20) * settingsAmount,

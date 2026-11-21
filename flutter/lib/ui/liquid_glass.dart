@@ -112,6 +112,15 @@ class GlassSpec {
   };
 }
 
+/// Track segment in the moving lens's local coordinates, relative to its centre.
+typedef GlassLensRail = ({
+  double start,
+  double end,
+  double height,
+  Color active,
+  Color inactive,
+});
+
 /// Liquid-glass surface with real screen-space refraction.
 ///
 /// When a [GlassBackdropScope] is available, the surface samples its captured,
@@ -124,9 +133,8 @@ class GlassSpec {
 /// the stable `BackdropFilter` frosted path. The fallback is marked as such and
 /// is not claimed to be refractive.
 ///
-/// Dynamic highlights are pointer/press driven only: pointer events update a
-/// [ValueNotifier] consumed by a [CustomPaint], so no ticker/setState runs
-/// while idle or during animations.
+/// Pointer pressure updates only the optical and sheen painters. A short
+/// release animation settles the lens, then the material stays idle.
 class LiquidGlass extends StatefulWidget {
   const LiquidGlass({
     super.key,
@@ -141,11 +149,29 @@ class LiquidGlass extends StatefulWidget {
     this.specular,
     this.thickness,
     this.absorption = 0.35,
+    this.lensPower = 0,
+    this.rail,
     this.animate = false,
     this.forceFallback = false,
     this.padding,
     this.clipBehavior = Clip.antiAlias,
   });
+
+  const LiquidGlass.droplet({
+    Key? key,
+    GlassLensRail? rail,
+    Color tint = const Color(0x45FFFFFF),
+  }) : this(
+         key: key,
+         borderRadius: 999,
+         refraction: .78,
+         thickness: 4,
+         specular: .42,
+         lensPower: .57,
+         tint: tint,
+         rail: rail,
+         child: const SizedBox.expand(),
+       );
 
   final Widget child;
 
@@ -180,6 +206,10 @@ class LiquidGlass extends StatefulWidget {
   /// Beer-Lambert-style bottom/right edge darkening, 0..1.
   final double absorption;
 
+  /// Fraction of the distance toward the lens centre sampled through its dome.
+  final double lensPower;
+  final GlassLensRail? rail;
+
   /// Reserved for future animated caustics; the current material is static.
   final bool animate;
 
@@ -195,29 +225,50 @@ class LiquidGlass extends StatefulWidget {
 
 @immutable
 class _Sheen {
-  const _Sheen({this.pointer, this.pressed = false});
+  const _Sheen([this.pointer, this.pressure = 0]);
 
   final Offset? pointer;
-  final bool pressed;
-
-  _Sheen copyWith({Offset? pointer, bool? pressed, bool clear = false}) =>
-      _Sheen(
-        pointer: clear ? null : (pointer ?? this.pointer),
-        pressed: pressed ?? this.pressed,
-      );
+  final double pressure;
 }
 
-class _LiquidGlassState extends State<LiquidGlass> {
+class _LiquidGlassState extends State<LiquidGlass>
+    with SingleTickerProviderStateMixin {
   final ValueNotifier<_Sheen> _sheen = ValueNotifier(const _Sheen());
+  AnimationController? _release;
+
+  void _decay() {
+    final pressure = _release!.value;
+    _sheen.value = pressure == 0
+        ? const _Sheen()
+        : _Sheen(_sheen.value.pointer, pressure);
+  }
 
   @override
   void dispose() {
+    _release?.dispose();
     _sheen.dispose();
     super.dispose();
   }
 
-  void _pointer(Offset local, {bool? pressed}) {
-    _sheen.value = _sheen.value.copyWith(pointer: local, pressed: pressed);
+  void _pointer(Offset local, double strength) {
+    _release?.stop();
+    _sheen.value = _Sheen(local, strength);
+  }
+
+  void _lift() {
+    if (_sheen.value.pointer == null || (_release?.isAnimating ?? false)) {
+      return;
+    }
+    if (MediaQuery.disableAnimationsOf(context)) {
+      _sheen.value = const _Sheen();
+      return;
+    }
+    final release = _release ??= (AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 150),
+    )..addListener(_decay));
+    release.value = _sheen.value.pressure;
+    release.animateTo(0, curve: Curves.easeOutCubic);
   }
 
   @override
@@ -246,6 +297,9 @@ class _LiquidGlassState extends State<LiquidGlass> {
         absorption: widget.absorption,
         blur: blur,
         frostLiveFace: spec == GlassSpec.panel,
+        lensPower: widget.lensPower,
+        rail: widget.rail,
+        contact: _sheen,
       );
     } else {
       body = BackdropFilter(
@@ -305,13 +359,13 @@ class _LiquidGlassState extends State<LiquidGlass> {
 
     return Listener(
       behavior: HitTestBehavior.translucent,
-      onPointerDown: (event) => _pointer(event.localPosition, pressed: true),
-      onPointerMove: (event) => _pointer(event.localPosition),
-      onPointerUp: (_) => _sheen.value = const _Sheen(),
-      onPointerCancel: (_) => _sheen.value = const _Sheen(),
+      onPointerDown: (event) => _pointer(event.localPosition, 1),
+      onPointerMove: (event) => _pointer(event.localPosition, 1),
+      onPointerUp: (_) => _lift(),
+      onPointerCancel: (_) => _lift(),
       child: MouseRegion(
-        onHover: (event) => _pointer(event.localPosition),
-        onExit: (_) => _sheen.value = _sheen.value.copyWith(clear: true),
+        onHover: (event) => _pointer(event.localPosition, .28),
+        onExit: (_) => _lift(),
         child: surface,
       ),
     );
@@ -333,6 +387,9 @@ class _RefractiveSurface extends StatefulWidget {
     required this.absorption,
     required this.blur,
     required this.frostLiveFace,
+    required this.lensPower,
+    required this.rail,
+    required this.contact,
   });
 
   final GlassBackdropTexture backdrop;
@@ -343,13 +400,17 @@ class _RefractiveSurface extends StatefulWidget {
   final double absorption;
   final double blur;
   final bool frostLiveFace;
+  final double lensPower;
+  final GlassLensRail? rail;
+  final ValueListenable<_Sheen> contact;
 
   @override
   State<_RefractiveSurface> createState() => _RefractiveSurfaceState();
 }
 
 class _RefractiveSurfaceState extends State<_RefractiveSurface> {
-  static Future<ui.FragmentProgram?>? _programFuture;
+  static Future<ui.FragmentProgram>? _programFuture;
+  static ui.FragmentProgram? _program;
 
   final GlobalKey _key = GlobalKey(debugLabel: 'refractive-glass-surface');
   ui.FragmentShader? _shader;
@@ -357,7 +418,12 @@ class _RefractiveSurfaceState extends State<_RefractiveSurface> {
   @override
   void initState() {
     super.initState();
-    _loadShader();
+    final ready = _program;
+    if (ready != null) {
+      _shader = ready.fragmentShader();
+    } else {
+      _loadShader();
+    }
   }
 
   Future<void> _loadShader() async {
@@ -365,7 +431,8 @@ class _RefractiveSurfaceState extends State<_RefractiveSurface> {
       final program = await (_programFuture ??= ui.FragmentProgram.fromAsset(
         'shaders/liquid_glass_refraction.frag',
       ));
-      if (!mounted || program == null) return;
+      _program = program;
+      if (!mounted) return;
       setState(() => _shader = program.fragmentShader());
     } catch (error) {
       debugPrint('FusionPlay glass shader unavailable, using blur: $error');
@@ -400,6 +467,9 @@ class _RefractiveSurfaceState extends State<_RefractiveSurface> {
               shader: shader,
               backdrop: widget.backdrop,
               surfaceKey: _key,
+              lensPower: widget.lensPower,
+              rail: widget.rail,
+              contact: widget.contact,
               borderRadius: widget.borderRadius,
               refraction: widget.refraction,
               specular: widget.specular,
@@ -417,16 +487,22 @@ class _RefractionPainter extends CustomPainter {
     required this.shader,
     required this.backdrop,
     required this.surfaceKey,
+    required this.lensPower,
+    required this.rail,
+    required this.contact,
     required this.borderRadius,
     required this.refraction,
     required this.specular,
     required this.thickness,
     required this.absorption,
-  });
+  }) : super(repaint: contact);
 
   final ui.FragmentShader shader;
   final GlassBackdropTexture backdrop;
   final GlobalKey surfaceKey;
+  final double lensPower;
+  final GlassLensRail? rail;
+  final ValueListenable<_Sheen> contact;
   final double borderRadius;
   final double refraction;
   final double specular;
@@ -442,6 +518,9 @@ class _RefractionPainter extends CustomPainter {
     final axisY = box.localToGlobal(const Offset(0, 1)) - origin;
     if (!origin.isFinite || !axisX.isFinite || !axisY.isFinite) return;
     final texture = backdrop;
+    final state = contact.value;
+    final pointer = state.pointer ?? Offset.zero;
+    final track = rail;
     shader
       ..setFloat(0, size.width)
       ..setFloat(1, size.height)
@@ -459,13 +538,32 @@ class _RefractionPainter extends CustomPainter {
       ..setFloat(13, axisX.dy)
       ..setFloat(14, axisY.dx)
       ..setFloat(15, axisY.dy)
-      ..setFloat(16, kIsWeb ? 1 : 0);
+      ..setFloat(16, kIsWeb && track == null ? 1 : 0)
+      ..setFloat(17, pointer.dx)
+      ..setFloat(18, pointer.dy)
+      ..setFloat(19, state.pressure)
+      ..setFloat(20, lensPower)
+      ..setFloat(21, track?.start ?? 0)
+      ..setFloat(22, track?.end ?? 0)
+      ..setFloat(23, track?.height ?? 0);
+    void setColor(int index, Color color) {
+      shader
+        ..setFloat(index, color.r)
+        ..setFloat(index + 1, color.g)
+        ..setFloat(index + 2, color.b)
+        ..setFloat(index + 3, color.a);
+    }
+
+    setColor(24, track?.active ?? Colors.transparent);
+    setColor(28, track?.inactive ?? Colors.transparent);
     shader.setImageSampler(0, texture.image);
     canvas.drawRect(Offset.zero & size, Paint()..shader = shader);
   }
 
   @override
   bool shouldRepaint(_RefractionPainter oldDelegate) =>
+      oldDelegate.lensPower != lensPower ||
+      oldDelegate.rail != rail ||
       oldDelegate.shader != shader ||
       oldDelegate.backdrop != backdrop ||
       oldDelegate.surfaceKey != surfaceKey ||
@@ -512,8 +610,11 @@ class _GlassPaint extends CustomPainter {
     // 2. Dynamic specular highlight: follows the pointer; brightens on press.
     final state = sheen.value;
     final pointer = state.pointer;
-    final intensity = (spec.sheenAlpha * strength * (state.pressed ? .8 : .5))
-        .clamp(0.0, .15);
+    final intensity =
+        (spec.sheenAlpha * strength * (.35 + .45 * state.pressure)).clamp(
+          0.0,
+          .15,
+        );
     if (pointer != null && intensity > .001) {
       final radius = size.shortestSide * 1.25;
       final paint = Paint()

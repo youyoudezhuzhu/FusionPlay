@@ -2,6 +2,7 @@ import 'dart:io';
 import 'dart:typed_data';
 import 'dart:ui' as ui;
 
+import 'package:flutter/foundation.dart' show listEquals;
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -56,7 +57,11 @@ class _GridPainter extends CustomPainter {
   bool shouldRepaint(covariant CustomPainter oldDelegate) => false;
 }
 
-Widget _host({double? refraction, required GlobalKey boundaryKey}) {
+Widget _host({
+  double? refraction,
+  bool interactive = false,
+  required GlobalKey boundaryKey,
+}) {
   return MaterialApp(
     debugShowCheckedModeBanner: false,
     home: RepaintBoundary(
@@ -72,6 +77,8 @@ Widget _host({double? refraction, required GlobalKey boundaryKey}) {
               level: GlassLevel.control,
               borderRadius: 72,
               refraction: refraction,
+              interactive: interactive,
+              specular: interactive ? 0 : null,
               child: const SizedBox.expand(),
             ),
           ),
@@ -136,6 +143,41 @@ void main() {
   setUpAll(
     () => Directory('/tmp/fusionplay-preview').createSync(recursive: true),
   );
+  testWidgets('pressing clear glass bends the scene and release restores it', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(640, 420);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    final key = GlobalKey();
+    await tester.pumpWidget(_host(boundaryKey: key, interactive: true));
+    final idle = await _captureRgba(tester, key);
+    final finger = await tester.startGesture(const Offset(327, 215));
+    final pressed = await _captureRgba(tester, key);
+    await finger.up();
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 200));
+    final released = await _captureRgba(tester, key);
+    // At 2x the shader's 56 logical pixel contact radius spans 112 pixels.
+    int darkened = 0;
+    int outside = 0;
+    for (int y = 0; y < 840; y++) {
+      for (int x = 0; x < 1280; x++) {
+        final index = (y * 1280 + x) * 4;
+        if (idle[index] - pressed[index] <= 40) continue;
+        final dx = x - 654, dy = y - 430;
+        if (dx * dx + dy * dy < 114 * 114) {
+          darkened++;
+        } else {
+          outside++;
+        }
+      }
+    }
+    expect(darkened, greaterThan(100));
+    expect(outside, 0);
+    expect(listEquals(released, idle), isTrue);
+  });
   testWidgets('real liquid glass refracts a high-contrast backdrop', (
     tester,
   ) async {

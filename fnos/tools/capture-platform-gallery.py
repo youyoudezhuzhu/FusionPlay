@@ -224,6 +224,22 @@ with tempfile.TemporaryDirectory() as work:
             ("outputs", "default", "#outputs-form"),
         ]:
             html(section, "speakers.html?instance=" + room + "#" + section, sel)
+            if section == "curve":
+                probe = page.locator("#probe")
+                thumb = page.locator(".probe-lens")
+                stripes = page.add_style_tag(content="""
+                  .probe-slider {background:repeating-linear-gradient(to right,#182944 0 6px,#c2e4ff 6px 11px)}
+                """)
+                for target in ["Home", "End"]:
+                    probe.press(target)
+                    page.wait_for_timeout(350)
+                    bent = Image.open(BytesIO(thumb.screenshot())).convert("RGB")
+                    thumb.evaluate("e=>e.style.backdropFilter='none'")
+                    flat = Image.open(BytesIO(thumb.screenshot())).convert("RGB")
+                    thumb.evaluate("e=>e.style.removeProperty('backdrop-filter')")
+                    diff = ImageStat.Stat(ImageChops.difference(bent, flat)).mean
+                    assert max(diff) > 2, (target, diff)
+                stripes.evaluate("e=>e.remove()")
             if section == "edit":
                 page.locator("#remove-instance").click()
                 expect(page.locator("dialog")).to_be_visible()
@@ -246,6 +262,15 @@ with tempfile.TemporaryDirectory() as work:
             return Image.open(BytesIO(lens.screenshot())).convert("RGB")
 
         a = raster()
+        bounds = lens.bounding_box()
+        page.mouse.move(bounds["x"] + bounds["width"]/2, bounds["y"] + bounds["height"]/2)
+        page.mouse.down()
+        pressed = raster()
+        page.mouse.up()
+        restored = raster()
+        center = (24, 24, a.width - 24, a.height - 24)
+        assert ImageChops.difference(a, pressed).crop(center).getbbox(), "no contact displacement"
+        assert ImageChops.difference(a, restored).getbbox() is None, "contact did not settle"
         lens.evaluate("e=>e.style.setProperty('--surface-lens','brightness(1)')")
         delta = ImageChops.difference(a, raster())
         w, h = delta.size

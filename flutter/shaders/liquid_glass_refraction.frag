@@ -20,6 +20,12 @@ uniform float uAbsorption;
 uniform vec2 uAxisX;
 uniform vec2 uAxisY;
 uniform float uLiveFace;
+uniform vec2 uContact;
+uniform float uPressure;
+uniform float uLensPower;
+uniform vec3 uRail; // start X, end X relative to lens centre, drawn height
+uniform vec4 uActive;
+uniform vec4 uInactive;
 
 uniform sampler2D uBackdrop;
 
@@ -60,7 +66,12 @@ void main() {
   float edge = 1.0 - clamp(-sdf / thickness, 0.0, 1.0);
   float bevel = edge * edge * (3.0 - 2.0 * edge);
 
-  if (uLiveFace > 0.5 && bevel == 0.0) {
+  vec2 fromTouch = local - uContact;
+  float reach = clamp(radiusPx * 1.7, 16.0, 56.0);
+  float contact = uPressure * (1.0 - smoothstep(0.0, reach, length(fromTouch)));
+  vec2 normalized = p / halfSize;
+  float dome = uLensPower > 0.0 ? sqrt(max(0.0, 1.0 - dot(normalized, normalized))) : 0.0;
+  if (uLiveFace > 0.5 && bevel == 0.0 && contact == 0.0 && uLensPower == 0.0) {
     fragColor = vec4(0.0);
     return;
   }
@@ -68,7 +79,10 @@ void main() {
   // Displace the actual captured backdrop toward the rim. The further inside
   // the bevel, the larger the physical path length through the glass.
   float bendPx = thickness * 0.85 * uRefraction * bevel;
-  vec2 displacedLocal = local + normal * bendPx;
+  vec2 displacedLocal = local;
+  if (uRefraction > 0.0) {
+    displacedLocal += normal * bendPx - p * (uLensPower * dome) - fromTouch * (0.30 * contact);
+  }
   vec2 globalLogical = uOrigin + uAxisX * displacedLocal.x + uAxisY * displacedLocal.y;
 
   // Convert global logical pixels to captured texture UV.
@@ -83,6 +97,21 @@ void main() {
         max(imagePx, vec2(1.0));
     color.r = texture(uBackdrop, clamp(uv + caOffset, vec2(0.001), vec2(0.999))).r;
     color.b = texture(uBackdrop, clamp(uv - caOffset, vec2(0.001), vec2(0.999))).b;
+  }
+
+  // The rail is drawn above the captured scene. Reconstruct its two round
+  // strokes at the same bent sample point so the lens magnifies both layers.
+  if (uRail.z > 0.0) {
+    vec2 samplePoint = displacedLocal - halfSize;
+    float inactiveX = clamp(samplePoint.x, uRail.x, uRail.y);
+    float activeX = clamp(samplePoint.x, uRail.x, 0.0);
+    float radius = uRail.z * 0.5;
+    float a = 1.0 - smoothstep(radius - 0.5, radius + 0.5,
+        length(samplePoint - vec2(inactiveX, 0.0)));
+    float b = 1.0 - smoothstep(radius - 0.5, radius + 0.5,
+        length(samplePoint - vec2(activeX, 0.0)));
+    color = mix(color, uInactive.rgb, a * uInactive.a);
+    if (uRail.x < 0.0) color = mix(color, uActive.rgb, b * uActive.a);
   }
 
   // Light traverses a thicker section in the body of the lens.
@@ -103,7 +132,7 @@ void main() {
     // darker capture, even where the two optical samples are identical.
     vec2 straight = (uOrigin + uAxisX * local.x + uAxisY * local.y) * dpr / max(imagePx, vec2(1.0));
     vec3 base = texture(uBackdrop, clamp(straight, vec2(0.001), vec2(0.999))).rgb;
-    vec3 delta = (color - base) * bevel;
+    vec3 delta = (color - base) * max(bevel, max(contact, uLensPower > 0.0 ? dome : 0.0));
     vec3 coverage = max(delta / max(vec3(0.001), 1.0 - base),
                        -delta / max(vec3(0.001), base));
     float alpha = clamp(max(coverage.r, max(coverage.g, coverage.b)), 0.0, 1.0);
