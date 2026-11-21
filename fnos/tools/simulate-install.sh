@@ -118,6 +118,8 @@ timeout 120 /bin/bash "$WORK/cmd/install_init" > "$SANDBOX/install_init.log" 2>&
 sim_eq "0" "$?" "install_init 返回 0"
 timeout 120 /bin/bash "$WORK/cmd/install_callback" > "$SANDBOX/install_callback.log" 2>&1
 sim_eq "0" "$?" "install_callback 返回 0"
+sim_eq "3" "$(status_code)" "启用前服务保持停止"
+sim_eq "0" "$(sim_port_listeners "$PORT")" "安装回调为系统的端口预检保留空闲端口"
 run_main start; sim_eq "0" "$?" "main start 返回 0（启动成功判据 = /healthz 通过）"
 
 echo

@@ -142,17 +142,14 @@ SIM_PORT=18999 FUSIONPLAY_AUDIO_BACKEND=alsa ./fnos/tools/simulate-install.sh fn
 ./fnos/tools/simulate-upgrade.sh fnos/dist/fusionplay-fnos.fpk 0.1.7
 ```
 
-做法：把 `fnos/backend` 复制到临时目录，只把临时副本的 crate version +1 重新编译，
-再用 fnpack 把旧包 repack 成新版本测试包（manifest / BUILD-INFO 同步），跑两个场景：
+使用正式发布的 0.2.5 FPK 与本次新包做双包测试。单参数模式从 GitHub 获取基线并校验固定 SHA-256，双参数模式支持离线验证。
 
-1. **正常升级**：旧包安装并启动 → 替换 `TRIM_APPDEST` 代码 + 新 cmd → `upgrade_init`
-   （断言端口释放、PID/socket 删除、旧进程退出）→ `upgrade_callback`
-   （断言 `/healthz` 报**新**版本、`/proc/<pid>/exe` 哈希 = 新二进制、配置保留、PID 变化、只有 1 个进程）。
-2. **孤儿进程升级**：手动删掉 PID 文件但旧进程仍占端口 → `upgrade_init` 仍必须按精确路径/端口
-   清掉它 → `upgrade_callback` 拉起新版本。
+```bash
+./fnos/tools/simulate-upgrade.sh /path/to/old.fpk /path/to/new.fpk
+```
 
-注意：变体构建会短暂复用 `fnos/backend/target`（cargo 自身有锁），脚本结束前会重新构建真实版本，
-避免影响后续 `build-fpk.sh`。CI 里该步骤约多花 1 分钟。
+覆盖运行中升级、丢失或复用 PID、已停用升级及端口被其他程序占用。按前置钩子、文件替换、后置钩子、应用中心端口预检及启动的顺序执行，验证新进程、双入口健康状态及持久化数据。本项目保留上一发布包的 glibc 兼容范围。可通过 `FPK_BACKEND_BIN` 提供在兼容 Linux 工具链上独立构建的 release 后台，仍会执行版本和包内容检查。
+
 
 ## 8. GitHub Actions（`.github/workflows/build-fnos.yml`）
 
@@ -161,7 +158,7 @@ SIM_PORT=18999 FUSIONPLAY_AUDIO_BACKEND=alsa ./fnos/tools/simulate-install.sh fn
 - `workflow_dispatch`：手动出包。
 - push tag `fnos-*`：出包并附到 GitHub Release。
 
-步骤（ubuntu-latest，job 超时 90 分钟）：
+步骤（ubuntu-22.04，job 超时 90 分钟）：
 
 1. `apt-get install libasound2-dev pkg-config build-essential cmake curl tar iproute2 procps python3`
    （cpal/alsa-sys 需要 ALSA 头文件）。

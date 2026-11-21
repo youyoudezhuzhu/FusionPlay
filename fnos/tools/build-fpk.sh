@@ -17,6 +17,7 @@
 #   4. desktop_applaunchname 在 app/ui/config 中存在同名入口
 #   5. fnpack 输出必须包含 "Packing successfully"（fnpack 打包失败仍可能返回 0，总纲 §4.1）
 set -euo pipefail
+umask 022
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"        # fnos/
 REPO="$(cd "$ROOT/.." && pwd)"
@@ -34,7 +35,7 @@ manifest_get() {
 }
 
 export PATH="$HOME/.cargo/bin:/usr/local/cargo/bin:$PATH"
-command -v cargo >/dev/null 2>&1 || die "缺少 cargo（宿主机需要 Rust stable）"
+if [ -z "${FPK_BACKEND_BIN:-}" ]; then command -v cargo >/dev/null || die "缺少 cargo"; fi
 [ -x "$FNPACK" ] || die "缺少 fnpack 可执行文件：$FNPACK（该二进制应提交进仓库）"
 [ -f "$REPO/LICENSE" ] || die "仓库根缺少 LICENSE（AGPL 分发必需）"
 grep -q "GNU AFFERO GENERAL PUBLIC LICENSE" "$REPO/LICENSE" \
@@ -86,9 +87,13 @@ grep -q "\"$DESKTOP_LAUNCH\"" "$PKG/app/ui/config" \
     || die "app/ui/config 缺少入口 \"$DESKTOP_LAUNCH\"（desktop_applaunchname=$DESKTOP_LAUNCH）"
 echo "▶ 守卫通过：version=$VERSION（manifest=backend），platform=$PLATFORM，service_port=$SERVICE_PORT，launch=$DESKTOP_LAUNCH"
 
-echo "▶ cargo build --release（$HOST_ARCH）"
-cargo build --release --manifest-path "$ROOT/backend/Cargo.toml"
-BIN="$ROOT/backend/target/release/fusionplay-fnos"
+if [ -n "${FPK_BACKEND_BIN:-}" ]; then
+    BIN="$FPK_BACKEND_BIN"
+else
+    echo "▶ cargo build --release ($HOST_ARCH)"
+    cargo build --locked --release --manifest-path "$ROOT/backend/Cargo.toml"
+    BIN="${CARGO_TARGET_DIR:-$ROOT/backend/target}/release/fusionplay-fnos"
+fi
 [ -x "$BIN" ] || die "未生成 release 二进制：$BIN"
 BIN_VERSION="$("$BIN" --version 2>/dev/null | head -1 | tr -d '[:space:]')"
 [ "$BIN_VERSION" = "$VERSION" ] \
@@ -142,9 +147,12 @@ chmod -R u+rwX "$STAGE" 2>/dev/null || true
 for s in install_init install_callback upgrade_init upgrade_callback \
          uninstall_init uninstall_callback config_init config_callback main; do
     [ -f "$STAGE/cmd/$s" ] || die "暂存目录缺少 cmd/$s"
-    chmod +x "$STAGE/cmd/$s"
 done
-chmod +x "$STAGE/app/bin/fusionplay-fnos"
+# Packages are unpacked by the framework and run by a separate package user.
+# Do not distribute the checkout owner's private 0700/0600 modes.
+find "$STAGE" -type d -exec chmod 0755 {} +
+find "$STAGE" -type f -exec chmod 0644 {} +
+chmod 0755 "$STAGE"/cmd/* "$STAGE/app/bin/fusionplay-fnos"
 [ -f "$STAGE/app/www/index.html" ] || die "app/www/index.html 缺失（前端未复制成功）"
 
 # ---------------- fnpack 打包 ----------------
@@ -162,30 +170,28 @@ fi
 FPK="$STAGE/$APPNAME.fpk"
 [ -f "$FPK" ] || die "fnpack 报告成功但未找到产物 $FPK"
 
-mkdir -p "$DIST"
-OUT="$DIST/$APPNAME.fpk"
-cp -f "$FPK" "$OUT"
-chmod 644 "$OUT"
-echo "✅ 产出: $OUT"
-
 # ---------------- 双层 tar 自检 + 结构检查 ----------------
 # 注意：不要用 `tar -tzf x | grep -q`——grep -q 提前退出会让 tar 收到 SIGPIPE，
 # 在 `set -o pipefail` 下管线被判失败（假阴性）。先把清单落到文件再 grep。
 echo "▶ 双层 tar 自检"
 LIST="$STAGE_ROOT/fpk-list.txt"
 APPLIST="$STAGE_ROOT/fpk-app-list.txt"
-tar -tzf "$OUT" > "$LIST"
-tar -xzOf "$OUT" app.tgz | tar -tzf - > "$APPLIST"
+tar -tzf "$FPK" > "$LIST"
+tar -xzOf "$FPK" app.tgz | tar -tzf - > "$APPLIST"
 grep -qx "manifest" "$LIST" || die "FPK 缺少 manifest"
 grep -qx "app.tgz" "$LIST" || die "FPK 缺少 app.tgz"
 grep -qx "bin/fusionplay-fnos" "$APPLIST" || die "app.tgz 缺少 bin/fusionplay-fnos"
 grep -qx "ui/config" "$APPLIST" || die "app.tgz 缺少 ui/config"
 grep -qx "licenses/LICENSE" "$APPLIST" || die "app.tgz 缺少 licenses/LICENSE"
 
-if [ -x "$ROOT/tools/check-fpk.sh" ]; then
-    echo "▶ 结构/规范检查（check-fpk.sh）"
-    "$ROOT/tools/check-fpk.sh" "$OUT" || die "check-fpk.sh 未通过"
-fi
+echo "▶ 结构/规范检查（check-fpk.sh）"
+"$ROOT/tools/check-fpk.sh" "$FPK" || die "check-fpk.sh 未通过"
 
+mkdir -p "$DIST"
+OUT="$DIST/$APPNAME.fpk"
+PENDING=$(mktemp "$DIST/.candidate.XXXXXX")
+trap 'rm -f -- "$PENDING"' EXIT
+install -m 0644 "$FPK" "$PENDING"
+mv -f -- "$PENDING" "$OUT"
 ls -lh "$OUT"
 echo "✅ 构建完成：$OUT（version=$VERSION，platform=$PLATFORM）"

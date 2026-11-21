@@ -1,14 +1,3 @@
 #!/bin/bash
-# uninstall_callback — 卸载文件已移除后的收尾。
-#
-# 数据策略：默认【保留】用户数据与配置（$TRIM_PKGHOME/config.json、
-# $TRIM_PKGVAR 日志），方便重装/升级后恢复；如用户在应用中心选择删除数据，
-# fnOS 会自行清理这些目录。这里只清运行期残留（PID/socket），不主动删数据。
-set -u
-
-APP="${TRIM_APPDEST:-/var/apps/fusionplay-fnos/target}"
-VAR="${TRIM_PKGVAR:-/vol1/@appdata/fusionplay-fnos}"
-
-echo "$(date '+%Y-%m-%d %H:%M:%S') - uninstall_callback：保留数据目录 $VAR" >> "$VAR/uninstall.log" 2>/dev/null || true
-rm -f "$VAR/app.pid" "$APP/fusionplay-fnos.sock" 2>/dev/null || true
+# uninstall_init has already stopped the service. fnOS manages the data directories.
 exit 0

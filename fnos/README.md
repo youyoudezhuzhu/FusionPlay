@@ -6,7 +6,7 @@
 | 项目 | 值 |
 |---|---|
 | 应用标识（appname） | `fusionplay-fnos` |
-| 当前版本 | `0.2.5`（x86_64） |
+| 当前候选版本 | `0.2.6`（x86_64） |
 | 安装包 | `fusionplay-fnos.fpk`（GitHub Actions artifact / Release 附件） |
 | 服务端口 | `18080`（仅绑定 `127.0.0.1`，供本机诊断；对外走 fnOS 统一网关） |
 | 运行身份 | `run-as: package` + `join-groups: ["audio"]`（**非 root**） |
@@ -52,7 +52,7 @@
   trim-cli app install-fpk --remote-path /vol1/1000/workspace/fusionplay-fnos.fpk \
       --volume-id 1 --yes
   ```
-- ⚠️ 同 `appname` + 同 `version` 重装会报 **errno 10236**（应用已存在）：先卸载，或使用更高版本号。
+- ⚠️ 同 `appname` + 同 `version` 重装会报 **errno 10236**（应用已存在）：覆盖升级请使用更高版本号。
 - **安装后必须在 Web UI 授权音频权限**（否则看不到声卡、播放无声）：
   设置 → 应用管理 → FusionPlay → 权限设置 → 勾选 **audio / 音频设备** → 保存。
   详见下节「ALSA 权限说明」。
@@ -146,18 +146,8 @@ fnOS 会用 `TRIM_*` 环境变量把不同用途的目录传给应用（升级�
 
 ## 7. 升级
 
-1. 每次重新打包 **必须 bump `manifest.version`**（且与 `fnos/backend/Cargo.toml`、
-   二进制 `--version` 保持一致，构建脚本会强制校验）。同 `appname`+`version` 重装 = errno 10236。
-2. fnOS 升级流程：替换 `TRIM_APPDEST` 代码 → `upgrade_init`（**停服务**、删 PID/socket、按端口兜底清理）
-   → `upgrade_callback`（**重新拉起**并等 `/healthz` 通过）。本包两个脚本已按此实现。
-3. 用户数据（`config.json`、日志）在 `$TRIM_PKGHOME` / `$TRIM_PKGVAR`，升级保留。
-4. 升级后核对：
-   ```bash
-   curl -s http://127.0.0.1:18080/healthz        # version 应为新版本
-   sudo ss -lntp | grep 18080                    # 监听进程应为新启动时间
-   ```
-5. 若升级后服务没起来：`upgrade_callback` 会把原因写进 `$TRIM_TEMP_LOGFILE`（应用中心会提示），
-   同时 `$TRIM_PKGVAR/app.log` 有详细日志；可手动在应用中心点「启动」。
+保持 `appname=fusionplay-fnos`，以更高的 FPK 版本原地覆盖安装。升级前钩子停止本包服务，系统替换文件，升级后钩子校验新后台，随后由应用中心控制启用。配置、音箱校准和接收器数据继续使用原持久化目录。详见[覆盖安装与核对](INSTALL.md#6-原地升级)。
+
 
 ## 8. 卸载
 
@@ -190,7 +180,7 @@ fnOS 会用 `TRIM_*` 环境变量把不同用途的目录传给应用（升级�
 |---|---|---|
 | 装完打不开 / 白屏 | audio 未授权导致启动失败；或网关入口不对 | 看 `app.log`；权限设置里授权 audio；从桌面图标进 `/app/fusionplay-fnos/` |
 | 设备列表为空、播放无声 | audio 组未授权 / `/dev/snd` 不可访问 | 应用中心授权音频权限 → 重启应用 |
-| `/healthz` 版本和预期不符 | 旧进程没停（升级遗留） | 重启应用；确认 `upgrade_init` 已停服务（本包已修） |
+| `/healthz` 版本和预期不符 | 旧进程没停（升级遗留） | 重启应用；确认 `upgrade_init` 已停服务 |
 | 重装报 errno 10236 | 同 appname + version | 卸载旧版，或 bump 版本号 |
 | 端口 18080 被占用 | 同机已有实例或其它应用 | 停掉占用进程；`sudo ss -lntp \| grep 18080` 确认 |
 | 日志文件长不大/没轮转 | 检查 `fusionplay.log` 是否 5 MiB 上限、inode 是否变化 | 本包为原地 tail-trim，不换 inode |

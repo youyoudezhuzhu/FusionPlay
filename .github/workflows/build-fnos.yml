@@ -5,13 +5,20 @@ name: Build fnOS FPK
 #   - push tags `fnos-*`：打 tag 时出包并附到 GitHub Release
 on:
   workflow_dispatch:
+  pull_request:
+    paths:
+      - 'fnos/package/**'
+      - 'fnos/backend/Cargo.toml'
+      - 'fnos/tools/*fpk*'
+      - 'fnos/tools/simulate-*.sh'
+      - '.github/workflows/build-fnos.yml'
   push:
     tags:
       - 'fnos-*'
 
 # softprops/action-gh-release 需要写权限；默认 GITHUB_TOKEN 只读，不加会 403。
 permissions:
-  contents: write
+  contents: read
 
 env:
   CARGO_TERM_COLOR: always
@@ -19,7 +26,7 @@ env:
 
 jobs:
   build-fnos:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
     timeout-minutes: 90
     steps:
       - name: Checkout
@@ -103,9 +110,9 @@ jobs:
         timeout-minutes: 10
         run: ./fnos/tools/simulate-install.sh fnos/dist/fusionplay-fnos.fpk
 
-      # 升级回归：临时重建一个 +1 版本的二进制并 repack，验证
-      # upgrade_init 停服务/释放端口/删 PID、upgrade_callback 重新拉起新版本、孤儿进程也能被清理。
-      - name: Simulate upgrade path (rebuilds a +1 version fixture)
+      - name: Upgrade the published 0.2.5 FPK to the built package
+        env:
+          GH_TOKEN: ${{ github.token }}
         timeout-minutes: 25
         run: ./fnos/tools/simulate-upgrade.sh fnos/dist/fusionplay-fnos.fpk
 
@@ -117,9 +124,21 @@ jobs:
           if-no-files-found: error
           retention-days: 30
 
-      - name: Attach FPK to release (tag pushes)
-        if: startsWith(github.ref, 'refs/tags/')
-        uses: softprops/action-gh-release@v2
+  publish:
+    needs: build-fnos
+    if: startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
         with:
-          files: fnos/dist/fusionplay-fnos.fpk
+          name: fusionplay-fnos-fpk
+      - name: Verify tag matches FPK manifest
+        run: |
+          version=$(tar -xzOf fusionplay-fnos.fpk manifest | awk -F= '$1 ~ /^version[[:space:]]*$/ {gsub(/[[:space:]"]/, "", $2); print $2}')
+          test "$GITHUB_REF_NAME" = "fnos-v$version"
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: fusionplay-fnos.fpk
           generate_release_notes: true

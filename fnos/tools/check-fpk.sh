@@ -11,6 +11,7 @@
 #   - AGPL LICENSE 文本存在
 #   - 图标尺寸 64/256
 set -uo pipefail
+umask 022
 
 SELF_DIR="$(cd "$(dirname "$0")" && pwd)"
 FPK="${1:-$SELF_DIR/../dist/fusionplay-fnos.fpk}"
@@ -281,6 +282,16 @@ for name, want in (("ICON.PNG", (64, 64)), ("ICON_256.PNG", (256, 256))):
     except Exception as exc:  # noqa: BLE001
         bad(f"{name} 不是合法 PNG：{exc}")
 
+# The package account can differ from the account that extracted the archive.
+for entry in (tmp / "app").rglob("*"):
+    mode = entry.stat().st_mode
+    required = 0o5 if entry.is_dir() or entry == tmp / "app/bin/fusionplay-fnos" else 0o4
+    if mode & required != required:
+        bad(f"包用户无法访问 {entry.relative_to(tmp)}，权限为 {mode & 0o777:o}")
+for entry in (tmp / "cmd").iterdir():
+    if entry.stat().st_mode & 0o5 != 0o5:
+        bad(f"包用户无法执行 {entry.relative_to(tmp)}")
+
 # ---- cmd/main 静态约定 ----
 try:
     main_txt = (tmp / "cmd/main").read_text(encoding="utf-8", errors="replace")
@@ -313,6 +324,18 @@ PY
 [ $? -ne 0 ] && fail=1
 
 echo "▶ 版本三方一致（manifest / BUILD-INFO / 二进制 --version）"
+# v0.2.5 supported systems with glibc 2.34. Catch a build runner silently
+# raising the ELF requirement before publishing an in-place upgrade.
+if ! symbols=$(LC_ALL=C readelf --version-info "$TMP/app/bin/fusionplay-fnos"); then
+    bad "无法读取后台 ELF 运行库需求"
+else
+    glibc=$(printf '%s\n' "$symbols" | grep -oE 'GLIBC_[0-9]+(\.[0-9]+)+' | sort -Vu | tail -1)
+    if [ -n "$glibc" ] && [ "$(printf '%s\n' GLIBC_2.34 "$glibc" | sort -V | tail -1)" = GLIBC_2.34 ]; then
+        ok "后台运行库需求 $glibc 在旧版兼容范围内"
+    else
+        bad "后台运行库需求 ${glibc:-未知} 超出 0.2.5 发布包基线 GLIBC_2.34"
+    fi
+fi
 MANIFEST_VERSION="$(grep -m1 -E '^[[:space:]]*version[[:space:]]*=' "$TMP/manifest" | sed 's/^[^=]*=//' | tr -d ' "')"
 BIN_VERSION="$("$TMP/app/bin/fusionplay-fnos" --version 2>/dev/null | head -1 | tr -d '[:space:]')"
 if [ -n "$BIN_VERSION" ] && [ "$BIN_VERSION" = "$MANIFEST_VERSION" ]; then
