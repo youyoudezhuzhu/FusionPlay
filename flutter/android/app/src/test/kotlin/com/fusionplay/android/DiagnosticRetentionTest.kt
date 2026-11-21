@@ -2,7 +2,6 @@ package com.fusionplay.android
 
 import com.airplayreceiver.desktop.backend.FusionPlayDiagnosticLogger
 import java.io.File
-import java.nio.file.Files
 import java.time.Clock
 import java.time.Instant
 import java.time.ZoneOffset
@@ -41,6 +40,6 @@ class DiagnosticRetentionTest {
         val logger = FusionPlayDiagnosticLogger(dir.toPath(), Clock.fixed(now, ZoneOffset.UTC))
         logger.copySnapshotTo(snapshot)
         assertFalse(File(dir, "fusionplay.jsonl.1").exists())
-        assertEquals("error", Files.readString(snapshot.resolve("errors.jsonl")))
+        assertEquals("error", snapshot.resolve("errors.jsonl").toFile().readText())
     }
 }
