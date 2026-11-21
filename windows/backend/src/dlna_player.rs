@@ -130,7 +130,7 @@ const DEFAULT_USER_AGENT: &str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) \
 
 /// Legacy User-Agent used for the single 401/403 retry, see
 /// [`DEFAULT_USER_AGENT`].
-const LEGACY_USER_AGENT: &str = concat!("FusionPlay-Windows/", env!("CARGO_PKG_VERSION"));
+const LEGACY_USER_AGENT: &str = concat!("FusionPlay-Windows/", env!("FUSIONPLAY_PRODUCT_VERSION"));
 
 /// HTTP header parsing limits (defensive against broken/malicious servers).
 const MAX_HEADER_LINE: usize = 8 * 1024;

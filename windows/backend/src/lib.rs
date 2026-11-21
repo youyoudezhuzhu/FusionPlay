@@ -23,4 +23,12 @@ pub use ui_protocol::{AppStateView, PlaybackView, RemoteControlView, SettingsVie
 
 /// Product version reported by `--version`, the `ready` event and the Windows
 /// version resource. Keep in sync with the repository `VERSION` file.
-pub const VERSION: &str = env!("CARGO_PKG_VERSION");
+pub const VERSION: &str = env!("FUSIONPLAY_PRODUCT_VERSION");
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn sidecar_version_matches_the_packaged_product() {
+        assert_eq!(super::VERSION, include_str!("../../../VERSION").trim());
+    }
+}
