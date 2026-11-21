@@ -29,29 +29,16 @@ tar tzf fusionplay-fnos.fpk | head        # 应看到 manifest / cmd/ / config/ 
 4. 解析完成后会弹出「未经验证应用的安全提示」，按钮是 **取消 / 同意**（不是「安装」）→ 点 **同意**。
 5. 等待安装完成；应用图标会出现在桌面。
 
-## 2. 方式 B：CLI 安装
+## 2. 在 NAS 上用官方 CLI 本地测试
 
-本应用**没有向导**、**没有 `install_dep_apps`**，所以 CLI 可以直接安装：
+将 FPK 放到 NAS 上，在文件所在目录执行以下命令。已安装的应用使用相同应用标识及更高版本的包原地升级。[官方 appcenter-cli 文档](https://developer.fnnas.com/docs/cli/appcentercli)
 
 ```bash
-# 1) 把 fpk 传到 NAS 上用户可见目录（示例 /vol1/1000/workspace）
-trim-cli file upload /vol1/1000/workspace ./fusionplay-fnos.fpk --overwrite rename
-
-# 2) 先 dry-run 确认解析
-trim-cli app install-fpk --remote-path /vol1/1000/workspace/fusionplay-fnos.fpk \
-    --volume-id 1 --dry-run --yes
-
-# 3) 正式安装
-trim-cli app install-fpk --remote-path /vol1/1000/workspace/fusionplay-fnos.fpk \
-    --volume-id 1 --yes
-
-# 4) 查状态（app list 可能是缓存，以 status 的 version 为准）
-trim-cli app status fusionplay-fnos
+appcenter-cli install-fpk fusionplay-fnos.fpk
+appcenter-cli list
 ```
 
-> ⚠️ 上传重名文件时 trim-cli 会自动改名（`x.fpk` → `x_1.fpk`）。装机前用
-> `tar xzOf fusionplay-fnos.fpk manifest | grep version` 确认版本，别装错文件。
-> ⚠️ 同 appname + 同 version 重装会报 **errno 10236**：覆盖升级请使用更高版本。
+如应用原先已停用并希望现在启用，可执行 `appcenter-cli start fusionplay-fnos`。
 
 ## 3. 安装后必做：授权音频权限（audio 组）
 
@@ -81,7 +68,7 @@ sudo -u fusionplay-fnos test -r /dev/snd/controlC0 && echo "audio ok" || echo "a
 ### 4.1 应用状态与服务
 
 ```bash
-trim-cli app status fusionplay-fnos          # status: running，version = 0.2.6
+appcenter-cli list
 sudo ss -lntp | grep 18080                   # 127.0.0.1:18080 有监听
 pgrep -af 'fusionplay-fnos/bin/fusionplay-fnos'   # 只有 1 个进程
 ```
@@ -200,7 +187,7 @@ sudo ls -l /vol1/@appdata/fusionplay-fnos/              # app.log、fusionplay.l
 - 卸载后检查：
 
 ```bash
-trim-cli app status fusionplay-fnos          # 应返回 not found
+appcenter-cli list                          # 核对已安装列表
 sudo ss -lntp | grep 18080                   # 无输出
 pgrep -af 'fusionplay-fnos/bin/fusionplay-fnos'   # 无输出
 ls -d /var/apps/fusionplay-fnos /vol1/@appcenter/fusionplay-fnos 2>/dev/null  # 应不存在

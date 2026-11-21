@@ -47,11 +47,7 @@
 
 - **方式 A（推荐）应用中心**：下载 `fusionplay-fnos.fpk` → 应用中心 → 手动安装 →
   选择文件 → 安全提示点「同意」。存储空间默认已选中，**不要再点它**（展开下拉会遮挡上传区）。
-- **方式 B（CLI）**：本应用没有向导、没有 `install_dep_apps`，可用 `trim-cli` 直接安装：
-  ```bash
-  trim-cli app install-fpk --remote-path /vol1/1000/workspace/fusionplay-fnos.fpk \
-      --volume-id 1 --yes
-  ```
+- **NAS 命令行本地测试**用 `appcenter-cli install-fpk fusionplay-fnos.fpk` 安装或覆盖升级。[官方 CLI 文档](https://developer.fnnas.com/docs/cli/appcentercli)
 - ⚠️ 同 `appname` + 同 `version` 重装会报 **errno 10236**（应用已存在）：覆盖升级请使用更高版本号。
 - **安装后必须在 Web UI 授权音频权限**（否则看不到声卡、播放无声）：
   设置 → 应用管理 → FusionPlay → 权限设置 → 勾选 **audio / 音频设备** → 保存。

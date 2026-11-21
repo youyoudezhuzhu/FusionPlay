@@ -103,6 +103,10 @@ PYROOM
     mkdir "$root/volume/target"
     tar -xzf "$SANDBOX/new/app.tgz" -C "$TRIM_APPDEST"
     export TRIM_APPVER="$NEW_VER"
+    if [ "$scenario" = stopped ]; then
+        if TRIM_APPVER="$OLD_VER" bash "$new_cmd/upgrade_callback"; then die "mixed version accepted"; fi
+        grep -q "$NEW_VER" "$TRIM_TEMP_LOGFILE" || die "missing package version diagnostic"
+    fi
     bash "$new_cmd/upgrade_callback"
     bash "$new_cmd/upgrade_callback"
     status=0; bash "$new_cmd/main" status || status=$?
@@ -132,11 +136,13 @@ PYROOM
     [ "$(sim_file_hash "$TRIM_PKGHOME/config.json")" = "$before" ] || die "user config overwritten"
     grep -qx 'persisted sender identity' "$TRIM_PKGVAR/receivers/upgrade-marker" || die "state lost"
     curl -fsS "http://127.0.0.1:$TRIM_SERVICE_PORT/api/config" | python3 -c '
-import json, sys
+import json, math, sys
 v = json.load(sys.stdin)
 d = v["audio"]["devices"][0]
 assert v["receiver"]["name"] == "Upgrade Room" and d["id"] == "mock:study"
-assert d["gain_db"] == -3 and d["delay_ms"] == 12 and d["curve"]["points"][1] == [0.5, 0.3]'
+assert d["gain_db"] == -3 and d["delay_ms"] == 12 and d["curve"]["kind"] == "custom", d
+x, y = d["curve"]["points"][1]
+assert x == 0.5 and math.isclose(y, 0.3, abs_tol=1e-6), d'
     if [ "$scenario" = orphan ]; then
         curl -fsS "http://127.0.0.1:$TRIM_SERVICE_PORT/api/instances" | python3 -c '
 import json,sys

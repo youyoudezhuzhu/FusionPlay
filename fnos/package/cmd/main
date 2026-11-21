@@ -57,9 +57,12 @@ prepare() {
         fail "后台程序无法执行，请检查 FPK 架构、运行库和执行权限。$actual"
         return 1
     fi
-    # Read the *installed payload* version. TRIM_APPVER can refer to a
-    # different phase of an upgrade.
+    # Compare the installed payload with the package identified by fnOS.
+    # The old pre-upgrade hook only calls stop, never prepare.
     local expected
+    if [ -n "${TRIM_APPVER:-}" ] && [ "$actual" != "$TRIM_APPVER" ]; then
+        fail "应用中心版本 $TRIM_APPVER 与已安装后台 $actual 不一致，请核对所选 FPK。"; return 1
+    fi
     expected=$(sed -n 's/^version=//p' "$APP/BUILD-INFO") &&
         [ -n "$expected" ] && [ "$actual" = "$expected" ] ||
         { fail "安装文件版本不一致，后台为 $actual，包记录为 ${expected:-缺失}。"; return 1; }
