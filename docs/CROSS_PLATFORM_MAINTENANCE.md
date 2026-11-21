@@ -12,12 +12,14 @@
 
 **最容易漏同步的是桌面 DLNA。** 在 `62e7a5b` 比较 `windows/backend/src/dlna_player.rs` 和 `fnos/backend/src/dlna_player.rs`，按原始文本逐行查找连续至少 10 行的相同片段，合计 1,683 行。两端分别实现了 HTTP 打开、Range 响应解析和媒体解码。以后修复这几个环节，须检查另一宿主并运行两端的 DLNA 回归。可优先将 HTTP 读取和范围解析收进共享 Rust 模块，保留各自的设备、会话与输出回调。
 
+从 `integration/unified-platforms` 的统一版本提交推送 `v<版本号>` 标签。发布工作流会等 Windows、Android 和两种飞牛安装包全部验证通过，再创建一份 Release，随后同步 Android Pages。
+
 ## 更新与分发
 
 | 平台 | 版本来源 | 用户取得更新的实际路径 |
 | --- | --- | --- |
-| Android | 根目录 `VERSION` 推导显示版本与 `versionCode` | `android-v*` 标签发布签名 APK。Pages 工作流验证哈希及大小，部署 `update/android/stable.json` 和 APK，并维护 raw 备用清单。应用内检查、下载进度、安装权限和安装逻辑在 Android 适配器。 |
-| Windows | 根目录 `VERSION` 和 `INSTALLER_VERSION` | `windows-v*` 标签发布 ZIP 和 Setup.exe。Flutter 运行时入口没有启用 Android 的更新页。 |
+| Android | 根目录 `VERSION` 推导显示版本与 `versionCode` | 统一版本标签发布签名 APK。Pages 工作流验证哈希及大小，部署 `update/android/stable.json` 和 APK，并维护 raw 备用清单。应用内检查、下载进度、安装权限和安装逻辑在 Android 适配器。 |
+| Windows | 根目录 `VERSION` 和 `INSTALLER_VERSION` | 同一个 Release 提供便携 ZIP 和 Setup.exe。Windows 下载后手动运行安装程序。 |
 | 飞牛 | `fnos/package/manifest` 与 `fnos/backend/Cargo.toml`，打包检查会对照两者 | `fnos-*` 标签发布 FPK，经飞牛应用管理安装或升级。 |
 
 核对时三个平台各自最新的非预发行 Release 为 Android `1.7.8`、Windows `1.3.2` 和飞牛 `0.2.5`。Android 线上清单的源码提交为 `f6364a30f2342b5a500bd23111b03e45e6b0a5ba`。合入共享修复后，各平台仍须从含有该修复的提交构建并发布。平台标签和用户端更新渠道目前分别管理。[发布记录](https://github.com/youyoudezhuzhu/FusionPlay/releases) · [Android 线上清单](https://youyoudezhuzhu.github.io/FusionPlay/update/android/stable.json)

@@ -275,4 +275,4 @@ windows/
 
 「检查更新」在右上角菜单和设置页都可用。Windows 使用系统文件夹选择器，安装包保存在用户选择的目录中。校验完成后显示完整文件路径，供用户手动运行安装程序。
 
-Flutter 可独立调用同目录下的 `FusionPlayCore.exe --check-update` 或 `--save-update <windows-v版本> <目录>`。这两条短时命令在接收器互斥锁之前处理。检查命令返回 JSON，保存命令通过 NDJSON 返回字节进度以及最终的 `path` 或 `error`。下载使用 Windows 系统自带的 curl，并与飞牛版共用正式版本筛选、SHA-256 校验和文件发布逻辑。
+Flutter 可独立调用同目录下的 `FusionPlayCore.exe --check-update` 或 `--save-update <v版本> <目录>`。这两条短时命令在接收器互斥锁之前处理。检查命令返回 JSON，保存命令通过 NDJSON 返回字节进度以及最终的 `path` 或 `error`。下载使用 Windows 系统自带的 curl，并与飞牛版共用正式版本筛选、SHA-256 校验和文件发布逻辑。

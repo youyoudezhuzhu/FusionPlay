@@ -40,7 +40,7 @@ catalog, candidate, filename = sys.argv[1:]
 compatible = []
 for line in Path(catalog).read_text().splitlines():
     tag, name, digest = line.split("\t")
-    match = re.fullmatch(r"fnos-v(\d+\.\d+\.\d+)", tag)
+    match = re.fullmatch(r"(?:fnos-)?v(\d+\.\d+\.\d+)", tag)
     if match and name == filename and version(match[1]) <= version(candidate):
         # Prefer an actual upgrade, even if the candidate is already published.
         compatible.append((version(match[1]) < version(candidate), version(match[1]), tag, digest))
@@ -54,7 +54,9 @@ PYBASE
             [[ "$digest" =~ ^sha256:[0-9a-f]{64}$ ]] || die "missing SHA-256 for $baseline_tag/$FPK_FILENAME"
             gh release download "$baseline_tag" --repo "$repo" --pattern "$FPK_FILENAME" --dir "$SANDBOX"
             echo "${digest#sha256:}  $OLD" | sha256sum -c -
-            if [ "$baseline_tag" = "fnos-v$candidate_version" ]; then same_version_rehearsal=true; fi
+            case "$baseline_tag" in
+                "fnos-v$candidate_version"|"v$candidate_version") same_version_rehearsal=true ;;
+            esac
         else
             # First published package for this architecture.
             same_version_rehearsal=true

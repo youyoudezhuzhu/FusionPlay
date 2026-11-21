@@ -203,7 +203,7 @@ gh run list --workflow=build-fnos.yml
 
 1. 改代码 + 单测通过 + bump 版本（三处一致）。
 2. 本地跑完整验证（见下节）。
-3. 提交并打 tag：`git tag fnos-v0.1.1 && git push origin fnos-v0.1.1`
+3. 提交并打 tag：`git tag v1.8.0 && git push origin v1.8.0`
    （tag 格式必须是 `fnos-*`，否则不会触发）。
 4. CI 分别产出 x86_64 和 ARM64 的 FPK，两条构建任务全部通过后才会附到同一个 Release。
 5. 真机按 [INSTALL.md](INSTALL.md) 验收（尤其 audio 授权与升级路径）。

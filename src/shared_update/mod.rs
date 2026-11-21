@@ -27,6 +27,11 @@ impl Platform {
             _ => "fnos-v",
         }
     }
+    fn release_version<'a>(self, tag: &'a str) -> Option<&'a str> {
+        tag.strip_prefix('v')
+            .or_else(|| tag.strip_prefix(self.prefix()))
+    }
+
     fn names(self, version: &str) -> (String, String) {
         match self {
             Self::Windows => {
@@ -73,9 +78,7 @@ impl Package {
             "需要正式发布的版本"
         );
         let tag = release["tag_name"].as_str().context("缺少版本标签")?;
-        let label = tag
-            .strip_prefix(platform.prefix())
-            .context("安装包平台不匹配")?;
+        let label = platform.release_version(tag).context("安装包平台不匹配")?;
         ensure!(
             version(label).context("版本号无效")?
                 > version(current.trim()).context("当前版本号无效")?,
@@ -163,7 +166,7 @@ pub fn check(platform: Platform, current: &str) -> Result<Value> {
             }
             let Some(label) = release["tag_name"]
                 .as_str()
-                .and_then(|s| s.strip_prefix(platform.prefix()))
+                .and_then(|tag| platform.release_version(tag))
             else {
                 continue;
             };
@@ -187,8 +190,8 @@ pub fn check(platform: Platform, current: &str) -> Result<Value> {
 }
 
 pub fn resolve(platform: Platform, current: &str, tag: &str) -> Result<Package> {
-    let target = tag
-        .strip_prefix(platform.prefix())
+    let target = platform
+        .release_version(tag)
         .and_then(version)
         .context("无效的更新版本")?;
     ensure!(
@@ -310,6 +313,28 @@ mod tests {
         beta["prerelease"] = true.into();
         assert!(Package::from_release(Platform::Windows, &beta, "1.9.9").is_err());
         assert!(version("1.10.0-beta").is_none());
+    }
+
+    #[test]
+    fn selects_the_platform_installer_from_one_shared_tag() {
+        let mut shared = release("v1.7.9", "FusionPlay-Setup-1.7.9-x64.exe");
+        for name in ["fusionplay-fnos.fpk", "fusionplay-fnos-arm64.fpk"] {
+            let fpk = release("v1.7.9", name);
+            shared["assets"]
+                .as_array_mut()
+                .unwrap()
+                .push(fpk["assets"][0].clone());
+        }
+        for (platform, suffix) in [
+            (Platform::Windows, "x64.exe"),
+            (Platform::NasX86, "x86_64.fpk"),
+            (Platform::NasArm, "arm64.fpk"),
+        ] {
+            let package = Package::from_release(platform, &shared, "1.7.8").unwrap();
+            assert_eq!(package.tag, "v1.7.9");
+            assert!(package.filename.ends_with(suffix));
+            assert!(Package::from_release(platform, &shared, "1.7.9").is_err());
+        }
     }
 
     #[test]

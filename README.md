@@ -104,7 +104,7 @@ Rust 模块可分别运行 `cargo test` 和 `cargo clippy`。Android 原生库�
 
 脚本会编译 `windows/backend` 侧车、执行 `flutter build windows --release`、把 `FusionPlayCore.exe` 放进发布目录，输出 `dist/FusionPlay-Windows-<版本>-x64.zip` 与 SHA256；如本机安装了 Inno Setup，还会生成 `dist/FusionPlay-Setup-<版本>-x64.exe` 安装包（含私有/域网络防火墙放行规则）。
 
-CI 上 `.github/workflows/windows.yml` 在 `windows-latest` 上完成同样的构建，并执行侧车 NDJSON 冒烟测试（启动 → `ready`/`receiverReady` → `shutdown` 退出 0）。发布流程：打 `windows-v*` tag 触发 Release。
+CI 上 `.github/workflows/windows.yml` 在 `windows-latest` 上完成同样的构建，并执行侧车 NDJSON 冒烟测试（启动 → `ready`/`receiverReady` → `shutdown` 退出 0）。发布时推送 `v<版本号>` 标签，所有平台安装包会出现在同一个 GitHub Release。
 
 Windows 版的安装、使用、端口与已知限制见 [docs/WINDOWS.md](docs/WINDOWS.md)，协议实现细节见 [docs/WINDOWS_ARCHITECTURE.md](docs/WINDOWS_ARCHITECTURE.md)。
 

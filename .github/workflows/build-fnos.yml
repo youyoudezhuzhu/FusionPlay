@@ -2,7 +2,7 @@ name: Build fnOS FPK
 
 # 触发：
 #   - workflow_dispatch：手动出包
-#   - push tags `fnos-*`：打 tag 时出包并附到 GitHub Release
+#   - workflow_call：为统一 Release 构建两种架构的 FPK
 on:
   workflow_dispatch:
   pull_request:
@@ -13,11 +13,8 @@ on:
       - '.github/actions/setup-flutter/**'
       - 'fnos/tools/simulate-*.sh'
       - '.github/workflows/build-fnos.yml'
-  push:
-    tags:
-      - 'fnos-*'
+  workflow_call:
 
-# softprops/action-gh-release 需要写权限；默认 GITHUB_TOKEN 只读，不加会 403。
 permissions:
   contents: read
 
@@ -162,28 +159,3 @@ jobs:
           path: fnos/dist/${{ matrix.fpk }}
           if-no-files-found: error
           retention-days: 30
-
-  publish:
-    needs: build-fnos
-    if: startsWith(github.ref, 'refs/tags/')
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-    steps:
-      - uses: actions/download-artifact@v4
-        with:
-          pattern: fusionplay-fnos-fpk*
-          merge-multiple: true
-      - name: Verify both architectures match the release tag
-        run: |
-          for fpk in fusionplay-fnos.fpk fusionplay-fnos-arm64.fpk; do
-            version=$(tar -xzOf "$fpk" manifest | awk -F= '$1 ~ /^version[[:space:]]*$/ {gsub(/[[:space:]"]/, "", $2); print $2}')
-            test "$GITHUB_REF_NAME" = "fnos-v$version"
-          done
-      - uses: softprops/action-gh-release@v2
-        with:
-          files: |
-            fusionplay-fnos.fpk
-            fusionplay-fnos-arm64.fpk
-          fail_on_unmatched_files: true
-          generate_release_notes: true
