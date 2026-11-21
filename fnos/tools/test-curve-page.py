@@ -90,6 +90,7 @@ def main():
         page.locator("#bind").click()
         expect(page.locator("#room-label")).to_have_text("Desk")
         expect(page.locator("#curve-device")).to_have_value("USB")
+        expect(page.locator("#binding-result")).to_contain_text("已绑定USB")
         expect(page.locator("#editor")).to_be_visible()
         assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
         browser.close()

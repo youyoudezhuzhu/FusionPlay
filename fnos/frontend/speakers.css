@@ -26,13 +26,17 @@ button:hover:not(:disabled),a.button:hover {background:#ffffff24}
 .back,.room-actions a {font-size:14px;color:#f7edf7}.back:hover,.room-actions a:hover{text-decoration:underline}
 .card {border:1px solid #ffffff36;border-radius:26px;background:linear-gradient(135deg,#ffffff16,#ffffff05 52%,#ffddd50f),#25213933;backdrop-filter:var(--surface-lens,blur(0px)) blur(8px);box-shadow:inset 0 1px 0 #ffffff17}
 .room-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(280px,100%),1fr));gap:18px}
-.room {min-width:0;padding:24px;display:flex;flex-direction:column;gap:22px}
+.room {position:relative;min-width:0;padding:24px;display:flex;flex-direction:column;gap:22px}
 .room h2{font-size:clamp(24px,3vw,36px);line-height:1.15;overflow-wrap:anywhere}
 .room .media{font-size:14px;color:#eee4ee;margin-top:5px}
 .room-top{min-height:54px}.cover,.speaker-symbol{width:54px;height:54px;border-radius:15px;object-fit:cover}
 .speaker-symbol{display:grid;place-items:center;background:#ffffff13;border:1px solid #ffffff28}
 .speaker-symbol::after{content:"";width:13px;height:24px;border:1.5px solid white;border-radius:6px;background:radial-gradient(circle at 50% 70%,white 0 3px,transparent 4px),radial-gradient(circle at 50% 24%,white 0 1px,transparent 2px)}
 .current{font-size:12px;color:#ffe6cf}.room-actions{border-top:1px solid #ffffff20;padding-top:14px;margin-top:auto}
+.room-actions a{display:inline-flex;align-items:center;min-height:44px}
+.room-actions a:first-child::after{content:"";position:absolute;inset:0;border-radius:26px}
+.room-actions a + a{position:relative}
+#binding-result:not(:empty){margin-bottom:16px;color:#f5e6d8}
 .bind{max-width:560px;padding:28px;display:grid;gap:10px}.bind label:not(:first-child){margin-top:12px}
 .bind p,.small,.axis,.x-axis,.response label,#save-state{font-size:13px;color:#ddd4e2}
 .footer{justify-content:flex-end}.bind .footer{margin-top:12px}

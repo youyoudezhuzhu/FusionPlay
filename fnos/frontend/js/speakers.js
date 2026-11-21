@@ -36,6 +36,9 @@
   }
   $('retry').onclick = () => location.reload();
   window.addEventListener('hashchange', () => location.reload());
+  window.addEventListener('pageshow', event => {
+    if (event.persisted && !dirty) location.reload();
+  });
   window.addEventListener('beforeunload', event => {
     if (dirty) { event.preventDefault(); event.returnValue = ''; }
   });
@@ -122,11 +125,19 @@
       if (!available.size) $('retry').hidden = false;
       $('bind-form').onsubmit = async event => {
         event.preventDefault();
-        $('bind').disabled = true;
+        const name = $('room-name');
+        const deviceId = select.value;
+        name.disabled = select.disabled = $('bind').disabled = true;
         try {
-          const result = await api.createSpeaker($('room-name').value.trim(),select.value);
-          location.assign(page(result.id,'curve',select.value));
-        } catch (error) { fail(error); hint(); }
+          const result = await api.createSpeaker(name.value.trim(), deviceId);
+          const next = new URL(page(result.id, 'curve', deviceId));
+          next.searchParams.set('created', '1');
+          location.assign(next);
+        } catch (error) {
+          fail(error);
+          name.disabled = select.disabled = false;
+          hint();
+        }
       };
     }
     if (section === 'curve') {
@@ -144,6 +155,11 @@
         $('notice').textContent = '原音箱绑定已变更，请重新选择输出设备。';
       } else {
         select.value = preferred || (bound.length === 1 ? bound[0].id : '');
+      }
+      if (select.value && url.searchParams.has('created')) {
+        $('binding-result').textContent = '已绑定' + select.selectedOptions[0].text + '，可以调节曲线或直接返回播放器。';
+        url.searchParams.delete('created');
+        history.replaceState(null, '', url);
       }
       editCurves(select,bound);
     }
