@@ -425,7 +425,6 @@ class _ReceiverState extends State<_Receiver> {
                                 setState(() => advancedEffects = enabled);
                               },
                               onClose: closeSettings,
-                              onOpenUpdate: () => closeMenu(updatePage),
                             )
                           : const SizedBox.shrink(),
                       onDismiss: closeMenu,

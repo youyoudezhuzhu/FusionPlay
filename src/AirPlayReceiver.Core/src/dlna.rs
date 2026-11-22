@@ -1194,12 +1194,14 @@ impl DmrController {
                 .state
                 .lock()
                 .map_err(|_| anyhow!("DLNA 播放状态不可用"))?;
-            if let Some(peer) = peer {
+            let lease = state.lease.filter(|lease| self.arbiter.is_current(*lease));
+            // A LAN control point may seek the active renderer from another
+            // address. The command changes only the current timeline.
+            if let Some(peer) = peer.filter(|_| !state.renderer_active || lease.is_none()) {
                 self.validate_owner(&state, peer)?;
             } else if state.current_uri.is_none() {
                 bail!("尚未设置 DLNA 媒体地址");
             }
-            let lease = state.lease.filter(|lease| self.arbiter.is_current(*lease));
             state.position_ms = if state.duration_ms > 0 {
                 position_ms.min(state.duration_ms)
             } else {
@@ -5168,7 +5170,7 @@ mod tests {
     }
 
     #[test]
-    fn only_the_selected_control_point_can_mutate_a_dlna_session() {
+    fn foreign_control_point_cannot_play_pause_stop_or_advance_the_selected_track() {
         let controller = controller();
         let owner = IpAddr::V4(Ipv4Addr::new(192, 0, 2, 40));
         let stale_peer = IpAddr::V4(Ipv4Addr::new(192, 0, 2, 41));
@@ -5181,7 +5183,6 @@ mod tests {
 
         assert!(controller.play_from(stale_peer).is_err());
         controller.play_from(owner).unwrap();
-        assert!(controller.seek_from(stale_peer, 30_000).is_err());
         assert!(controller.pause_from(stale_peer).is_err());
         assert!(controller.stop_from(stale_peer).is_err());
         assert!(controller.next_track_from(stale_peer).is_err());
@@ -5193,25 +5194,33 @@ mod tests {
     }
 
     #[test]
-    fn rejected_seek_distinguishes_address_family_mismatch_from_missing_media() {
+    fn first_track_and_later_tracks_accept_repeated_seek_from_another_address() {
         let (controller, events) = controller_with_events();
         let ipv4: IpAddr = "192.0.2.10".parse().unwrap();
         let ipv6: IpAddr = "2001:db8::10".parse().unwrap();
 
         assert!(controller.seek_from(ipv4, 30_000).is_err());
-        controller
-            .set_transport_uri_from("https://example.test/track.mp3", "", Some(ipv4))
-            .unwrap();
-        controller.play_from(ipv4).unwrap();
-        assert!(controller.seek_from(ipv6, 30_000).is_err());
-        controller.seek_from(ipv4, 30_000).unwrap();
-
-        let events = events.captured_events();
-        assert!(events.iter().any(|event| event["message"]
-            == "DLNA AVTransport rejected: reason=no_media_selected owner_family=none requester_family=ipv4"));
-        assert!(events.iter().any(|event| event["message"]
-            == "DLNA AVTransport rejected: reason=owner_mismatch owner_family=ipv4 requester_family=ipv6"));
-        assert_eq!(events.iter().filter(|event| event["type"] == "dlna_seek").count(), 1);
+        for track in ["first", "second", "third"] {
+            let uri = format!("https://example.test/{track}.mp3");
+            controller.set_transport_uri_from(&uri, "", Some(ipv4)).unwrap();
+            assert!(controller.seek_from(ipv6, 30_000).is_err());
+            controller.play_from(ipv4).unwrap();
+            for (peer, target) in [(ipv6, "00:00:30"), (ipv4, "00:01:00"), (ipv6, "00:01:30")] {
+                let args = HashMap::from([
+                    ("instanceid".to_owned(), "0".to_owned()),
+                    ("unit".to_owned(), "REL_TIME".to_owned()),
+                    ("target".to_owned(), target.to_owned()),
+                ]);
+                handle_av_transport(&controller, peer, "Seek", &args).unwrap();
+            }
+            assert_eq!(controller.snapshot().unwrap().position_ms, 90_000);
+            assert_eq!(controller.state.lock().unwrap().owner_peer, Some(ipv4));
+        }
+        let positions: Vec<u64> = events.captured_events().into_iter()
+            .filter(|event| event["type"] == "dlna_seek")
+            .filter_map(|event| event["position_ms"].as_u64())
+            .collect();
+        assert_eq!(positions, [30_000, 60_000, 90_000].repeat(3));
     }
 
     #[test]

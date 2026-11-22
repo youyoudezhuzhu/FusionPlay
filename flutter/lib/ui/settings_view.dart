@@ -74,6 +74,7 @@ class SettingsView extends StatefulWidget {
     this.saveUpdate,
     this.showHeader = true,
     this.showHostControls = true,
+    this.showMenuActions = true,
     this.extraActions = const [],
     this.onOpenUpdate,
     this.productVersion = fusionPlayVersion,
@@ -120,6 +121,7 @@ class SettingsView extends StatefulWidget {
   /// When false the page title is omitted (hosted inside the glass overlay).
   final bool showHeader;
   final bool showHostControls;
+  final bool showMenuActions;
   final List<({IconData icon, String label, VoidCallback onTap})> extraActions;
   final VoidCallback? onOpenUpdate;
   final String productVersion;
@@ -289,20 +291,24 @@ class _SettingsViewState extends State<SettingsView> {
                             onChanged: widget.onAdvancedEffects,
                           ),
                         ]),
-                        SizedBox(height: cardSpacing),
-                        _card([
-                          _aboutRow(),
-                          if (_showUpdateRow) _checkUpdateRow(),
-                          for (final action in widget.extraActions)
-                            _row(
-                              leading: Icon(action.icon),
-                              title: action.label,
-                              onTap: action.onTap,
-                              enabled: !widget.state.busy,
-                              trailing: const Icon(Icons.chevron_right_rounded),
-                            ),
-                          _exportLogsRow(),
-                        ]),
+                        if (widget.showMenuActions ||
+                            widget.extraActions.isNotEmpty) ...[
+                          SizedBox(height: cardSpacing),
+                          _card([
+                            if (widget.showMenuActions) _aboutRow(),
+                            if (widget.showMenuActions && _showUpdateRow)
+                              _checkUpdateRow(),
+                            for (final action in widget.extraActions)
+                              _row(
+                                leading: Icon(action.icon),
+                                title: action.label,
+                                onTap: action.onTap,
+                                enabled: !widget.state.busy,
+                                trailing: const Icon(Icons.chevron_right_rounded),
+                              ),
+                            if (widget.showMenuActions) _exportLogsRow(),
+                          ]),
+                        ],
                       ],
                     );
                     final contentPadding = EdgeInsets.fromLTRB(

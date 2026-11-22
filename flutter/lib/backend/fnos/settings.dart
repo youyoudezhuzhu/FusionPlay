@@ -46,7 +46,6 @@ class FnosSettings extends StatefulWidget {
     required this.advancedEffects,
     required this.onAdvancedEffects,
     required this.onClose,
-    required this.onOpenUpdate,
   });
 
   final SpeakerPlayerLocation location;
@@ -54,7 +53,6 @@ class FnosSettings extends StatefulWidget {
   final bool advancedEffects;
   final ValueChanged<bool> onAdvancedEffects;
   final VoidCallback onClose;
-  final VoidCallback onOpenUpdate;
 
   @override
   State<FnosSettings> createState() => _FnosSettingsState();
@@ -302,7 +300,6 @@ class _FnosSettingsState extends State<FnosSettings> {
       onStartup: (_) {},
       onAutoWake: (_) {},
       onAdvancedEffects: widget.onAdvancedEffects,
-      onOpenUpdate: widget.onOpenUpdate,
       extraActions: [
         (icon: Icons.network_check_rounded, label: '网络接口', onTap: network),
         (

@@ -342,8 +342,12 @@ void main() {
   });
 
   testWidgets('菜单项「设置」morph 成右侧玻璃面板，焦点进入设置内容', (tester) async {
-    await _pumpHome(tester, controller: controller);
+    await _pumpHome(tester, controller: controller, isAndroid: true);
     await _openMenu(tester);
+
+    expect(find.text('检查更新'), findsOneWidget);
+    expect(find.text('导出日志'), findsOneWidget);
+    expect(find.text('关于'), findsOneWidget);
 
     await tester.tap(find.text('设置'));
     await tester.pumpAndSettle();
@@ -351,7 +355,9 @@ void main() {
     expect(find.byKey(const ValueKey('settings-sheet')), findsOneWidget);
     expect(find.byKey(const ValueKey('app-menu')), findsNothing);
     expect(find.text('自定义名称'), findsOneWidget);
-    expect(find.byKey(const ValueKey('export-logs')), findsOneWidget);
+    expect(find.byKey(const ValueKey('export-logs')), findsNothing);
+    expect(find.byKey(const ValueKey('check-update')), findsNothing);
+    expect(find.text('关于应用'), findsNothing);
     // 焦点进入设置内容（MiPlay 行），不会聚焦名称输入框/弹键盘。
     expect(FocusManager.instance.primaryFocus?.debugLabel, 'settings-miplay');
     expect(find.byType(TextField), findsNothing);

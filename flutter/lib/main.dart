@@ -714,6 +714,7 @@ class _FusionPlayHomeState extends State<FusionPlayHome> {
                         settingsChild: SettingsView(
                           state: state,
                           showHeader: false,
+                          showMenuActions: false,
                           scrollable: false,
                           initialFocusNode: _settingsInitialFocus,
                           nameFocusNode: _settingsNameFocus,
@@ -735,12 +736,6 @@ class _FusionPlayHomeState extends State<FusionPlayHome> {
                           onDlna: (value) => widget.controller
                               .setProtocolEnabled('dlna', value),
                           onExportLogs: widget.controller.exportLogs,
-                          isAndroid: _isAndroid,
-                          onCheckUpdate: widget.controller.checkForUpdate,
-                          onDownloadUpdate: widget.controller.downloadUpdate,
-                          saveUpdate: widget.controller.saveUpdate,
-                          onInstallUpdate:
-                              widget.controller.installDownloadedUpdate,
                         ),
                         onDismiss: _dismissOverlay,
                         onSettingsClose: _closeSettings,
