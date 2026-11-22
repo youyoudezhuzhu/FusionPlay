@@ -2,14 +2,14 @@
   "schema_version": 1,
   "channel": "stable",
   "published": true,
-  "version_name": "1.7.14",
-  "version_code": 10714,
-  "sha256": "68b5e04c7d61fa6a5863ecf2e9b267d0530dc1f7dbd552f1e07c16682c1f916b",
+  "version_name": "1.7.15",
+  "version_code": 10715,
+  "sha256": "90b9accf5127add9dd6cd0ce1c67ba1f6e79ee2e1732957489f3ca39b510e509",
   "signer_sha256": "4836fb96c2ef76fd81ac385455f1b0154af77fadae1b45bbb752b192499dc12f",
-  "apk_url": "https://youyoudezhuzhu.github.io/FusionPlay/update/android/dl/latest.apk?v=10714",
-  "apk_url_alt": "https://github.com/youyoudezhuzhu/FusionPlay/releases/download/v1.7.14/FusionPlay-Android-1.7.14.apk",
-  "apk_size": 12491264,
-  "source_commit": "da92a780f556481f7bb90f0f63f5b22c797429fb",
-  "notes": "## FusionPlay 1.7.14\n\n- 安卓、Windows 和飞牛界面切换到统一磨砂材质，覆盖播放器控件、菜单、设置、更新弹窗与飞牛专属页面。\n- 封面背景按原比例居中裁切并模糊，避免横屏或竖屏拉伸。\n- 改进 DLNA 拖动进度和发送端校验的诊断，记录控制指令被拒绝的原因。\n- 安卓、Windows x64、飞牛 x64 和飞牛 ARM64 使用同一发布标签。",
-  "published_at": "2026-11-21T15:58:00Z"
+  "apk_url": "https://youyoudezhuzhu.github.io/FusionPlay/update/android/dl/latest.apk?v=10715",
+  "apk_url_alt": "https://github.com/youyoudezhuzhu/FusionPlay/releases/download/v1.7.15/FusionPlay-Android-1.7.15.apk",
+  "apk_size": 12489023,
+  "source_commit": "195284cef00e0caf385765d8efb49644704d8b3e",
+  "notes": "## FusionPlay 1.7.15\n\n- 修复 DLNA 播放中因控制请求切换网络地址而被拒绝的进度跳转。安卓、Windows 与飞牛共用这项修复。\n- 安卓和 Windows 的检查更新、导出日志和关于集中到三点菜单。飞牛的检查更新也集中到三点菜单。\n- 安卓、Windows x64、飞牛 x64 和飞牛 ARM64 使用同一发布标签。",
+  "published_at": "2026-11-22T11:43:45Z"
 }
