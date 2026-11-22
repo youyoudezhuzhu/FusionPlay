@@ -1,6 +1,6 @@
 [package]
 name = "fusionplay-fnos"
-version = "1.7.14"
+version = "1.7.15"
 edition = "2021"
 license = "AGPL-3.0-only"
 description = "FusionPlay fnOS host: AirPlay 2 + DLNA + MiPlay receiver with unified multi-device ALSA output"
