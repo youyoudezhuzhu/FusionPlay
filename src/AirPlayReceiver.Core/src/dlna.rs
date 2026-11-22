@@ -5197,15 +5197,21 @@ mod tests {
     fn first_track_and_later_tracks_accept_repeated_seek_from_another_address() {
         let (controller, events) = controller_with_events();
         let ipv4: IpAddr = "192.0.2.10".parse().unwrap();
+        let alternate_ipv4: IpAddr = "192.0.2.11".parse().unwrap();
         let ipv6: IpAddr = "2001:db8::10".parse().unwrap();
 
         assert!(controller.seek_from(ipv4, 30_000).is_err());
         for track in ["first", "second", "third"] {
             let uri = format!("https://example.test/{track}.mp3");
             controller.set_transport_uri_from(&uri, "", Some(ipv4)).unwrap();
-            assert!(controller.seek_from(ipv6, 30_000).is_err());
+            assert!(controller.seek_from(alternate_ipv4, 30_000).is_err());
             controller.play_from(ipv4).unwrap();
-            for (peer, target) in [(ipv6, "00:00:30"), (ipv4, "00:01:00"), (ipv6, "00:01:30")] {
+            for (peer, target) in [
+                (alternate_ipv4, "00:00:30"),
+                (ipv4, "00:01:00"),
+                (alternate_ipv4, "00:01:30"),
+                (ipv6, "00:02:00"),
+            ] {
                 let args = HashMap::from([
                     ("instanceid".to_owned(), "0".to_owned()),
                     ("unit".to_owned(), "REL_TIME".to_owned()),
@@ -5213,14 +5219,14 @@ mod tests {
                 ]);
                 handle_av_transport(&controller, peer, "Seek", &args).unwrap();
             }
-            assert_eq!(controller.snapshot().unwrap().position_ms, 90_000);
+            assert_eq!(controller.snapshot().unwrap().position_ms, 120_000);
             assert_eq!(controller.state.lock().unwrap().owner_peer, Some(ipv4));
         }
         let positions: Vec<u64> = events.captured_events().into_iter()
             .filter(|event| event["type"] == "dlna_seek")
             .filter_map(|event| event["position_ms"].as_u64())
             .collect();
-        assert_eq!(positions, [30_000, 60_000, 90_000].repeat(3));
+        assert_eq!(positions, [30_000, 60_000, 90_000, 120_000].repeat(3));
     }
 
     #[test]
