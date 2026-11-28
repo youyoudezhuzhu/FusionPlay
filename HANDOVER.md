@@ -1,125 +1,196 @@
 # FusionPlay 交接文档
 
-> 更新时间：2026-11-28
-> 当前主线：`main` @ `aec10e2`（VERSION `1.7.2`）
-> 本文面向接手后续开发/验收的人，说明当前状态、发布流程、未完成事项和坑。
+> 更新：2026-11-28
+> 活跃开发分支：`integration/unified-platforms` @ `195284c`（`Prepare FusionPlay 1.7.15`）
+> 最新正式版：`v1.7.15`（2026-11-22）
+> 先读 `AGENTS.md` 与 `docs/CROSS_PLATFORM_MAINTENANCE.md`，它们是维护流程的权威说明。
 
 ---
 
-## 1. 项目概览
+## 1. 项目是什么
 
-FusionPlay 是局域网音乐投放接收器，支持：
+FusionPlay 是局域网音乐投放接收器，支持 **AirPlay 2 / DLNA / 小米妙播（MiPlay）**，
+一套共享协议与界面适配三个宿主：
 
-- AirPlay 2
-- DLNA
-- 小米妙播（MiPlay）
-
-三个宿主：
-
-| 平台 | 产物 | 说明 |
+| 平台 | 产物 | 入口 |
 |---|---|---|
-| Android | APK | 最低 API 21；Android TV 遥控器适配 |
-| fnOS | FPK | 原生服务 + Web 管理页 |
-| Windows | 桌面应用 | Flutter UI + Rust 侧车 |
+| Android | APK（arm64，最低 API 21） | `flutter/android/app` |
+| Windows 10/11 | Setup EXE + 便携 ZIP（x64） | `installer/`、`windows/backend/` |
+| 飞牛 fnOS | FPK（x64 / ARM64） | `fnos/` |
 
-主目录：
+共享核心：
 
-```text
-flutter/                 Flutter UI / Android 宿主 / Windows 宿主
-src/AirPlayReceiver.Core/        AirPlay、DLNA、音频、JNI 核心
-src/FusionPlay.MiPlaySdk/        MiPlay 协议
-windows/backend/                 Windows 协议侧车
-fnos/                            fnOS FPK
-vendor/shairplay/                AirPlay 实现（带本地修复）
-docs/                            协议、平台、UI 文档
-fusionplay-ui-review*/           UI 验收材料（第一轮/第二轮）
-```
-
-技术栈：Flutter 3.32.8 / Dart 3.8.1；Kotlin + Rust 核心；Windows C++ 宿主；CI 用 GitHub Actions。
+- `src/AirPlayReceiver.Core`：AirPlay、DLNA 控制面、音频与 JNI
+- `src/FusionPlay.MiPlaySdk`：MiPlay 协议与媒体接收
+- `vendor/shairplay`：带本地修复的 AirPlay 实现
+- `src/shared_audio`、`src/shared_update`、`src/shared_logging`：跨宿主共享逻辑
+- `flutter/lib`：共享 Flutter UI / 状态模型 / 宿主适配
 
 ---
 
-## 2. 当前状态
+## 2. 当前状态（重要）
 
-### 2.1 已发布版本
+### 2.1 分支关系
 
-- Android 最新正式版：**1.7.2 / versionCode 10702**
-- Release：<https://github.com/youyoudezhuzhu/FusionPlay/releases/tag/android-v1.7.2>
-- 签名：正式 FusionPlay release key
-- 证书 SHA-256：`48:36:FB:96:C2:EF:76:FD:81:AC:38:54:55:F1:B0:15:4A:F7:7F:AD:AE:1B:45:BB:B7:52:B1:92:49:9D:C1:2F`
-- 更新清单：`updates/android/stable.json`，Pages 同步由 `android-pages.yml` 完成
-- 1.7.2 的定位：**兼容修复版**，播放器玻璃降级为 shader-free，优先保证控件可见可点
+- **`integration/unified-platforms`**：应用与统一发版的活跃分支，当前 `195284c` / `VERSION 1.7.15`。
+- **`main`**：主要承载 Android Pages 的更新清单同步提交（`android: sync update manifest ... [skip ci]`）；
+  它可能落后于 integration，**不要以 main 的 VERSION 作为最新版本依据**。
+- 远端仍有 `audit/liquid-glass-pr2`、`ui/ios18-frosted-glass`、`ui/player-control-spacing-cover-20261118` 等实验分支。
+- PR #4（统一 Android/Windows/飞牛的共享实现与视觉风格）已合并。
+- PR #2（横向封面 + premium 玻璃）已合并到其目标分支，但当前 integration 的实现已被 PR #4 的 Frosted Glass 方案取代。
+- **PR #3 `audit/liquid-glass-pr2` 仍开着**：试图统一折射材质并修复 P01 合成污染；**未合并、未由本流程复验**。
 
-### 2.2 主线 UI 现状（`main`）
+### 2.2 最新正式版
 
-- 21:9 双栏：左侧播放器（封面/信息/进度/控制/音量），右侧沉浸式歌词
-- 封面：独立 `FloatingAlbumArt`，柔光扩散阴影 + 细边缘光
-- 播放键：白色实心圆 + 深色图标；上一曲/下一曲为玻璃圆钮
-- 顶部：只显示协议（如 `AirPlay 2`），不显示音质格式
-- 歌曲名下方只保留歌手；已删除「作曲」、音源/专辑行、无歌词提示行
-- 播放页玻璃：`liquid_glass_widgets`（vendored `0.18.4`），`GlassQuality.standard`
-- 菜单/设置/弹窗：项目自研 `LiquidGlass` 的 flat fallback（无厚白边）
-- 无 FittedBox 整页缩放；无底部 Dock
-- 功能保留：AirPlay/MiPlay/DLNA、封面、进度/Seek 能力、音量/静音、歌词（同步/逐字/流式/AirPlay 标题）、菜单、焦点、键盘/遥控器/触摸、reduce motion
+- Tag：`v1.7.15`，commit `195284cef00e0caf385765d8efb49644704d8b3e`
+- Release：<https://github.com/youyoudezhuzhu/FusionPlay/releases/tag/v1.7.15>
+- 资产（9 个）：
+  - `FusionPlay-Android-1.7.15.apk` + `.sha256`
+  - `fusionplay-fnos.fpk`（x64）
+  - `fusionplay-fnos-arm64.fpk`
+  - `FusionPlay-Setup-1.7.15-x64.exe` + `.sha256`
+  - `FusionPlay-Windows-1.7.15-x64.zip` + `.sha256`
+  - `update-manifest.json`
+- Android `versionCode`：`10715`
+- 1.7.15 内容：修复 DLNA 播放中因控制请求切换网络地址而被拒绝的进度跳转；三端共用；菜单项收敛。
 
-### 2.3 未合并的 UI 分支/PR
+### 2.3 当前 UI 实现
 
-| PR | 分支 | HEAD | 状态 | 说明 |
-|---|---|---|---|---|
-| #2 | `ui/player-control-spacing-cover-20261118` | `e0d82b0` | Draft | 短横屏横向封面布局 + premium 玻璃；第二轮验收 **P0 未通过** |
-| #3 | `audit/liquid-glass-pr2` | `f6364a30` | Draft | 基于 PR2；声称修复 P01、统一折射材质、封面 161.8/176.8px、213 测试通过；**尚未由我们复验，Android Impeller 未验证** |
+- 播放页仍是 21:9 双栏：左侧播放器（封面/标题/进度/控制/音量），右侧沉浸式歌词；无歌词时左侧大封面 + 右侧控制。
+- 顶部只显示协议（`AirPlay 2` / `DLNA` / `小米妙播`），不显示音质/码率。
+- 歌曲名下方只保留歌手；「作曲」、音源/专辑行、无歌词提示行已移除。
+- 封面使用 `FloatingAlbumArt`：宽范围柔光扩散 + 细边缘光，无黑色厚底座。
+- 播放键为白色实心圆 + 深色图标；上一曲/下一曲为玻璃圆钮。
+- **当前玻璃实现是 `flutter/lib/ui/frosted_glass.dart`（iOS 18 风格磨砂）**，配合 `glass_appearance.dart` 和 `FrostedScene`；
+  integration 的 `pubspec.yaml` **不依赖 `liquid_glass_widgets`**，`flutter/lib/ui/liquid_glass.dart` 已删除。
+  `flutter/third_party/liquid_glass_widgets` 目录可能仍有残留；不要在没有验证的情况下重新引入。
+- 有歌词/无歌词、菜单、设置、弹窗、错误 toast 的截图与验收材料在 `fusionplay-ui-review/`、`fusionplay-ui-review-round2/`。
 
-结论：**PR #2 不要合并**。PR #3 需要先跑第二轮相同验收（含 P01–P20、玻璃专项、真机）再决定。
+### 2.4 已知问题与验证缺口
 
-### 2.4 已知 P0/P1（来自 `fusionplay-ui-review-round2/`）
+| 项 | 状态 |
+|---|---|
+| Android Impeller 真机玻璃/性能 | 未验证；所有 UI 截图来自 `flutter_test`（Linux/Skia）或桌面 |
+| 折射液态玻璃 | 当前正式版用磨砂，不是折射；PR #3 的折射方案未合并 |
+| 飞牛 ARM64 DLNA 快放/封面/暂停 | Linux 测试覆盖 8 实例、暂停隔离、同曲重播、MP3 断流续传；真机待复测 |
+| 妙播声音发颤 | v1.7.10 已修（锁竞争插入静音）；实体音箱待复测 |
+| AirPlay RTSP type 96 缺共享密钥 | 历史握手失败，保留发送端/会话日志待复现 |
+| 仓库 Fork 状态 | GitHub 仍显示 `fork: true`；README 已标注来源 |
+| UI review zip | 仓库根目录的 `fusionplay-ui-review*.zip` 是未跟踪产物，可删除或移到 Release |
 
-- **P0-1**：PR2 下 900×400 有歌词出现整块模糊脏层（P01），900×400 无歌词/980×420/840×360 正常
-- **P0-2**：Android Impeller 动态折射未验证；Skia 下 `liquid_glass_widgets` 走 lightweight 降级
-- **P1-1**：PR2 高度 349↔350、460↔461 布局突然切换（纵向↔横向）
-- **P1-2**：PR2 封面 P01 150.7px / P03 159.1px，低于目标 160 / 170–180
-- **P1-3**：进度条到时间文字约 10px，略高于建议 4–8px
-- **P1-4**：顶部 AirPlay 标签/歌词按钮发虚、白色糊块（PR2）
-- **P1-5**：玻璃在 Skia 下偏平偏棕，缺少真实折射
-
-主线 `main` 不含 PR2 的横向布局/premium 改动，因此上述 P0 主要在 PR2/PR3 上。
+更完整的缺口与复测方法见 `docs/CROSS_PLATFORM_MAINTENANCE.md` 的“已知验证缺口”。
 
 ---
 
-## 3. 发布流程（Android）
+## 3. 目录与关键文件
 
-### 3.1 版本与 tag
+| 路径 | 职责 |
+|---|---|
+| `flutter/lib/ui/player_view.dart` | 播放页布局、控制、歌词接入、玻璃控件 |
+| `flutter/lib/ui/floating_album_art.dart` | 悬浮封面阴影/边缘光 |
+| `flutter/lib/ui/frosted_glass.dart` | 当前正式版磨砂玻璃（`GlassLevel` / `FrostedGlass`） |
+| `flutter/lib/ui/glass_appearance.dart` | 玻璃/不透明外观偏好与 `FrostedScene` |
+| `flutter/lib/ui/lyrics_view.dart` | 完整时间轴歌词、逐字、滚动 |
+| `flutter/lib/ui/app_menu.dart` | 三点菜单 / 设置 morph |
+| `flutter/lib/ui/settings_view.dart` | 设置内容 |
+| `flutter/lib/ui/update_dialogs.dart` | 更新/关于/错误弹窗 |
+| `flutter/lib/main.dart` | 宿主、场景、全局浮层 |
+| `flutter/lib/backend/` | Android / Windows / fnOS 控制器 |
+| `windows/backend/` | Windows Rust 侧车（NDJSON） |
+| `fnos/backend/` | 飞牛 Rust HTTP 宿主 |
+| `fnos/package/` | FPK 清单与生命周期脚本 |
+| `.github/workflows/release.yml` | 统一 `vX.Y.Z` 发版（四安装包） |
+| `.github/workflows/android.yml` | Android APK 构建/签名 |
+| `.github/workflows/android-pages.yml` | Android 更新清单与 Pages |
+| `.github/workflows/shared-platform-checks.yml` | 跨平台 PR 检查 |
+| `docs/ANDROID_RELEASE_SIGNING.md` | Android 签名密钥与 secrets |
+| `docs/DIAGNOSTICS.md` | 日志与诊断 |
 
-- 根目录 `VERSION` 必须与 tag 一致：例如 `1.7.2` ↔ `android-v1.7.2`
-- `versionCode` 规则：`major*10000 + minor*100 + patch`（1.7.2 → 10702）
-- `flutter/pubspec.yaml` 的 `version:` 也要同步更新
-- 推送 tag `android-v*` 会触发 `.github/workflows/android.yml`：
-  - 构建 arm64 release APK
-  - 用 secrets 中的 release keystore 签名
-  - 校验证书 SHA-256
-  - 创建/更新 GitHub Release（APK、sha256、update-manifest.json）
-  - 触发 `android-pages.yml` 同步 `updates/android/stable.json`
+---
 
-### 3.2 签名
+## 4. 本地环境与常规验证
 
-keystore **不在仓库内**，本地备份在：
+CI 使用 Flutter 3.32.8；Linux Rust 音频构建需要 ALSA 开发库与 `pkg-config`。
 
-```text
-/vol1/@appdata/deepseek.harness/home/github/artifacts/keys/fusionplay-release.jks
+```sh
+# 运行时/UI
+cd flutter
+flutter pub get --enforce-lockfile
+flutter analyze --no-pub
+flutter test --no-pub
+
+# Rust
+cargo test --locked --manifest-path src/AirPlayReceiver.Core/Cargo.toml --all-targets
+cargo test --locked --manifest-path src/FusionPlay.MiPlaySdk/Cargo.toml --lib
+cargo test --locked --manifest-path fnos/backend/Cargo.toml --all-targets
+cargo test --locked --manifest-path windows/backend/Cargo.toml --all-targets
+
+# Web 主题同步
+python3 tools/sync_web_theme.py --check
+
+# 飞牛 Web 交互（需 Playwright）
+CHROMIUM=/usr/bin/chromium python3 fnos/tools/test-curve-page.py
 ```
 
-同目录有密码文件；不要把 keystore/密码提交到 git、issue 或聊天。
+Flutter Web（飞牛播放器）：
 
-GitHub Secrets 需要：
+```sh
+cd flutter
+flutter build web --release --no-pub --no-web-resources-cdn --pwa-strategy=none -t lib/backend/fnos/player.dart
+```
 
-- `ANDROID_KEYSTORE_BASE64`
-- `ANDROID_KEYSTORE_PASSWORD`
-- `ANDROID_KEY_ALIAS`（`fusionplay`）
-- `ANDROID_KEY_PASSWORD`
-- `ANDROID_CERT_SHA256`
+---
 
-未配置时本地构建会回退 debug 签名，**不能作为正式升级包**。
+## 5. 发版流程（统一 `vX.Y.Z`）
 
-### 3.3 本地 Android 构建的坑（本机已验证）
+### 5.1 版本号同步清单
+
+1. 根 `VERSION`
+2. `INSTALLER_VERSION`
+3. `flutter/pubspec.yaml`（`version: X.Y.Z+<versionCode>`）
+4. `flutter/lib/ui/settings_view.dart` 默认版本
+5. 飞牛 `manifest`、飞牛与 Windows 的 `Cargo.toml` / `Cargo.lock`
+6. `docs/update/android/notes.md`
+7. Android versionCode = `major*10000 + minor*100 + patch`；Windows 文件版本为四段
+8. 提交并推送到 `integration/unified-platforms`
+9. 从同一提交打单个 `vX.Y.Z` 标签并推送
+
+```sh
+git tag v1.7.16
+git push origin v1.7.16
+```
+
+`release.yml` 会构建：Android ARM64 APK、Windows x64 EXE、Windows 便携 ZIP、飞牛 x64 FPK、飞牛 ARM64 FPK；
+全部齐全后发布到同一个 Release。
+
+### 5.2 发布后核对
+
+1. Android Pages 工作流成功；
+2. 对比 Release 的 `update-manifest.json`、Pages `stable.json`、raw `updates/android/stable.json`；
+3. 核对版本码、`source_commit`、APK 大小、SHA-256、签名指纹；
+4. 实际下载一次 Pages APK；
+5. 核对两个 FPK 的架构/版本、Windows 资产完整。
+
+Pages 失败可重试：
+
+```sh
+gh workflow run android-pages.yml --ref main -f tag=vX.Y.Z
+```
+
+### 5.3 Android 签名
+
+- keystore **不在仓库内**，本机备份：
+  `/vol1/@appdata/deepseek.harness/home/github/artifacts/keys/fusionplay-release.jks`
+  （同目录有密码文件；不要提交/外传）
+- 别名 `fusionplay`，RSA 4096，证书 SHA-256：
+  `48:36:FB:96:C2:EF:76:FD:81:AC:38:54:55:F1:B0:15:4A:F7:7F:AD:AE:1B:45:BB:B7:52:B1:92:49:9D:C1:2F`
+- GitHub Secrets：`ANDROID_KEYSTORE_BASE64`、`ANDROID_KEYSTORE_PASSWORD`、`ANDROID_KEY_ALIAS`、
+  `ANDROID_KEY_PASSWORD`、`ANDROID_CERT_SHA256`
+- 未配置 secrets 时会回退 debug 签名，**不能作为正式升级包**
+
+---
+
+## 6. 本地 Android 构建踩坑（Linux）
 
 ```bash
 export ANDROID_HOME=/opt/android-sdk
@@ -132,132 +203,83 @@ export FUSIONPLAY_ABIS=arm64-v8a
 ```
 
 - `flutter/android/local.properties` 需要 `sdk.dir=/opt/android-sdk`
-- 仓库 `src/AirPlayReceiver.Core/rust-toolchain.toml` 指向 Windows host 工具链，Linux 必须用 `RUSTUP_TOOLCHAIN` 覆盖
+- `src/AirPlayReceiver.Core/rust-toolchain.toml` 指向 Windows host，Linux 必须用 `RUSTUP_TOOLCHAIN` 覆盖，
+  否则报 `stable-x86_64-pc-windows-gnullvm`
 - 需要 `cargo-ndk`（`cargo install cargo-ndk`）
-- Gradle 文件监听在容器 FS 上会 NPE：用 `./gradlew assembleRelease --no-watch-fs`，或在 `gradle.properties` 临时加 `org.gradle.vfs.watch=false`
-- 直接 `flutter build apk --release` 若失败，可用 `flutter/android/gradlew assembleRelease --no-watch-fs`
-- 构建成功产物：`flutter/build/app/outputs/flutter-apk/app-release.apk`
-- 1.7.2 正式 APK SHA-256：`1bbe809eb5ff631b0447b323ac6f910b1e1fd5045759e43041f6de93c8227554`
+- 容器 FS 上 Gradle 文件监听会 NPE：`./gradlew assembleRelease --no-watch-fs`，
+  或临时 `org.gradle.vfs.watch=false`
+- 直接 `flutter build apk --release` 失败时，可进 `flutter/android` 用 `./gradlew assembleRelease --no-watch-fs`
+- 产物：`flutter/build/app/outputs/flutter-apk/app-release.apk`
 
 ---
 
-## 4. 测试与验收
+## 7. 飞牛 / Windows 特别注意
 
-### 4.1 常规检查
+### 飞牛
+
+- 桌面入口进入共享播放器；右上三点菜单为共享设置/诊断/更新，右下角飞牛菜单进入音箱切换/新建实例。
+- `fnos/frontend/index.html` 只兼容旧书签；FPK 构建有白名单，`check-fpk.sh` 会拒绝旧后台资源。
+- 主题值改 `flutter/lib/theme/fusion_theme.dart` 后运行 `python3 tools/sync_web_theme.py`。
+- 排查升级：先看包架构、`/healthz`、`app.log`、`fusionplay.log`，用同架构覆盖安装测试。
+- 两个 `backend/src/dlna_player.rs`（Windows/飞牛）需分别回归。
+
+### Windows
+
+- 原生输出/安装器/COM/WASAPI 改动必须在 Windows runner 验证，Linux 只能做静态检查。
+- 侧车接口见 `docs/WINDOWS_ARCHITECTURE.md`。
+
+---
+
+## 8. 交叉验证清单（改共享协议/播放器时）
+
+1. 共享事件定义 → 三宿主状态投影 → Flutter 解析 → 界面逐层核查；
+2. 同曲歌词更新、真实换曲、暂停恢复、新推送抢占旧音源；
+3. 歌词更新保留进度；换曲清理旧封面/歌词；旧音源迟到事件不能覆盖新音源；
+4. 先核对发送端真实字段（AirPlay 可能把歌词放标题；DLNA 取决于 DIDL/资源）；
+5. Android 结构化歌词/歌词 URI 支持范围比桌面宿主更广。
+
+---
+
+## 9. 已知陷阱
+
+1. **不要以 main 的 VERSION 判断最新版**：main 可能只同步了 manifest；以 tag/Release 和 integration 分支为准。
+2. **版本 tag 必须与 `VERSION` 完全一致**，`android_check_tag.py` 会拒绝不匹配。
+3. **`main` 上的 Pages 清单提交会让 main 与 integration 分叉**；推送 release tag 后先核对。
+4. **PR #3 未合并**：它基于 PR #2、改动大（含 audit 资产）；引用其结论前必须独立复验。
+5. **UI 验收必须在真机 Impeller 上做玻璃/性能结论**；`flutter_test` 是 Skia。
+6. **不要提交 keystore/密码/日志中的签名媒体 URL**。
+7. `flutter/third_party/liquid_glass_widgets` 是历史残留；当前 pubspec 不依赖，重新启用需完整验证。
+8. 仓库 `fork: true` 状态未处理；改 README/来源说明前先确认上游关系。
+
+---
+
+## 10. 建议下一步
+
+1. 用真机（Android 手机 + Android TV）复验 v1.7.15 播放页/菜单/设置/弹窗，记录设备、GPU、Impeller 状态。
+2. 评审 PR #3：跑与 `fusionplay-ui-review-round2` 相同的 P01–P20、玻璃动态、349/350/460/461 跳变；
+   通过后再决定是否替换当前 Frosted Glass。
+3. 规划 v1.7.16 时走统一 `vX.Y.Z` 标签，避免再出现分平台 `android-v*` 标签。
+4. 清理根目录 review zip，或统一归档到 Release。
+5. 复核飞牛 ARM64 与妙播实体设备两项已知缺口。
+
+---
+
+## 11. 快速命令
 
 ```bash
-cd flutter
-flutter pub get
-flutter analyze
-flutter test
-```
-
-- 当前 UI 清理后全量测试：**207 passed**（提交 `1abbe54` 时）
-- PR2 分支全量：209 passed
-- `flutter analyze` 会因 vendored `liquid_glass_widgets` 的 18–21 条 info 以退出码 1 结束；**无 error/warning**
-- 指定 UI 测试：
-
-```bash
-flutter test test/player_preview_test.dart test/lyrics_player_test.dart
-```
-
-### 4.2 验收资产
-
-- 第一轮：`fusionplay-ui-review/REVIEW.md` + 截图 + `measurements.csv`
-- 第二轮：`fusionplay-ui-review-round2/REVIEW.md` + `comparison.md` + `issues.md` + P01–P20/G01–G10 + `measurements.csv`
-- Release 附件：
-  - <https://github.com/youyoudezhuzhu/FusionPlay/releases/tag/ui-review-pr2>
-  - <https://github.com/youyoudezhuzhu/FusionPlay/releases/tag/ui-review-pr2-round2>
-- 复现脚本：`fusionplay-ui-review-round2/tools/ui_review_round2_test.dart`（复制到 `flutter/test/` 后运行）
-
-### 4.3 截图复现注意
-
-- 必须先铺背景 `ArtworkBackground`，`GlassBackdropScope` 只负责采样、不负责显示背景
-- 第一张截图前要 warmup 一帧，否则可能出现未解码/脏层
-- 截图 DPR=2，输出物理像素 = 逻辑×2
-- 环境是 Linux `flutter_test`（Skia），**不是 Android Impeller**；任何折射/性能结论都必须标「未验证」
-
----
-
-## 5. 关键文件地图
-
-| 文件 | 作用 |
-|---|---|
-| `flutter/lib/ui/player_view.dart` | 播放页全部布局/控制/玻璃/歌词接入 |
-| `flutter/lib/ui/floating_album_art.dart` | 悬浮封面阴影与边缘光 |
-| `flutter/lib/ui/lyrics_view.dart` | 完整时间轴歌词、逐字歌词、滚动 |
-| `flutter/lib/ui/liquid_glass.dart` | 自研折射玻璃 + `GlassDialog`；当前菜单/设置/弹窗用 fallback |
-| `flutter/lib/ui/glass_backdrop.dart` | 背景纹理捕获 `GlassBackdropScope` |
-| `flutter/lib/ui/app_menu.dart` | 菜单/设置 morph overlay |
-| `flutter/lib/ui/settings_view.dart` | 设置内容 |
-| `flutter/lib/ui/update_dialogs.dart` | 更新/关于/错误弹窗 |
-| `flutter/lib/main.dart` | 宿主、背景、全局浮层、菜单/设置/错误 toast |
-| `flutter/test/player_preview_test.dart` | 21:9/平板/TV/流式歌词截图测试 |
-| `flutter/test/lyrics_player_test.dart` | 布局/焦点/歌词/无歌词/21:9 回归 |
-| `flutter/test/app_menu_test.dart` | 菜单/设置 morph/焦点 |
-| `flutter/test/ui_gallery_test.dart` | 菜单/设置/弹窗 21:9 预览 |
-| `.github/workflows/android.yml` | 正式签名构建 + Release |
-| `.github/workflows/android-pages.yml` | 更新清单/Pages 同步 |
-| `docs/ANDROID_RELEASE_SIGNING.md` | 签名密钥与 secrets 说明 |
-
-第三方玻璃：
-
-- `flutter/third_party/liquid_glass_widgets/`（MIT，0.18.4）
-- 兼容性补丁：移除 4 处 `filterQuality:`，`vector_math` 固定 2.3.0
-- 许可证说明：根目录 `THIRD_PARTY_NOTICES.md`
-
----
-
-## 6. 已知限制与坑
-
-1. **Android Impeller 未验证**：所有 UI 截图来自 Skia widget test；`GlassQuality.premium` 在 Skia 下不是真实折射。
-2. **PR2 P0 未修复**：900×400 有歌词模糊脏层；不要在未复验前合并。
-3. **PR3 未复验**：声称修复 P01/封面尺寸，但基于 PR2 且改动 133 个文件（含大量 audit 资产），需要独立验收。
-4. **签名密钥**：keystore 路径不在仓库；CI secrets 必须保留，否则无法覆盖升级。
-5. **Rust 工具链**：Linux 本地构建必须覆盖 `RUSTUP_TOOLCHAIN`，否则报 `stable-x86_64-pc-windows-gnullvm` 错误。
-6. **Gradle 文件监听**：容器内需要 `--no-watch-fs`。
-7. **UI Review zip**：`fusionplay-ui-review.zip`、`fusionplay-ui-review-round2.zip` 目前在仓库根目录是未跟踪文件；如不需要可删除，或移到 Release。
-8. **更新弹窗**：关于/错误 toast 已截图；更新检查/进度/确认弹窗未单独截图，需要模拟更新状态。
-9. **性能/录屏**：无真机/录屏能力，未测帧率、GPU、Shader 编译卡顿。
-
----
-
-## 7. 建议的下一步
-
-1. 对 PR3 跑与第二轮相同的验收：P01–P20、`flutter analyze/test`、P0 脏层、封面尺寸、349/350/460/461 跳变。
-2. 在 Android Impeller 真机（至少 Pixel/中高端机 + Android TV 各一台）验证：
-   - 播放器三按钮/音量胶囊折射
-   - 菜单→设置 morph
-   - 错误气泡
-   - 动态背景/网格对比与录屏
-3. 若 PR3 通过，更新 `VERSION` 到 1.7.3，走 tag `android-v1.7.3` 的 Actions 正式签名发布。
-4. 修复/确认 PR2 的 349/350、460/461 硬阈值跳变，再谈合并。
-5. 清理仓库根目录的 review zip，或统一放到 Release。
-
----
-
-## 8. 快速命令
-
-```bash
-# 查看状态
 cd /vol1/@appdata/deepseek.harness/home/FusionPlay
+git fetch --tags origin
 git status -sb
 git log --oneline -10
 
 # 测试
 cd flutter
-export PATH="$HOME/.cache/flutter-sdk/flutter/bin:$PATH"
-flutter pub get
-flutter analyze
-flutter test
+flutter pub get --enforce-lockfile
+flutter analyze --no-pub
+flutter test --no-pub
 
-# 正式发布（只需 bump VERSION + pubspec，然后打 tag）
-printf '1.7.3\n' > VERSION
-# 改 flutter/pubspec.yaml version: 1.7.3+10703
-git add VERSION flutter/pubspec.yaml
-git commit -m 'release: FusionPlay Android 1.7.3'
-git tag android-v1.7.3
-git push origin main android-v1.7.3
+# 发版后检查
+git rev-parse v1.7.15
 ```
 
-GitHub 认证：token 在 `/root/.gh_token`，用 `GIT_ASKPASS` 临时脚本，不要把 token 写进 remote URL 或命令行。
+GitHub 认证：token 位于 `/root/.gh_token`；使用 `GIT_ASKPASS` 临时脚本，不要写进 remote URL 或命令行。
